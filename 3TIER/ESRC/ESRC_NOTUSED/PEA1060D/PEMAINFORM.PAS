@@ -1,0 +1,3009 @@
+{===================== Program Header ==========================================
+ PROGRAM-NAME   : PEA1060D(공동목표대상자 업무목표 등록/결재)
+ SYSTEM-NAME    : 공동목표대상자 목표등록
+ SUBSYSTEM-NAME : 업적평가
+ Programmer     : 박은철
+ Version        : 1.00
+ Date           : 2005.08.12
+===============================================================================}
+
+unit PeMainForm;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
+  ComCtrls, ExtCtrls, pegradpanl, peoutlookbtn, PeJeonLabel, StdCtrls, Db, DbTables,
+  Mask, pebtnedit, Grids, DBGrids, pedbgrid, DBCGrids, DBCtrls, pedbutil, hanapass,
+  pereg, jeonPan, OnInsaCommon, OnEditBaseCtrl, registry, pass, TLHelp32,
+  OnEditStdCtrl, OnEditNumCtl, Tmax_DataSetText, TmaxFunc;
+
+type
+  TMainForm = class(TForm)
+    Pa_Title: TPeJeonGrdPanel;
+    Pa_Work: TPanel;
+    St_Help: TStatusBar;
+    Panel1: TPanel;
+    Pa_jobgun: TPeJeonLabel;
+    Pa_deptcode: TPeJeonLabel;
+    Pa_paycl: TPeJeonLabel;
+    Pa_payra: TPeJeonLabel;
+    PeJeonGrdPanel2: TPeJeonGrdPanel;
+    Ed_empno: TPePanelBtnEdit;
+    Nt_Book: TNotebook;
+    Panel3: TPanel;
+    Bt_Opt: TPeJeonOutLookBtn;
+    Bt_Confirm: TPeJeonOutLookBtn;
+    Bt_Exit: TPeJeonOutLookBtn;
+    Panel2: TPanel;
+    Grid2: TDBCtrlGrid;
+    Db_Bvalidx: TDBText;
+    Db_Bforaim: TDBText;
+    Db_Bforweight: TDBText;
+    PeJeonLabel8: TPeJeonLabel;
+    PeJeonLabel10: TPeJeonLabel;
+    PeJeonLabel13: TPeJeonLabel;
+    PeJeonLabel14: TPeJeonLabel;
+    Pa_empdate: TPeJeonLabel;
+    Pa_paycldate: TPeJeonLabel;
+    Pa_trdate: TPeJeonLabel;
+    Bt_can: TPeJeonOutLookBtn;
+    Bevel7: TBevel;
+    Bevel8: TBevel;
+    Bevel9: TBevel;
+    Db_Bpropeltask: TDBMemo;
+    Db_Bvalfunction: TDBMemo;
+    Pa_Le1KorName: TJeonPanel;
+    Pa_Le2Payra: TJeonPanel;
+    JeonPanel2: TJeonPanel;
+    Pa_Le1Payra: TJeonPanel;
+    JeonPanel4: TJeonPanel;
+    Pa_Le2KorName: TJeonPanel;
+    Panel4: TPanel;
+    PeJeonLabel2: TPeJeonLabel;
+    Bevel10: TBevel;
+    PeJeonLabel6: TPeJeonLabel;
+    PeJeonLabel7: TPeJeonLabel;
+    PeJeonLabel9: TPeJeonLabel;
+    PeJeonLabel11: TPeJeonLabel;
+    PeJeonLabel12: TPeJeonLabel;
+    Grid3: TDBCtrlGrid;
+    Bevel3: TBevel;
+    Bevel6: TBevel;
+    Bevel11: TBevel;
+    Bevel12: TBevel;
+    PeJeonGrdPanel1: TPeJeonGrdPanel;
+    Bt_Tgt: TPeJeonOutLookBtn;
+    Bt_Dev: TPeJeonOutLookBtn;
+    P_Title: TPeJeonGrdPanel;
+    DB_Devitem: TDBText;
+    DB_Devmethod: TDBText;
+    DB_Devaim: TDBText;
+    DB_Demand: TDBText;
+    DB_seq: TDBText;
+    Pa_deptna3: TPeJeonLabel;
+    Eda_weight: TOnNumberEdit;
+    Panel5: TPanel;
+    Panel6: TPanel;
+    Grid1: TDBCtrlGrid;
+    Db_plan1: TDBText;
+    Db_plan2: TDBText;
+    Db_plan3: TDBText;
+    Db_plan5: TDBText;
+    Db_plan4: TDBText;
+    Db_foraim1: TDBText;
+    Db_foraim2: TDBText;
+    Db_foraim3: TDBText;
+    Db_foraim4: TDBText;
+    Db_foraim5: TDBText;
+    Db_forweight: TDBText;
+    Label1: TLabel;
+    Label2: TLabel;
+    Label3: TLabel;
+    Label4: TLabel;
+    Label5: TLabel;
+    Bevel1: TBevel;
+    Bevel2: TBevel;
+    Bevel4: TBevel;
+    Bevel5: TBevel;
+    DB_Validx1: TDBText;
+    DB_Validx2: TDBText;
+    DB_Validx3: TDBText;
+    DB_Validx4: TDBText;
+    DB_Validx5: TDBText;
+    Bevel13: TBevel;
+    Bevel14: TBevel;
+    Bevel15: TBevel;
+    Bevel16: TBevel;
+    Bevel17: TBevel;
+    Bevel18: TBevel;
+    Db_deweight1: TDBText;
+    Db_deweight2: TDBText;
+    Db_deweight3: TDBText;
+    Db_deweight4: TDBText;
+    Db_deweight5: TDBText;
+    DB_s1: TDBText;
+    DB_a1: TDBText;
+    DB_b1: TDBText;
+    DB_c1: TDBText;
+    DB_d1: TDBText;
+    Db_propeltask: TDBMemo;
+    PeJeonLabel16: TPeJeonLabel;
+    PeJeonLabel17: TPeJeonLabel;
+    PeJeonLabel18: TPeJeonLabel;
+    PeJeonLabel19: TPeJeonLabel;
+    PeJeonLabel20: TPeJeonLabel;
+    Bt_del: TPeJeonOutLookBtn;
+    Bt_Add: TPeJeonOutLookBtn;
+    Bt_Mod: TPeJeonOutLookBtn;
+    Bt_Del1: TPeJeonOutLookBtn;
+    Bt_Add1: TPeJeonOutLookBtn;
+    Bt_Detail: TPeJeonOutLookBtn;
+    Bt_Srh: TPeJeonOutLookBtn;
+    Bt_Detail1: TPeJeonOutLookBtn;
+    Bt_Srh1: TPeJeonOutLookBtn;
+    Label11: TLabel;
+    Label12: TLabel;
+    DB_COMDET: TTMaxDataSet;
+    DB_COM_SEL: TTMaxDataSet;
+    sGrid1: TStringGrid;
+    Panel7: TPanel;
+    sGrid2: TStringGrid;
+    Label6: TLabel;
+    Label7: TLabel;
+    ed_seqno_chk: TEdit;
+    pa_DUTYKINDNAME: TPeJeonLabel;
+    pa_DUTYNAME: TPeJeonLabel;
+    DBSet10: TTMaxDataSet;
+    btn_Print2: TPeJeonOutLookBtn;
+    pob_e1prjopinon: TPeJeonOutLookBtn;
+    pn_obt: TPanel;
+    mo_e1prjopinon: TMemo;
+    bt_close: TPeJeonOutLookBtn;
+    ListBox1: TListBox;
+    Label8: TLabel;
+    Label9: TLabel;
+    Edit1: TEdit;
+    Bt_ReConfirm: TPeJeonOutLookBtn;
+    Tdml: TTMaxDataSet;
+    procedure FormClose(Sender: TObject; var Action: TCloseAction);
+    procedure FormCreate(Sender: TObject);
+    procedure Bt_ExitClick(Sender: TObject);
+    procedure Bt_SrhClick(Sender: TObject);
+    procedure Ed_empnoEnter(Sender: TObject);
+    procedure FormPaint(Sender: TObject);
+    procedure Ed_empnoKeyPress(Sender: TObject; var Key: Char);
+    procedure Bt_ModClick(Sender: TObject);
+    procedure Bt_ConfirmClick(Sender: TObject);
+    procedure Bt_delClick(Sender: TObject);
+    procedure Bt_canClick(Sender: TObject);
+    procedure Grid2DblClick(Sender: TObject);
+    procedure Bt_TgtClick(Sender: TObject);
+    procedure Bt_Srh1Click(Sender: TObject);
+    procedure Bt_Add1Click(Sender: TObject);
+    procedure Bt_Del1Click(Sender: TObject);
+    procedure Bt_Detail1Click(Sender: TObject);
+    procedure sGrid1Click(Sender: TObject);
+    procedure btn_Print2Click(Sender: TObject);
+    procedure bt_closeClick(Sender: TObject);
+    procedure pob_e1prjopinonClick(Sender: TObject);
+    procedure Bt_ReConfirmClick(Sender: TObject);
+    procedure Ed_empnoRightBtnClick(Sender: TObject);
+  private
+    { Private declarations }
+    Start      : Boolean;
+    pEmpno     : string;  // 로그인 사번
+    pKorname   : string;  // 로그인 성명
+    pPass      : String;
+    pClass     : string;  // 로그인 등급
+    ComIp      : string;
+    SRabasdate : string;  // 조회용 전년도평가기준년월일
+
+    Lsysdate   : string;
+    Lfordate   : string;
+    Lwork      : string;  // 작업자 구분.
+    Le2empno   : string;  // 2차 평가자
+    Le1korname : string;  // 1차 평가자 성명.
+    Le2korname : string;  // 2차 평가자 성명.
+    Lebrempno   : string;  // 지점장
+    Lebrkorname : string;  // 지점장 성명
+
+    grvalconyn  ,
+    ge1valconyn ,
+    ge2valconyn ,
+    ge1valobjyn ,
+    ge2valobjyn : string;
+
+    gebrvalconyn ,
+    gebrvalobjyn : string;
+    ls_taskcode, ls_taskname : string;
+
+    GSHomeDir : string;
+    sKillCheckID : String;
+    LSfilename : string;
+    LAarg : array[0..200] of char;
+    LWerrrtn : word;
+    i_Seq_no : string;
+    isum_Com : String;
+
+    function GetBaseYear(gubun : integer) : string;
+    function GetPehremas(Gubun : string) : string;
+    function Check_Edit1 : Boolean;                 //입력 값 체크
+
+    procedure Read_pehreaim_det;
+
+    procedure Select_pehreaim_det;
+
+    procedure Select_pehreaim_comdet;
+
+    procedure Select_Form(Sender: TObject);
+
+    function  Csel_gfd1(p_loc: Integer): String;
+    function  Csel_gfd2(p_loc: Integer): String;
+    function  Csel_gfd10(p_loc: Integer): String;
+
+    Function  Send_WebHint(SendProgID, SendEmpno, RcveEmpno, MailSubject, MailBody, ReceiveYN : String) : Boolean;
+  public
+    gsLastConEv  : String;  //업무목표최종결재자 (1차 or 2차)
+    Lrabasdate   : string;  // 평가기준일.
+    Jrabasdate   : string;  // 전년도평가기준일.
+    Le1empno     : string;  // 1차 평가자
+    g_mainweight : string;  // 전체 비중
+    EvalYN       : Boolean;
+    SendProgID, SendEmpno, RcveEmpno, MailSubject, MailBody, ReceiveYN : String;
+    { Public declarations }
+    function  Get_Code(Acodeid, Acodeno : String) : String;  // 코드명 가져오기
+    function  Get_Dept(Acodeid, Acodeno : String) : String;  // 부서명 가져오기
+  end;
+
+var
+     MainForm: TMainForm;
+     FSvr    : OleVariant;
+     vOrgnum, vDeptcode : string;
+
+const
+  Msg = '목표 면담등록 서버가 다운된 것 같습니다.'+#13#13+'담당자에게 문의 하십시오'#13;
+
+implementation
+
+uses Hinsa_TmaxDM, peDm, pea1060a1, pea1060a2, pea1060a3, PEA1060A4,PEA1060B1,pea1060b3,pea1060a6 ;
+
+{$R *.DFM}
+
+//작업상 필요한 날짜 얻기
+function TMainForm.GetBaseYear(gubun : integer) : string;
+var
+      Sql     : string;
+begin
+     Result := '';
+     if  gubun = 0 then                                            //전년도 업적평가 기준일
+          Sql := 'SELECT VALUE4 FROM PEHREBAS WHERE RABASDATE = ''00000000'' AND GUBUN = ''00'' AND SGUBUN = ''0001'' ';
+
+     if  gubun = 1 then                                            //업적평가 기준일(Lrabasdate)
+          Sql := 'SELECT VALUE1 FROM PEHREBAS WHERE RABASDATE = ''00000000'' AND GUBUN = ''00'' AND SGUBUN = ''0001'' ';
+
+     if  gubun = 2 then                                            //하반기 업적평가 시작일(LFordate)
+          Sql := 'SELECT VALUE2 FROM PEHREBAS WHERE RABASDATE = ''00000000'' AND GUBUN = ''00'' AND SGUBUN = ''0003'' ';
+
+     if  gubun = 3 then                                            //시스템 시각(Lsysdate)
+          Sql := 'SELECT TO_CHAR(SYSDATE,''YYYYMMDDHH24MISSD'') FROM DUAL ';
+
+     if  gubun = 4 then                                            //
+          Sql := 'SELECT NVL(VALUE5,'' '') FROM PEHREBAS  '+
+                 ' WHERE RABASDATE = ''' + Lrabasdate + ''' AND GUBUN = ''11'' AND SGUBUN = ''0003'' ';
+
+     if  gubun = 5 then                                            //직위체계변경일
+          Sql := 'SELECT NVL(VALUE3,'' '') FROM PIMVARI WHERE GUBUN = ''00'' AND SGUBUN = ''0001'' ';
+
+     if  gubun = 6 then                                            //인사팀 부서명
+          Sql := 'SELECT NVL(VALUE2,'' '') FROM PIMVARI WHERE GUBUN = ''R0'' AND SGUBUN = ''0001'' ';
+
+     if gubun = 7 then                                            //전년도 업적평가 기준일
+     Sql := 'SELECT VALUE2 FROM PEHREBAS WHERE RABASDATE = ''00000000'' AND GUBUN = ''00'' AND SGUBUN = ''0002'' ';
+
+     DataModule_Tmax.Csel_SQL := Sql;
+     DataModule_Tmax.Csel_Open4;
+     Result := DataModule_Tmax.Csel_gfd4(1);
+end;
+
+
+function TMainForm.GetPehremas(Gubun : string) : string;    //사원업적평가 마스터 읽기
+var
+     Sql         : string;
+     OleData     : OleVariant;
+begin
+     Result      := '';
+     Le1empno    := '';
+     Le2empno    := '';
+     Le1korname  := '';
+     Le2korname  := '';
+     Lebrempno   := '';
+     Lebrkorname := '';
+
+     Sql := 'SELECT EMPNO      ||'';''|| KORNAME    ||'';''|| JOBGUN    ||'';''|| PAYCL       ||'';''|| PAYRA     ||'';''|| '+
+            '       DEPTCODE   ||'';''|| ORGNUM     ||'';''|| TITLE     ||'';''|| PAYCLDATE   ||'';''|| TRDATE    ||'';''|| '+
+            '       EMPDATE    ||'';''|| E1EMPNO    ||'';''|| E2EMPNO   ||'';''|| E1KORNAME   ||'';''|| E2KORNAME ||'';''|| '+
+            '       E1PAYRA    ||'';''|| E2PAYRA    ||'';''|| RVALCONYN ||'';''|| E1VALCONYN  ||'';''|| E2VALCONYN||'';''|| '+
+            '       E1VALOBJYN ||'';''|| E2VALOBJYN ||'';''|| EBREMPNO  ||'';''|| EBRKORNAME  ||'';''|| EBRPAYRA  ||'';''|| '+
+            '       EBRVALCONYN||'';''|| EBRVALOBJYN||'';''|| E1PRJCONYN||'';''|| E1PRJCONDATE||'';''|| E1PAYCL   ||'';''|| '+
+            '       E1ORGNUM   ||'';''|| E1DEPTCODE '+
+            '  FROM PEHREMAS ';
+     if  Gubun = '읽기' then
+     begin
+          Sql := Sql + ' WHERE RABASDATE = ''' + Lrabasdate + '''         '+  // 평가기준일
+                       '   AND EMPNO     = ''' + Ed_empno.LabelHint + ''' '+  // 선택된사번
+                       '   AND RECONYN   = ''Y''                          ';  // 목표등록대상여부
+     end;
+
+     if  Gubun = '추출' then
+     begin
+          Sql := Sql + ' WHERE RABASDATE = ''' + Lrabasdate + ''' '+  //평가기준일
+                       '   AND RECONYN   = ''Y''                  '+  //목표등록대상여부
+                       '   AND (EMPNO    = ''' + pEmpno + '''     '+  //선택된사번
+                       '    OR  E1EMPNO  = ''' + pEmpno + '''     '+  //1차평가자
+                       '    OR  E2EMPNO  = ''' + pEmpno + '''     '+  //2차평가자
+                       '    OR  EBREMPNO = ''' + pEmpno + ''')    ';  //지점장
+     end;
+
+     // 접속자가 피평가자, 1차평가자, 2차평가자중 하나인지 검사
+     if  Gubun = '구분' then
+     begin
+          Sql := Sql + ' WHERE RABASDATE = ''' + Lrabasdate + ''' '+  //평가기준일
+                       '   AND RECONYN   = ''Y''                  '+  //목표등록대상여부
+                       '   AND (E1EMPNO  = ''' + pEmpno + '''     '+  //1차평가자
+                       '    OR  E2EMPNO  = ''' + pEmpno + '''     '+  //2차평가자
+                       '    OR  EBREMPNO = ''' + pEmpno + ''')    ';  //지점장
+     end;
+
+     if  Gubun = '구분' then
+     begin
+          DataModule_Tmax.Csel_SQL := Sql;
+          DataModule_Tmax.Csel_Open4;
+     end
+     else
+     begin
+          DataModule_Tmax.Csel_SQL := Sql;
+          DataModule_Tmax.Csel_Open;
+     end;
+
+     if  Gubun = '읽기' then
+     begin
+          with DataModule_Tmax.TMaxDataSet_HInsa do
+          begin
+               Ed_empno.Text            := DataModule_Tmax.Csel_gfd(2);                   //사원
+               Pa_paycl.TextCaption     := Get_Code('I112',DataModule_Tmax.Csel_gfd(4));  //직급
+               Pa_payra.TextCaption     := Get_Code('I113',DataModule_Tmax.Csel_gfd(5));  //직위
+               Pa_jobgun.TextCaption    := Get_Code('I115',DataModule_Tmax.Csel_gfd(3));  //직군
+               Pa_jobgun.Hint           := DataModule_Tmax.Csel_gfd(3);                   // 직군코드
+               Pa_deptcode.TextCaption  := Get_Dept(DataModule_Tmax.Csel_gfd(7),          //부서명
+                                                        DataModule_Tmax.Csel_gfd(6));
+               Pa_empdate.TextCaption   := DataModule_Tmax.Csel_gfd(11);                  //입사일
+               //Pa_paycldate.LabelCaption := DataModule_Tmax.Csel_gfd(8);                //승격일(타이틀?)
+               Pa_paycldate.TextCaption := DataModule_Tmax.Csel_gfd(9);                   //승격일
+               Pa_trdate.TextCaption    := DataModule_Tmax.Csel_gfd(10);                  //현부서발령일
+               if  pEmpno = DataModule_Tmax.Csel_gfd(12) then     Result := '1차';        //pEmpno = Login 사번
+               if  pEmpno = DataModule_Tmax.Csel_gfd(23) then     Result := '지점장';
+               if  pEmpno = DataModule_Tmax.Csel_gfd(13) then     Result := '2차';
+               if  pEmpno = DataModule_Tmax.Csel_gfd(1)  then     Result := '피평가자';
+
+               Le1empno                 := DataModule_Tmax.Csel_gfd(12);                  //1차평가자사번
+               Le2empno                 := DataModule_Tmax.Csel_gfd(13);                  //2차평가자사번
+               Le1korname               := DataModule_Tmax.Csel_gfd(14);                  //1차평가자성명
+               Le2korname               := DataModule_Tmax.Csel_gfd(15);                  //2차평가자성명
+               Lebrempno                := DataModule_Tmax.Csel_gfd(23);                  //지점장사번
+               Lebrkorname              := DataModule_Tmax.Csel_gfd(24);                  //지점장성명
+
+               Pa_Le1korname.Caption    := Le1korname;                                    //1차평가자성명
+               Pa_Le2korname.Caption    := Le2korname;                                    //2차평가자성명
+               Pa_Le1payra.Caption      := Get_Code('I113',DataModule_Tmax.Csel_gfd(16)); //1차평가자직위
+               Pa_Le2payra.Caption      := Get_Code('I113',DataModule_Tmax.Csel_gfd(17)); //2차평가자직위
+          end;
+     end;
+
+     if  Gubun = '추출' then
+     begin
+          if  DataModule_Tmax.TMaxDataSet_HInsa.Eof then     Result := '없음';
+     end;
+
+     if  Gubun = '구분' then
+     begin
+          if  Dm.Qmas.Eof then     Result := '없음';
+     end;
+
+     grvalconyn  := DataModule_Tmax.Csel_gfd(18);              //피평가자  평가완료 여부
+     ge1valconyn := DataModule_Tmax.Csel_gfd(19);              //1차평가자 평가완료 여부
+     ge2valconyn := DataModule_Tmax.Csel_gfd(20);              //2차평가자 평가완료 여부
+     ge1valobjyn := DataModule_Tmax.Csel_gfd(21);              //1차평가자 평가반려 여부
+     ge2valobjyn := DataModule_Tmax.Csel_gfd(22);              //2차평가자 평가반려 여부
+
+     vOrgnum     := DataModule_Tmax.Csel_gfd(07);
+     vDeptcode   := DataModule_Tmax.Csel_gfd(06);
+
+     if  Gubun = '읽기' then
+     begin
+          sql := 'SELECT NVL(DEPTNA3, '' '') FROM PYCDEPT '+
+                 ' WHERE ORGNUM   = ''' + vOrgnum   + ''' '+
+                 '   AND DEPTCODE = ''' + vDeptcode + ''' ';
+
+          DataModule_Tmax.Csel_SQL := Sql;
+          DataModule_Tmax.Csel_Open4;
+          Pa_deptna3.TextCaption  := DataModule_Tmax.Csel_gfd4(1);
+     end;
+end;
+
+// 관리직 자료 읽기
+procedure TMainForm.Read_pehreaim_det;
+var
+     SqlText,sql : string;
+     i, iRowCnt     : integer;
+begin
+     //중점추진업무 순번을 Select_pehreaim_det프로시져에서 제대로 못가져와서 따로 가져옴.
+     SqlText := ' SELECT substr(DETAILTASK1,1,1)||'';''||substr(DETAILTASK2,1,1)||'';''||substr(DETAILTASK3,1,1)||'';''||              '+
+                '        substr(DETAILTASK4,1,1)||'';''||substr(DETAILTASK5,1,1)||'';''||NVL(TO_CHAR(SEQNO),''0'')||'';''||            '+
+                '        BRESULTCLASS1||'';''||BRESULTCLASS2||'';''||BRESULTCLASS3||'';''||BRESULTCLASS4||'';''||BRESULTCLASS5||'';''||'+
+                '        VALFUNCTION1||'';''||VALFUNCTION2||'';''||VALFUNCTION3||'';''||VALFUNCTION4||'';''||VALFUNCTION5              '+
+                '   FROM PEHREAIM_DET                                                                                                  '+
+                '  WHERE RABASDATE = ''' + LRABASDATE + ''''+' AND EMPNO = ''' + ED_EMPNO.LABELHINT + '''                              ';
+
+     with DB_COM_SEL do
+     begin
+          Close;
+          ServiceName := 'PEA1060A_common';
+          ClearFieldInfo;
+          AddField('SEL_DATA', ftString, 300);
+          ClearParamInfo;
+          SQL.Text := SqlText;
+          Open;
+
+          iRowCnt := 0;
+
+          if RecordCount > 0 then
+          begin
+               for i := 1 to RecordCount do
+               begin
+                    if  Csel_gfd2(1) <> '' then
+                    begin
+                         iRowCnt := iRowCnt + 1;
+                         sGrid2.Cells[8,iRowCnt] := Csel_gfd2(6);    //중점추진업무순번
+                         sGrid2.Cells[6,iRowCnt] := Csel_gfd2(7);    //평가기준목표(달성목표B)
+                         sGrid2.Cells[7,iRowCnt] := Csel_gfd2(12);   //평가산식(Option)
+                    end;
+
+                    if  Csel_gfd2(2) <> '' then
+                    begin
+                         iRowCnt := iRowCnt + 1;
+                         sGrid2.Cells[8,iRowCnt] := Csel_gfd2(6);    //중점추진업무순번
+                         sGrid2.Cells[6,iRowCnt] := Csel_gfd2(8);    //평가기준목표(달성목표B)
+                         sGrid2.Cells[7,iRowCnt] := Csel_gfd2(13);   //평가산식(Option)
+                    end;
+
+                    if  Csel_gfd2(3) <> '' then
+                    begin
+                         iRowCnt := iRowCnt + 1;
+                         sGrid2.Cells[8,iRowCnt] := Csel_gfd2(6);    //중점추진업무순번
+                         sGrid2.Cells[6,iRowCnt] := Csel_gfd2(9);    //평가기준목표(달성목표B)
+                         sGrid2.Cells[7,iRowCnt] := Csel_gfd2(14);   //평가산식(Option)
+                    end;
+
+                    if  Csel_gfd2(4) <> '' then
+                    begin
+                         iRowCnt := iRowCnt + 1;
+                         sGrid2.Cells[8,iRowCnt] := Csel_gfd2(6);    //중점추진업무순번
+                         sGrid2.Cells[6,iRowCnt] := Csel_gfd2(10);   //평가기준목표(달성목표B)
+                         sGrid2.Cells[7,iRowCnt] := Csel_gfd2(15);   //평가산식(Option)
+                    end;
+
+                    if  Csel_gfd2(5) <> '' then
+                    begin
+                         iRowCnt := iRowCnt + 1;
+                         sGrid2.Cells[8,iRowCnt] := Csel_gfd2(6);    //중점추진업무순번
+                         sGrid2.Cells[6,iRowCnt] := Csel_gfd2(11);   //평가기준목표(달성목표B)
+                         sGrid2.Cells[7,iRowCnt] := Csel_gfd2(16);   //평가산식(Option)
+                    end;
+
+                    next;
+               end;
+               //showmessage('iRowCnt : '+ inttostr(iRowCnt));
+          end;
+     end;
+
+  //  Try
+     i_Seq_no := '';
+     i_Seq_no := i_Seq_no + sGrid2.Cells[8,sGrid2.Row];
+
+     with DM.DBSet1 do
+     begin
+          SqlText := 'SELECT NVL(TO_CHAR(SEQNO),''0''), NVL(PROPELTASK,''''), NVL(TO_CHAR(MAINWEIGHT),''0''),             '+
+                     '       NVL(DETAILTASK1,''''), NVL(DETAILTASK2,''''), NVL(DETAILTASK3,''''),                         '+
+                     '       NVL(DETAILTASK4,''''), NVL(DETAILTASK5,''''), NVL(TO_CHAR(DETAILWEIGHT1  ),''0''),           '+
+                     '       NVL(TO_CHAR(DETAILWEIGHT2  ),''0''), NVL(TO_CHAR(DETAILWEIGHT3  ),''0''),                    '+
+                     '       NVL(TO_CHAR(DETAILWEIGHT4  ),''0''), NVL(TO_CHAR(DETAILWEIGHT5  ),''0''),                    '+
+                     '       NVL(VALIDX1,''''), NVL(VALIDX2,''''), NVL(VALIDX3,''''), NVL(VALIDX4,''''),                  '+
+                     '       NVL(VALIDX5,''''), NVL(VALFUNCTION1,''''), NVL(VALFUNCTION2,''''), NVL(VALFUNCTION3,''''),   '+
+                     '       NVL(VALFUNCTION4,''''), NVL(VALFUNCTION5,''''), NVL(SRESULTCLASS1,''''),                     '+
+                     '       NVL(ARESULTCLASS1,''''), NVL(BRESULTCLASS1,''''), NVL(CRESULTCLASS1,''''),                   '+
+                     '       NVL(DRESULTCLASS1,''''), NVL(SRESULTCLASS2,''''), NVL(ARESULTCLASS2,''''),                   '+
+                     '       NVL(BRESULTCLASS2,''''), NVL(CRESULTCLASS2,''''), NVL(DRESULTCLASS2,''''),                   '+
+                     '       NVL(SRESULTCLASS3,''''), NVL(ARESULTCLASS3,''''), NVL(BRESULTCLASS3,''''),                   '+
+                     '       NVL(CRESULTCLASS3,''''), NVL(DRESULTCLASS3,''''), NVL(SRESULTCLASS4,''''),                   '+
+                     '       NVL(ARESULTCLASS4,''''), NVL(BRESULTCLASS4,''''), NVL(CRESULTCLASS4,''''),                   '+
+                     '       NVL(DRESULTCLASS4,''''), NVL(SRESULTCLASS5,''''), NVL(ARESULTCLASS5,''''),                   '+
+                     '       NVL(BRESULTCLASS5,''''), NVL(CRESULTCLASS5,''''), NVL(DRESULTCLASS5,''''),                   '+
+                     '       NVL(E1PRJOPINON  ,''''), NVL(KORNAME,''''), NVL(EMPNO,''''), NVL(RPRJCONYN,''''),            '+
+                     '       NVL(RPRJCONDATE,''''), NVL(E1EMPNO,''''), NVL(E1PRJCONYN,''''), NVL(E1PRJCONDATE,''''),      '+
+                     '       NVL(E1PRJVIEW,''''), NVL(E1PRJOBJYN,''''), NVL(EBREMPNO,''''), NVL(EBRPRJCONYN,''''),        '+
+                     '       NVL(EBRPRJCONDATE,''''), NVL(EBRPRJVIEW,''''), NVL(EBRVALOBJYN,''''), NVL(E2EMPNO,''''),     '+
+                     '       NVL(E2PRJCONYN,''''), NVL(E2PRJCONDATE,''''), NVL(E2PRJVIEW,''''), NVL(E2VALOBJYN,'''')      '+
+                     '  FROM (                                                                                            '+
+                     '        SELECT B.SEQNO,B.PROPELTASK, B.MAINWEIGHT,                                                  '+
+                     '               B.DETAILTASK1, B.DETAILTASK2, B.DETAILTASK3, B.DETAILTASK4, B.DETAILTASK5,           '+
+                     '               B.DETAILWEIGHT1, B.DETAILWEIGHT2, B.DETAILWEIGHT3, B.DETAILWEIGHT4, B.DETAILWEIGHT5, '+
+                     '               B.VALIDX1, B.VALIDX2, B.VALIDX3, B.VALIDX4, B.VALIDX5,                               '+
+                     '               B.VALFUNCTION1, B.VALFUNCTION2, B.VALFUNCTION3, B.VALFUNCTION4, B.VALFUNCTION5,      '+
+                     '               B.SRESULTCLASS1, B.ARESULTCLASS1, B.BRESULTCLASS1, B.CRESULTCLASS1, B.DRESULTCLASS1, '+
+                     '               B.SRESULTCLASS2, B.ARESULTCLASS2, B.BRESULTCLASS2, B.CRESULTCLASS2, B.DRESULTCLASS2, '+
+                     '               B.SRESULTCLASS3, B.ARESULTCLASS3, B.BRESULTCLASS3, B.CRESULTCLASS3, B.DRESULTCLASS3, '+
+                     '               B.SRESULTCLASS4, B.ARESULTCLASS4, B.BRESULTCLASS4, B.CRESULTCLASS4, B.DRESULTCLASS4, '+
+                     '               B.SRESULTCLASS5, B.ARESULTCLASS5, B.BRESULTCLASS5, B.CRESULTCLASS5, B.DRESULTCLASS5, '+
+                     '               B.E1PRJOPINON,  A.KORNAME, A.EMPNO, A.RPRJCONYN,A.RPRJCONDATE,                       '+
+                     '               A.E1EMPNO,A.E1PRJCONYN,A.E1PRJCONDATE,A.E1PRJVIEW,A.E1PRJOBJYN,                      '+
+                     '               A.EBREMPNO,A.EBRPRJCONYN,A.EBRPRJCONDATE,A.EBRPRJVIEW,A.EBRVALOBJYN,                 '+
+                     '               A.E2EMPNO,A.E2PRJCONYN,A.E2PRJCONDATE,A.E2PRJVIEW,A.E2VALOBJYN                       '+
+                     '          FROM PEHREMAS A, PEHREAIM_DET B                                                           '+
+                     '         WHERE A.RABASDATE = ''' + LRABASDATE + '''                                                 '+
+                     '           AND A.EMPNO     = ''' + ED_EMPNO.LABELHINT + '''                                         '+
+                     '           AND A.RABASDATE = B.RABASDATE(+)                                                         '+
+                     '           AND A.EMPNO     = B.EMPNO(+)                                                             ';
+
+  // 공동목표 100% 인 사람은 recordcount = 0 이므로 막음 gura
+          if  isum_com <> '100' then
+               sqlText := SqlText +
+                          '      AND B.SEQNO(+)  LIKE  ''' + i_Seq_no + '''                                               ';
+          sqlText := SqlText +
+                     '         )                                                                                          '+
+                     ' ORDER BY SEQNO                                                                                     ';
+
+          Db_propeltask.DataField := 'PROPELTASK';     //중점 추진활동
+          Db_forweight.DataField  := 'MAINWEIGHT';     //비중
+          Db_plan1.DataField      := 'DETAILTASK1';    //세부 추진활동
+          Db_plan2.DataField      := 'DETAILTASK2';
+          Db_plan3.DataField      := 'DETAILTASK3';
+          Db_plan4.DataField      := 'DETAILTASK4';
+          Db_plan5.DataField      := 'DETAILTASK5';
+          Db_deweight1.DataField  := 'DETAILWEIGHT1';  //상세비중
+          Db_deweight2.DataField  := 'DETAILWEIGHT2';
+          Db_deweight3.DataField  := 'DETAILWEIGHT3';
+          Db_deweight4.DataField  := 'DETAILWEIGHT4';
+          Db_deweight5.DataField  := 'DETAILWEIGHT5';
+          Db_validx1.DataField    := 'VALIDX1';        //평가 지표
+          Db_validx2.DataField    := 'VALIDX2';
+          Db_validx3.DataField    := 'VALIDX3';
+          Db_validx4.DataField    := 'VALIDX4';
+          Db_validx5.DataField    := 'VALIDX5';
+          Db_foraim1.DataField    := 'VALFUNCTION1';   //평가산식
+          Db_foraim2.DataField    := 'VALFUNCTION2';
+          Db_foraim3.DataField    := 'VALFUNCTION3';
+          Db_foraim4.DataField    := 'VALFUNCTION4';
+          Db_foraim5.DataField    := 'VALFUNCTION5';
+          DB_s1.DataField         := 'BRESULTCLASS1';           //달성목표
+          DB_a1.DataField         := 'BRESULTCLASS2';
+          DB_b1.DataField         := 'BRESULTCLASS3';
+          DB_c1.DataField         := 'BRESULTCLASS4';
+          DB_d1.DataField         := 'BRESULTCLASS5';
+
+          Close;
+          ServiceName := 'PEA1060A_sel2';
+          ClearFieldInfo;
+          ClearParamInfo;
+          AddField('SEQNO'              , ftString,   2 );
+          AddField('PROPELTASK'         , ftString, 100 );
+          AddField('MAINWEIGHT'         , ftString,   3 );
+          AddField('DETAILTASK1'        , ftString, 100 );
+          AddField('DETAILTASK2'        , ftString, 100 );
+          AddField('DETAILTASK3'        , ftString, 100 );
+          AddField('DETAILTASK4'        , ftString, 100 );
+          AddField('DETAILTASK5'        , ftString, 100 );
+          AddField('DETAILWEIGHT1'      , ftString,   3 );
+          AddField('DETAILWEIGHT2'      , ftString,   3 );
+          AddField('DETAILWEIGHT3'      , ftString,   3 );
+          AddField('DETAILWEIGHT4'      , ftString,   3 );
+          AddField('DETAILWEIGHT5'      , ftString,   3 );
+          AddField('VALIDX1'            , ftString, 100 );
+          AddField('VALIDX2'            , ftString, 100 );
+          AddField('VALIDX3'            , ftString, 100 );
+          AddField('VALIDX4'            , ftString, 100 );
+          AddField('VALIDX5'            , ftString, 100 );
+          AddField('VALFUNCTION1'       , ftString, 100 );
+          AddField('VALFUNCTION2'       , ftString, 100 );
+          AddField('VALFUNCTION3'       , ftString, 100 );
+          AddField('VALFUNCTION4'       , ftString, 100 );
+          AddField('VALFUNCTION5'       , ftString, 100 );
+          AddField('SRESULTCLASS1'      , ftString, 100 );
+          AddField('ARESULTCLASS1'      , ftString, 100 );
+          AddField('BRESULTCLASS1'      , ftString, 100 );
+          AddField('CRESULTCLASS1'      , ftString, 100 );
+          AddField('DRESULTCLASS1'      , ftString, 100 );
+          AddField('SRESULTCLASS2'      , ftString, 100 );
+          AddField('ARESULTCLASS2'      , ftString, 100 );
+          AddField('BRESULTCLASS2'      , ftString, 100 );
+          AddField('CRESULTCLASS2'      , ftString, 100 );
+          AddField('DRESULTCLASS2'      , ftString, 100 );
+          AddField('SRESULTCLASS3'      , ftString, 100 );
+          AddField('ARESULTCLASS3'      , ftString, 100 );
+          AddField('BRESULTCLASS3'      , ftString, 100 );
+          AddField('CRESULTCLASS3'      , ftString, 100 );
+          AddField('DRESULTCLASS3'      , ftString, 100 );
+          AddField('SRESULTCLASS4'      , ftString, 100 );
+          AddField('ARESULTCLASS4'      , ftString, 100 );
+          AddField('BRESULTCLASS4'      , ftString, 100 );
+          AddField('CRESULTCLASS4'      , ftString, 100 );
+          AddField('DRESULTCLASS4'      , ftString, 100 );
+          AddField('SRESULTCLASS5'      , ftString, 100 );
+          AddField('ARESULTCLASS5'      , ftString, 100 );
+          AddField('BRESULTCLASS5'      , ftString, 100 );
+          AddField('CRESULTCLASS5'      , ftString, 100 );
+          AddField('DRESULTCLASS5'      , ftString, 100 );
+          AddField('E1PRJOPINON'        , ftString, 200 );
+          AddField('KORNAME'            , ftString,  12 );
+          AddField('EMPNO'              , ftString,   4 );
+          AddField('RPRJCONYN'          , ftString,   1 );
+          AddField('RPRJCONDATE'        , ftString,   8 );
+          AddField('E1EMPNO'            , ftString,   4 );
+          AddField('E1PRJCONYN'         , ftString,   1 );
+          AddField('E1PRJCONDATE'       , ftString,   8 );
+          AddField('E1PRJVIEW'          , ftString, 200 );
+          AddField('E1VALOBJYN'         , ftString,   1 );
+          AddField('EBREMPNO'           , ftString,   4 );
+          AddField('EBRPRJCONYN'        , ftString,   1 );
+          AddField('EBRPRJCONDATE'      , ftString,   8 );
+          AddField('EBRPRJVIEW'         , ftString, 200 );
+          AddField('EBRVALOBJYN'        , ftString,   1 );
+          AddField('E2EMPNO'            , ftString,   4 );
+          AddField('E2PRJCONYN'         , ftString,   1 );
+          AddField('E2PRJCONDATE'       , ftString,   8 );
+          AddField('E2PRJVIEW'          , ftString, 200 );
+          AddField('E2VALOBJYN'         , ftString,   1 );
+          SQL.Text := Sqltext;
+          Open;
+     end;
+
+     //전체 비중 합계
+     Sql :=        'select sum(mainweight) from PEHREAIM_DET   '+
+            format(' WHERE rabasdate=''%s'' and empno = ''%s'' ',[Lrabasdate,Ed_empno.LabelHint]);
+
+     DataModule_Tmax.Csel_SQL := Sql;
+     DataModule_Tmax.Csel_Open4;
+     g_mainweight     := DataModule_Tmax.Csel_gfd4(1);
+     if  g_mainweight = '' then     g_mainweight := '0';
+
+     //Eda_weight.value := StrToInt(g_mainweight);
+end;
+
+procedure TMainForm.Select_pehreaim_det;
+var  i,j , isum: integer;
+     SqlText : String;
+     iRowCnt : integer;
+begin
+     sGrid2.RowCount := 6;
+     for  i := 1 to 5 do
+     begin
+          for  j := 1 to 10 do
+          begin
+               sGrid2.Cells[j,i] := '';
+          end;
+     end;
+
+     SqlText := ' SELECT PROPELTASK||'';''||MAINWEIGHT||'';''||substr(DETAILTASK1,1,20)||'';''||substr(DETAILTASK2,1,20)||'';''||          '+
+                '        substr(DETAILTASK3,1,20)||'';''||substr(DETAILTASK4,1,20)||'';''||substr(DETAILTASK5,1,20)||'';''||               '+
+                '        nvl(DETAILWEIGHT1,''0'')||'';''||nvl(DETAILWEIGHT2,''0'')||'';''||nvl(DETAILWEIGHT3,''0'')||'';''||               '+
+                '        nvl(DETAILWEIGHT4,''0'')||'';''||nvl(DETAILWEIGHT5,''0'')||'';''||                                                '+
+                '        VALIDX1||'';''||VALIDX2||'';''||VALIDX3||'';''||VALIDX4||'';''||VALIDX5||'';''||                                  '+
+                '        BRESULTCLASS1||'';''||BRESULTCLASS2||'';''||BRESULTCLASS3||'';''||BRESULTCLASS4||'';''||BRESULTCLASS5||'';''||    '+
+                '        substr(VALFUNCTION1,1,10)||'';''||substr(VALFUNCTION2,1,10)||'';''||substr(VALFUNCTION3,1,10)||'';''||            '+
+                '        substr(VALFUNCTION4,1,10)||'';''||substr(VALFUNCTION5,1,10)||'';''||NVL(TO_CHAR(SEQNO),''0'')||'';''||e1prjopinon '+
+                '   FROM PEHREAIM_DET                                                                                                      '+
+                '  WHERE RABASDATE = ''' + LRABASDATE + ''''+' AND EMPNO = ''' + ED_EMPNO.LABELHINT + '''                                  ';
+
+    // memo1.text := sqltext;
+     with DB_COM_SEL do
+     begin
+          Close;
+          ServiceName := 'PEA1060A_common';
+          ClearFieldInfo;
+          AddField('SEL_DATA', ftString, 300);
+          ClearParamInfo;
+          SQL.Text := SqlText;
+          Open;
+
+          iRowCnt := 0;
+
+          if  RecordCount > 0 then
+          begin
+               for i := 1 to RecordCount do
+               begin
+                    //무조건 seqno와 팀장면담내용을 첫번째 row에 넣고 첫번째row값을 select한다.
+                    if  i = 1 then
+                    begin
+                         ed_seqno_chk.Text := Csel_gfd2(28);          //개인별 seqno
+                         //mo_e1prjopinon.Text :=  Csel_gfd2(29);
+                    end;
+
+                    if  Csel_gfd2(3) <> '' then
+                    begin
+                         iRowCnt := iRowCnt + 1;
+                         sGrid2.Cells[1,iRowCnt] := Csel_gfd2(1);     //매체명
+                         sGrid2.Cells[2,iRowCnt] := Csel_gfd2(2);     //매체비중
+                         sGrid2.Cells[3,iRowCnt] := Csel_gfd2(3);     //세부추진활동
+                         sGrid2.Cells[4,iRowCnt] := Csel_gfd2(8);     //세부비중
+                         sGrid2.Cells[5,iRowCnt] := Csel_gfd2(13);    //평가지표
+                         sGrid2.Cells[6,iRowCnt] := Csel_gfd2(18);    //평가기준목표(달성목표B)
+                         sGrid2.Cells[7,iRowCnt] := Csel_gfd2(23);    //평가산식(Option)
+                         sGrid2.Cells[8,iRowCnt] := Csel_gfd2(28);    //중점추진업무순번
+                    end;
+
+                    if  Csel_gfd2(4) <> '' then
+                    begin
+                         iRowCnt := iRowCnt +1;
+                         //sGrid2.Cells[1,iRowCnt] := '개인목표등록';
+                         //sGrid2.Cells[2,iRowCnt] := Csel_gfd2(7);    //매체비중
+                         sGrid2.Cells[3,iRowCnt] := Csel_gfd2(4);      //세부추진활동
+                         sGrid2.Cells[4,iRowCnt] := Csel_gfd2(9);      //세부비중
+                         sGrid2.Cells[5,iRowCnt] := Csel_gfd2(14);     //평가지표
+                         sGrid2.Cells[6,iRowCnt] := Csel_gfd2(19);     //평가기준목표(달성목표B)
+                         sGrid2.Cells[7,iRowCnt] := Csel_gfd2(24);     //평가산식(Option)
+                         sGrid2.Cells[8,iRowCnt] := Csel_gfd2(28);     //중점추진업무순번
+                    end;
+                    if  Csel_gfd2(5) <> '' then
+                    begin
+                         iRowCnt := iRowCnt +1;
+                         //sGrid2.Cells[1,iRowCnt] := '개인목표등록';
+                         //sGrid2.Cells[2,iRowCnt] := Csel_gfd2(8);    //매체비중
+                         sGrid2.Cells[3,iRowCnt] := Csel_gfd2(5);      //세부추진활동
+                         sGrid2.Cells[4,iRowCnt] := Csel_gfd2(10);     //세부비중
+                         sGrid2.Cells[5,iRowCnt] := Csel_gfd2(15);     //평가지표
+                         sGrid2.Cells[6,iRowCnt] := Csel_gfd2(20);     //평가기준목표(달성목표B)
+                         sGrid2.Cells[7,iRowCnt] := Csel_gfd2(25);     //평가산식(Option)
+                         sGrid2.Cells[8,iRowCnt] := Csel_gfd2(28);     //중점추진업무순번
+                    end;
+                    if  Csel_gfd2(6) <> '' then
+                    begin
+                         iRowCnt := iRowCnt +1;
+                         //sGrid2.Cells[1,iRowCnt] := '개인목표등록';
+                         //sGrid2.Cells[2,iRowCnt] := Csel_gfd2(8);    //매체비중
+                         sGrid2.Cells[3,iRowCnt] := Csel_gfd2(6);      //세부추진활동
+                         sGrid2.Cells[4,iRowCnt] := Csel_gfd2(11);     //세부비중
+                         sGrid2.Cells[5,iRowCnt] := Csel_gfd2(16);     //평가지표
+                         sGrid2.Cells[6,iRowCnt] := Csel_gfd2(21);     //평가기준목표(달성목표B)
+                         sGrid2.Cells[7,iRowCnt] := Csel_gfd2(26);     //평가산식(Option)
+                         sGrid2.Cells[8,iRowCnt] := Csel_gfd2(28);     //중점추진업무순번
+                    end;
+                    if  Csel_gfd2(7) <> '' then
+                    begin
+                         iRowCnt := iRowCnt +1;
+                         //sGrid2.Cells[1,iRowCnt] := '개인목표등록';
+                         //sGrid2.Cells[2,iRowCnt] := Csel_gfd2(8);    //매체비중
+                         sGrid2.Cells[3,iRowCnt] := Csel_gfd2(7);      //세부추진활동
+                         sGrid2.Cells[4,iRowCnt] := Csel_gfd2(12);     //세부비중
+                         sGrid2.Cells[5,iRowCnt] := Csel_gfd2(17);     //평가지표
+                         sGrid2.Cells[6,iRowCnt] := Csel_gfd2(22);     //평가기준목표(달성목표B)
+                         sGrid2.Cells[7,iRowCnt] := Csel_gfd2(27);     //평가산식(Option)
+                         sGrid2.Cells[8,iRowCnt] := Csel_gfd2(28);     //중점추진업무순번
+                    end;
+
+                    next;
+               end;
+          end;
+
+          Close;
+     end;
+
+     //전체비중체크
+     isum := 0;
+     for  i := 1 to sGrid1.RowCount -1 do
+     begin
+          if  sGrid1.Cells[2,i] <> '' then
+               isum := isum + strtoint(sGrid1.Cells[2,i]);
+     end;
+
+     if  iRowcnt > 0 then     sGrid2.RowCount := iRowCnt +1
+     else                     sGrid2.RowCount := 2;
+     // for i := 1 to sGrid2.RowCount -1 do
+     for  i := 1 to iRowCnt do
+     begin
+          if  sGrid2.Cells[2,i] <> '' then
+          begin
+               // showmessage(sGrid2.Cells[2,i]);
+               isum := isum + strtoint(sGrid2.Cells[2,i]);
+          end;
+     end;
+
+     //기여도는 포함 안됨. 기여도는 100% 따로 추가 3%임.
+     Eda_weight.Value := isum;
+
+end;
+
+
+procedure TMainForm.FormClose(Sender: TObject; var Action: TCloseAction);
+begin
+     if  SRabasDate <> Jrabasdate then
+     begin
+          if (Lwork <> '피평가자') then
+          if  trim(sKillCheckID) = '' then
+          begin
+               //1차 2차 평가자일경우
+               LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060E.EXE ,'
+                          +Passemp(cmdline,1) +','+Passemp(cmdline,2)+','+Passemp(cmdline,3)+','
+                          +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                          +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                          +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                          +Passemp(cmdline,13)+','+Passemp(cmdline,14)+','+Passemp(cmdline,15);
+
+               strpcopy( LAarg, LSfilename );
+               winexec(LAarg, SW_SHOWNORMAL);
+          end;
+     end;
+
+     DataModule_Tmax.TMaxSession.Connect := False;
+     Action := caFree;
+end;
+
+procedure TMainForm.FormCreate(Sender: TObject);
+var
+  msg: String;
+begin
+  Start := True;
+
+  pEmpno     := peParam(CmdLine,1);
+  pKorname   := peParam(CmdLine,2);
+  pPass      := peParam(CmdLine,3);
+  pClass     := peParam(CmdLine,4);
+  ComIp      := peParam(Cmdline,5);
+  SRabasdate := peParam(Cmdline,13);
+  ComIP      := Copy(ComIP,2,Length(ComIP)-1);
+
+  msg := DataModule_Tmax.Connect_Session;
+  if  msg <> '' then
+  begin
+    Application.MessageBox(PChar(msg),'TMAX에러',mb_ok);
+    Application.Terminate;
+    Exit;
+  end;
+
+  FM_Tmax := TFM_Tmax.Create(Self);
+  FM_Tmax.T_Session := DataModule_Tmax.TMaxSession;
+  if FM_Tmax.PassWordChk(Hinsa_Param(cmdline,1), Hinsa_Param(cmdline,3)) = 0 then
+    Application.Terminate;   
+end;
+
+procedure TMainForm.FormPaint(Sender: TObject);
+const
+     ObjName = 'SOFTWARE\(주) 하나로\NEW종합인사정보시스템';
+var
+     msg: String;
+     SqlText : String;
+     fName: TextFile;
+     str : string;
+     reg_exe: TRegistry;
+
+     Process32: TProcessEntry32;
+     SHandle:   THandle;
+     Next:      BOOL;
+
+     hProcess: THandle;
+     ProcId:   DWORD;
+     TermSucc: BOOL;
+
+begin
+     Self.OnPaint := Nil;
+     Application.ProcessMessages;
+     if  Start then
+     begin
+          reg_exe          := TRegistry.Create;
+          reg_exe.RootKey  := HKEY_LOCAL_MACHINE;
+          //HKEY_LOCAL_MACHINE\SOFTWARE\(주) 하나로\NEW종합인사정보시스템 //NewHomeDir
+          if  reg_exe.OpenKey(ObjName,False) then
+          begin
+               GSHomeDir   := reg_exe.ReadString('NewHomeDir'); //
+               sKillCheckID:= reg_exe.ReadString('KillProcess');
+          end;
+          reg_exe.CloseKey;
+          reg_exe.Free;
+
+          //PEA1060E.EXE PROCESS을 강제 KILL 처리 시킨다.
+          ListBox1.Clear;
+          Process32.dwSize := SizeOf(TProcessEntry32);
+          SHandle          := CreateToolHelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+          if  Process32First(SHandle, Process32) then
+          begin
+               repeat
+                    Next := Process32Next(SHandle, Process32);
+                    if  Next then
+                    begin
+                         if  Process32.szExeFile = trim('PEA1060E.EXE') then
+                              ListBox1.Items.AddObject(Process32.szExeFile, TObject(Process32.th32ProcessID));
+                    end;
+               until not Next;
+          end;
+          CloseHandle(SHandle);
+
+          if  ListBox1.Items.Count = 1 then
+          begin
+               ProcId   := DWORD(ListBox1.Items.Objects[0]);
+               hProcess := OpenProcess(PROCESS_ALL_ACCESS, TRUE, ProcId);
+               TermSucc := TerminateProcess(hProcess, 0);
+          end;
+          // PROCESS 강제종료 끝
+
+          Application.Title  := '개인별 업무목표 등록/결재';
+          Lrabasdate      := GetBaseYear(1);            //업적평가 기준일
+          //Lrabasdate      := '20171130';
+          if  SRabasDate = GetBaseYear(0) then
+          begin
+               Lrabasdate := SRabasDate;
+               Jrabasdate      := GetBaseYear(0);            //전년도업적평가 기준일
+          end else if   SRabasDate = GetBaseYear(7) then
+          begin
+               Lrabasdate := SRabasDate;
+               Jrabasdate      := GetBaseYear(7); //2016년 업적평가 기준일
+          end;
+          //showmessage(Lrabasdate);
+          //showmessage(Jrabasdate);
+          //Jrabasdate      := GetBaseYear(0);            //전년도업적평가 기준일
+          //if  SRabasdate  =   Jrabasdate then
+          //     Lrabasdate :=  SRabasdate;
+
+          Lfordate        := GetBaseYear(2);            //하반기 업적평가 시작일(LFordate)
+          Lsysdate        := Copy(GetBaseYear(3),1,8);  //시스템 시각(Lsysdate)
+
+          if Lrabasdate = '' then     Close;
+
+          //사용자 권한체크           '' + Lrabasdate + ''
+          SqlText := ' select payra||'';''||nvl(unionyn,''N'')||'';''||nvl(SENIORYN,''N'') from PEHREAIM_COMBAS '+
+                     '  where rabasdate =  '+ Lrabasdate +'  and empno = ''' + pempno + '''               ';   //pempno
+          //showmessage(SqlText);
+          with DBSet10 do
+          begin
+               close;
+               ServiceName := 'PEA1060A_common';
+               ClearFieldInfo;
+               AddField('SEL_DATA', ftString, 300);
+               ClearParamInfo;
+               SQL.Text := SqlText;
+               Open;
+
+               //개인별공동목표등록내용이 존재하면 다음처리루틴을 따른다.
+               if  RecordCount > 0 then
+               begin
+                    //showmessage(Csel_gfd10(1) + ' ' + Csel_gfd10(2));
+                    if //((Csel_gfd10(1) <> '2C' ) and (Csel_gfd10(2) = 'N'))
+                      (Csel_gfd10(2) = 'N') and (Csel_gfd10(3) = 'N') then
+                    begin
+                         showmessage('개인별공동목표 대상자가 아닙니다.');
+                         close;
+                         Bt_ExitClick(self);
+                    end;
+               end
+               else
+               begin
+                    showmessage('개인별공동목표 대상자가 아닙니다.');
+                    close;
+                    Bt_ExitClick(self);
+               end;
+               close;
+          end;
+
+          // 1차평가자 최종결재 및 결재시 이력보관
+          gsLastConEv        := '1차';//trim(GetBaseYear(4)); //업무목표최종결재자 (1차 or 2차)
+
+          Ed_empno.LabelHint := Pempno;
+
+          GetPehremas('읽기') ;
+
+          if  GetPehremas('추출') = '없음' then
+          begin
+               MessageDlg('목표설정 대상자가 아니거나 평가권한이 없습니다.'+#13#13+
+                          GetBaseYear(6)+'에 문의하십시오.',mtInformation,[mbOK],0);
+               Close;
+          end
+          else
+          begin
+               if  GetPehremas('구분') <> '없음' then
+               begin
+                    GetPehremas('읽기');
+                    EvalYN := True;
+                    Select_Form(Bt_Tgt);
+
+                    pob_e1prjopinon.Visible := false;
+                    //Ed_empnoRightBtnClick(Sender);
+
+                    if not FileExists(GSHomeDir +'\IDCheck2.txt') then
+                    begin
+                         showmessage('file road error가 발생했습니다.');
+                         exit;
+                    end;
+
+                    AssignFile(fName, GSHomeDir +'\IDCheck2.txt');
+                    Reset(fName);
+                    while not eof(fName) do
+                    begin
+                         readln(fName, str);
+                         if  length(str) = 4 then
+                         begin
+                              Ed_empno.LabelHint := str;
+                         end;
+                    end;
+                    CloseFile(fName);
+                    Bt_TgtClick( Bt_Tgt );
+                    ed_empno.RightBtn.Width := 24;
+
+                    if Trim(Ed_empno.Text) = '' then Ed_empnoRightBtnClick(Sender);
+               end
+               else
+               begin
+                    Bt_TgtClick(Bt_Tgt);
+                    EvalYN                  := False;
+                    ed_empno.RightBtn.Width := 0;
+                    if  SRabasDate = Jrabasdate then     pob_e1prjopinon.Visible := False
+                    else                                 pob_e1prjopinon.Visible := true;
+                    Bt_can.Enabled          := false;
+               end;
+          end;
+
+          sGrid1.Cells[1,0] := '매체명';
+          sGrid1.Cells[2,0] := '비중';
+          sGrid1.Cells[3,0] := '세부추진활동';
+          sGrid1.Cells[4,0] := '상세비중';
+          sGrid1.Cells[5,0] := '평가지표';
+          sGrid1.Cells[6,0] := '평가기준목표(달성목표우수)';
+          sGrid1.Cells[7,0] := '평가산식';
+
+          sGrid2.Cells[1,0] := '매체명';
+          sGrid2.Cells[2,0] := '비중';
+          sGrid2.Cells[3,0] := '세부추진활동';
+          sGrid2.Cells[4,0] := '상세비중';
+          sGrid2.Cells[5,0] := '평가지표';
+          sGrid2.Cells[6,0] := '평가기준목표(달성목표우수)';
+          sGrid2.Cells[7,0] := '평가산식';
+          sGrid2.Cells[8,0] := '순번'; //중점추진업무순번
+
+          //직종및 직무명을 설정한다.
+          //기존
+          {SqlText := ' SELECT B.DUTYKINDNAME||'';''||C.DUTYNAME '+
+                       ' FROM PISHRCURR A, PISHRDUKIND B, PISHRDUTY C '+
+                      ' WHERE A.EMPNO = ''' + Ed_empno.LabelHint + ''' '+
+                        ' AND A.JOBFIELD = B.JOBFIELD '+
+                        ' AND A.DUTYKIND = B.DUTYKIND '+
+                        ' AND A.JOBFIELD = C.JOBFIELD '+
+                        ' AND A.DUTYKIND = C.DUTYKIND '+
+                        ' AND A.DUTY     = C.DUTY '+
+                        ' AND B.USEYN = ''Y'' '+
+                        ' AND C.USEYN = ''Y'' ';}
+
+          //하은영
+          SqlText :=  ' SELECT B.DUTYKINDNAME                                '+
+                      '   FROM PEHREMAS A, PISHRDUKIND B                     '+
+                      '  WHERE a.rabasdate  = ''' + Lrabasdate + '''         '+
+                      '    AND a.jobgun     = B.jobfield                     '+
+                      '    AND a.jobkind    = b.dutykind                     '+
+                      '    AND A.EMPNO      = ''' + Ed_empno.LabelHint + ''' '+
+                      '    AND B.USEYN      = ''Y''                          ';
+
+
+          with DBSet10 do
+          begin
+               close;
+               ServiceName := 'PEA1060A_common';
+               ClearFieldInfo;
+               AddField('SEL_DATA', ftString, 300);
+               ClearParamInfo;
+               SQL.Text := SqlText;
+               Open;
+
+               if RecordCount > 0 then
+               begin
+                  pa_DUTYKINDNAME.TextCaption  := Csel_gfd10(1);
+                  //pa_DUTYNAME.TextCaption      := Csel_gfd10(2);
+                  close;
+               end
+               else
+               begin
+                  //db세션을 끊는다.
+                  Close;
+               end;
+               close;
+          end;
+
+          Start := False;
+     end;
+end;
+
+procedure TMainForm.Bt_ExitClick(Sender: TObject);
+var
+  Fm : TMainForm;
+begin
+  Fm.close;
+end;
+
+//조회 버튼
+procedure TMainForm.Bt_SrhClick(Sender: TObject);
+var
+     DbSet : TDataSet;
+     Sql   : String;
+
+     // 버튼 활성화 프로시져
+     procedure ButtonEnabled;
+     begin
+          if  DBSet.Eof then
+          begin
+               Bt_Mod.Enabled       := False;
+               Bt_Del.Enabled       := False;
+          end
+          else
+          begin
+               Bt_Mod.Enabled       := True;
+               Bt_Del.Enabled       := True;
+          end;
+
+          Bt_Add.Enabled     := True;
+
+          // 자료가 없으면 자세히보기 & 수정 버튼 비활성화
+          if  DBSet.Bof AND DbSet.Eof then
+          begin
+               Bt_Detail.Enabled    := False;
+               Bt_Mod.Enabled       := False;
+          end
+          else
+          begin
+               Bt_Detail.Enabled    := True;
+               Bt_Mod.Enabled       := True;
+          end;
+
+          //====================================================================================================//
+          // 평가진행중이면 수정,추가,삭제 불가능처리
+          // rvalconyn 피평자가 평가완료여부
+          // e1valconyn 1차평가자 평가 완료 여부
+          // e1valobjyn 1차평가자 평가반려여부
+          // e2valconyn 2차평가자 평가 완료 여부
+          // e2valobjyn 2차평가자 평가반려여부
+          if  (grvalconyn   = 'Y')  or
+              (ge1valconyn  = 'Y')  or //(ge1valobjyn = 'Y') or 1차 반려시 수정가능토록 dsa2000   2007.11
+              (ge2valconyn  = 'Y')  or (ge2valobjyn  = 'Y') or
+              (gebrvalconyn = 'Y')  or (gebrvalobjyn = 'Y') then
+          begin
+               Bt_Mod.Enabled := false;
+               Bt_Add.Enabled := false;
+               Bt_del.Enabled := false;
+          end;
+     end;
+begin
+     Lwork := GetPehremas('읽기');
+
+     if  gsLastConEv = '2차' then //업무목표최종결재자가 2차인경우
+     begin
+          if  (Pempno = Le2empno)   or                        // 작업자가 2차평가자
+              ((Pempno = Le1empno) and (Le2empno = '')) then  // 작업자가 1차평가자 또는 2차평가자가 없는경우
+          begin
+               Bt_Confirm.Caption := '결재';
+               Bt_ReConfirm.Enabled := false;
+          end
+          else
+               Bt_Confirm.Caption := '결재상신';
+     end
+     else //업무목표최종결재자가 1차인경우
+     begin //작업자가 2차평가자 또는 1차평가자
+          if  (Pempno = Le2empno) or (Pempno = Le1empno) then
+          begin
+               Bt_Confirm.Caption := '결재';
+               P_Title.Caption := '공동목표 대상자 개인별 업무목표 결재';
+               Bt_ReConfirm.Enabled := false;
+          end
+          else
+          begin
+               Bt_Confirm.Caption := '결재상신';
+               P_Title.Caption := '공동목표 대상자 개인별 업무목표 등록';
+          end;
+     end;
+     Application.ProcessMessages;
+
+     St_Help.Panels[0].Text := ' 조회 작업 처리중입니다..';
+     St_Help.Perform(WM_PAINT,0,0);
+
+     if  Nt_Book.ActivePage = '관리직' then
+     begin
+          begin  //공동목표 비중 합계
+               Sql :=        'select sum(mainweight) from PEHREAIM_COMDET   '+
+                      format(' WHERE rabasdate=''%s'' and empno = ''%s''    ',[Lrabasdate,Ed_empno.LabelHint]) +
+                             '   and Seqno = 1                              ';
+
+               DataModule_Tmax.Csel_SQL := Sql;
+               DataModule_Tmax.Csel_Open4;
+               iSum_com     := DataModule_Tmax.Csel_gfd4(1);
+               if  iSum_com = '' then     iSum_com := '0';
+          end;
+          Read_pehreaim_det;
+          DbSet := DM.DBSet1;
+     end;
+
+     Select_pehreaim_det;
+     Read_pehreaim_det; //추가함.
+     Bt_Srh1Click(self);
+
+     St_Help.Panels[0].Text := '';
+
+     // 자료열람 권한 부분.
+     if  Nt_Book.ActivePage <> '자기계발' then
+     begin
+          //showmessage('Pempno : ' +  Pempno + ', Ed_empno.LabelHint : ' + Ed_empno.LabelHint);
+          // 피평가자 일때, 동료의 목표면담을 볼때 수정, 저장, 삭제 , 결재버튼 비 활성화
+          // Pempno 평가자   로그인시 평가자,   Ed_empno.LabelHint 피평가자
+          // Pempno 피평가자 로그인시 피평가자, Ed_empno.LabelHint 피평가자
+          if  (( not EvalYN ) and (Pempno <> Ed_empno.LabelHint)) then
+          begin
+               Bt_Mod.Enabled:=false;
+               Bt_Add.Enabled:=false;
+               Bt_del.Enabled:=false;
+               Bt_Confirm.Enabled:=false;
+          end;
+
+          // 1.09      2004.11.11          이민용         by 손필영 요청   평가 등록 종료로 메세지 수정
+          // 피평가자 이고, 자기평가를 하지 않았고, 1차 결재자가 반려한 경우
+          if  (( not EvalYN ) and (DbSet.FieldByName('rprjconyn').AsString = 'X') and (DBSet.FieldByName('e1valobjyn').AsString <>'N')) then
+          begin
+               {
+               MessageDlg('1차 평가자가 반려한 자료입니다.'#13#13+
+                          '목표등록 기간이 종료되었습니다.'#13#13+
+                          '추가, 수정, 삭제, 결재상신을 할수 없습니다.'#13#13+
+                           GetBaseYear(6)+'에 문의하십시오. ☏ ',mtInformation,[mbOK],0);
+               Bt_Detail.Enabled:=true;
+               Bt_Mod.Enabled:=false;
+               Bt_Add.Enabled:=false;
+               Bt_del.Enabled:=false;
+               Bt_Confirm.Enabled:=false;
+               System.exit;
+               }
+               MessageDlg('1차 평가자가 반려한 자료입니다.'#13#13+
+                          '목표등록을 재 설정후 [결재상신] 처리 하십시오',mtInformation,[mbOK],0);
+
+               Bt_Detail.Enabled  := true;
+               Bt_Mod.Enabled     := true;
+               Bt_Add.Enabled     := true;
+               Bt_del.Enabled     := true;
+               Bt_Confirm.Enabled := true;
+          end  //피평가자 이고, 자기평가를 하지 않았고, 1차 결재자가 반려하지 않은 경우
+          else
+          if  (( not EvalYN ) and (DbSet.FieldByName('rprjconyn').AsString = 'X') and (DBSet.FieldByName('e1valobjyn').AsString <>'Y')) then
+          begin
+               MessageDlg('결재 상신을 하지 않은 자료입니다.'#13#13+
+                          '추가, 수정, 삭제, 결재상신을 할수 없습니다.'#13#13+
+                          GetBaseYear(6)+'에 문의하십시오. ☏ ',mtInformation,[mbOK],0);
+               Bt_Detail.Enabled  := true;
+               Bt_Mod.Enabled     := false;
+               Bt_Add.Enabled     := false;
+               Bt_del.Enabled     := false;
+               Bt_Confirm.Enabled := false;
+               System.exit;
+          end;
+
+          //피평가자 일때
+          if  ( not EvalYN ) and (Pempno <> Ed_empno.LabelHint) and       // 접속자가 피평가자가 아니고
+              (DbSet.FieldByName('e1prjconyn').AsString <> 'Y') then
+          begin
+               DbSet.Close;
+               MessageDlg('아직 피평가자가 목표설정완료가 아닙니다.'#13#13+
+                          '목표설정 완료후 조회 하시기 바랍니다.',mtInformation,[mbOK],0);
+               System.Exit;
+          end;
+
+          //평가자 일때
+          if  ( EvalYN ) and (Pempno <> Ed_empno.LabelHint) and       // 접속자가 피평가자가 아니고
+              (DbSet.FieldByName('rprjconyn').AsString <> 'Y') then   // 피평가자가 목표수립중인 경우
+          begin
+               DbSet.Close;
+               Bt_Confirm.Enabled:=false; //목표수립중일떄 '결재상신'버튼이 False 이어야 함.
+               Bt_can.Enabled:=false;
+               MessageDlg('아직 피평가자가 목표설정 중이거나 목표설정후 [결재상신] 처리를 하지 않았습니다.'#13#13+
+                          '피평가자가 목표설정 완료후 [결재상신]이 끝난후에 [결재]작업이 가능합니다.',mtInformation,[mbOK],0);
+               System.Exit;
+          end;
+
+          if  (Lwork = '2차') and                                     //접속자가 2차 평가자이고
+              (DbSet.FieldByName('e1prjconyn').AsString <> 'Y') then  //1차평가자가 목표확인한경우
+          begin
+               DbSet.Close;
+               MessageDlg('아직 1차 평가자 확인중입니다.'#13#13+
+                          '1차 평가자 확인 완료후 작업 하시기 바랍니다.',mtInformation,[mbOK],0);
+               System.Exit;
+          end;
+     end;
+
+     // 버턴사용권한 부분.
+     Bt_Detail.Enabled := True;                                 //자세히 보기 활성
+
+     // ---> 업무목표최종결재자가 1차인경우 경우 2차결재자 반려, 확인완료 여부도 1차와 같이 갱신 됨.
+     if  (Lwork = '2차') and                                        //작업자가 2차 평가자이고
+         (DbSet.FieldByName('e2valobjyn').AsString = 'Y') then      //2차평가자가 평가반려한 경우
+     begin
+          MessageDlg(gsLastConEv + ' 평가자가 반려한 자료입니다.',mtInformation,[mbOK],0);
+          System.Exit;
+     end;
+
+     if  (Lwork = '2차') and                                        //작업자가 2차평가자이고
+         (DbSet.FieldByName('e2prjconyn').AsString = 'Y') then      //2차평가자가 목표확인 한경우
+     begin
+          System.Exit;
+     end;
+
+     if  (Lwork = '2차') and                                       //작업자가 2차평가자이고
+         (DbSet.FieldByName('e2prjconyn').AsString = 'N') then     //2차평가자가 목표확인을 아직 안한 경우
+     begin
+          Bt_Confirm.Enabled := (gsLastConEv = '2차');
+          Bt_Opt.Enabled     := (gsLastConEv = '2차');
+          Bt_Can.Enabled     := (gsLastConEv = '2차');
+          System.Exit;
+     end;
+
+     if  (Lwork = '1차') and                                     //작업자가 1차평가자이고
+          start  and          // 메세지 처음한번만 뜨게하기 위함 (30.40 손종운 )
+         (DbSet.FieldByName('e1valobjyn').AsString = 'Y') then   //1차평가자가 평가반려 한경우
+     begin
+          MessageDlg('1차 평가자가 반려한 자료입니다.',mtInformation,[mbOK],0);
+          System.Exit;
+     end;
+
+     if  (Lwork = '1차') and                                     //작업자가 1차평가자이고
+         (DbSet.FieldByName('e1prjconyn').AsString = 'Y') then   //1차평가자가 목표확인한 경우
+     begin
+          Bt_Confirm.Enabled := False; //20060627추가
+          Bt_Can.Enabled     := False; //20060627추가
+
+          System.Exit;
+     end;
+
+     if  (Lwork = '1차') and                                     //작업자가 1차평가자이고
+         (DbSet.FieldByName('e1prjconyn').AsString = 'N') then   //1차평가자가 목표확인을 아직 안한 경우
+     begin
+          //showmessage('5');
+          Bt_Confirm.Enabled := True;
+          Bt_Opt.Enabled     := True;
+          Bt_Can.Enabled     := True;
+
+          System.Exit;
+     end;
+
+     if  (Lwork = '피평가자') and                                     //작업자가 피평가자이고
+          start  and          // 메세지 처음한번만 뜨게하기 위함 (30.40 손종운 )
+         (DbSet.FieldByName('e1valobjyn').AsString = 'Y') then   //1차평가자가 평가반려 한경우
+     begin
+          // MessageDlg('1차 평가자가 반려한 자료입니다.',mtInformation,[mbOK],0);
+          // ButtonEnabled;
+          // Bt_Confirm.Enabled := True;
+          // System.Exit;
+     end;
+
+     if (Lwork = '피평가자') then
+     begin
+          if gsLastConEv = '2차' then //업무목표최종결재자가 2차인경우
+          begin
+               if  (DBSet.FieldByName('rprjconyn').AsString  = 'Y')  and
+                   (DBSet.FieldByName('e1prjconyn').AsString = 'Y')  and
+                   (DBSet.FieldByName('e2prjconyn').AsString = 'Y')  and
+                    start   and        // 메세지 처음한번만 뜨게하기 위함 (30.40 손종운 )
+                   (DBSet.FieldByName('e2empno').AsString    <> '')  then // 결재된 자료의 수정임다.
+               begin
+                    MessageDlg('결재상신한 목표에 대하여 결재된 자료입니다.'#13#13+
+                               //'목표등록 기간이 종료되었습니다.'#13#13+
+                               '추가, 수정, 삭제, 결재상신을 할수 없습니다.'#13#13+
+                               GetBaseYear(6)+'에 문의하십시오. ☏ '
+                               ,mtInformation,[mbOK],0);
+                    ButtonEnabled;                  //평가 진행중이면 추가,입력,삭제 못하고 아닌경우 할수 있다
+                    Bt_Mod.Enabled := false;
+                    Bt_Add.Enabled := false;
+                    Bt_del.Enabled := false;
+                    Bt_Confirm.Enabled := false;
+               end
+               else
+               if  (DBSet.FieldByName('rprjconyn').AsString  = 'Y')  and
+                   (DBSet.FieldByName('e1prjconyn').AsString = 'N')  then //1차평가자가 목표확인 중이면
+               begin
+                    ButtonEnabled;                  //평가 진행중이면 추가,입력,삭제 못하고 아닌경우 할수 있다
+                    Bt_Confirm.Enabled := False;
+                    System.Exit;
+               end
+               else
+               if  (DBSet.FieldByName('rprjconyn').AsString  = 'Y')  and      //2차평가자가 있고
+                   (DBSet.FieldByName('e2prjconyn').AsString = 'N')  and  //2차평가자가 확인중이면
+                    start and           // 메세지 처음한번만 뜨게하기 위함 (30.40 손종운 )
+                   (DBSet.FieldByName('e2empno').AsString    <> '')  then
+               begin
+                    MessageDlg('결재상신한 목표에 대하여 1차 평가자가 결재하고'+#13+
+                               '2차평가자가 확인하지 않았습니다.'+#13#13+
+                               '상위 평가자의 확인 완료 후 작업 하시기 바랍니다.',mtInformation,[mbOK],0);
+                    ButtonEnabled;                  //평가 진행중이면 추가,입력,삭제 못하고 아닌경우 할수 있다
+                    Bt_Confirm.Enabled := False;
+                    System.Exit;
+               end
+               else //if (DBSet.FieldByName('rprjconyn').AsString = 'N') then
+               begin
+                    ButtonEnabled;
+                    Bt_Confirm.Enabled := True;
+               end;
+          end
+          else //업무목표최종결재자가 1차인경우
+          begin
+               if  (DBSet.FieldByName('rprjconyn').AsString  = 'Y')  and
+                    start     and       // 메세지 처음한번만 뜨게하기 위함 (30.40 손종운 )
+                   (DBSet.FieldByName('e1prjconyn').AsString = 'Y')  then // 결재된 자료의 수정임다.
+               begin
+                    MessageDlg('결재상신한 목표에 대하여 결재된 자료입니다.'#13#13+
+                               '추가, 수정, 삭제, 결재상신을 할수 없습니다.'#13#13+
+                               'HR팀에 문의하십시오2.'
+                               ,mtInformation,[mbOK],0);
+                    ButtonEnabled;
+                    Bt_Mod.Enabled     := false;
+                    Bt_Add.Enabled     := false;
+                    Bt_del.Enabled     := false;
+                    Bt_Confirm.Enabled := false;
+                    System.exit;
+               end
+               else
+               if  (DBSet.FieldByName('rprjconyn').AsString = 'Y') and start and           // 메세지 처음한번만 뜨게하기 위함 (30.40 손종운 )
+                   (DBSet.FieldByName('e1prjconyn').AsString = 'N') then // 결재된 자료의 수정임다.
+               begin
+                    MessageDlg('1차 평가자 결재처리중입니다.'#13#13+
+                               '추가, 수정, 삭제, 결재상신을 할수 없습니다.'#13#13+
+                               'HR팀에 문의하십시오. ' ,mtInformation,[mbOK],0);
+                    ButtonEnabled;
+
+                    Bt_Mod.Enabled := false;
+                    Bt_Add.Enabled := false;
+                    Bt_del.Enabled := false;
+                    Bt_Confirm.Enabled := false;
+                    System.exit;
+               end
+               else
+               if (DBSet.FieldByName('rprjconyn').AsString <> 'Y') then  //자기 목표 등록을 했을면 버튼 비 활성화
+               begin
+                    if (DBSet.FieldByName('rprjconyn').AsString = '') then
+                    begin
+                         ButtonEnabled;
+                         Bt_Confirm.Enabled := False;
+                    end
+                    else
+                    begin
+                         ButtonEnabled;
+                         Bt_Confirm.Enabled := True;
+                    end;
+               end;
+          end;
+     end;
+
+     start := False;
+
+     if  DBSet.Eof then     DbSet.close;
+
+     //개인목표등록 내용을 조회한 후 sGrid2에 display처리 한다.
+     Select_pehreaim_det;
+     Read_pehreaim_det; //jissi
+     Bt_Detail1.Enabled := true;
+     Bt_Add1.Enabled    := true;
+     Bt_Del1.Enabled    := true;
+end;
+
+procedure TMainForm.Ed_empnoEnter(Sender: TObject);
+begin
+{
+     peInitComponent(Self,88);
+     if Nt_Book.ActivePage = '관리직' then
+        Grid1.DataSource.DataSet.Close;
+
+     if Nt_Book.ActivePage = '영업직' then
+        Grid2.DataSource.DataSet.Close;
+
+     Bt_Mod.Enabled := False;
+     Bt_Add.Enabled := False;
+     Bt_Del.Enabled := False;
+     Bt_Opt.Enabled := False;
+     Bt_Can.Enabled := False;
+     Bt_Confirm.Enabled := False;
+     Bt_Detail.Enabled  := False;
+}
+end;
+
+procedure TMainForm.Ed_empnoKeyPress(Sender: TObject; var Key: Char);
+begin
+{
+     if Key = Chr(13) then
+     begin
+       Bt_TgtClick( Bt_Tgt );
+       inherited;
+       Key := #0;
+       Start := True;
+     end;
+}
+end;
+
+procedure TMainForm.Grid2DblClick(Sender: TObject);
+begin
+     if Lwork = '피평가자' then
+     begin
+          if  Bt_Mod.Enabled    then     Bt_ModClick(Bt_Mod);
+     end
+     else
+     begin
+          if  Bt_Detail.Enabled then     Bt_ModClick(Bt_Detail);
+     end;
+end;
+
+//자세히 보기
+procedure TMainForm.Bt_ModClick(Sender: TObject);
+var
+     Fm : TFm_SubForm;
+     sWeight : string;
+     i,isum : integer;
+begin
+     Try
+          Read_pehreaim_det;
+
+          Fm := TFm_SubForm.Create(Self);
+
+          if  TComponent(Sender).Tag in [1,2] then              //1:자세히보기, 수정  2: 추가
+               Fm.Pwork := Nt_Book.ActivePage;                        //Pwork:관리직, 영업직, 자기계발
+
+          if  TComponent(Sender).Tag = 3 then                   //3:의견등록
+               Fm.Pwork := '의견등록';                                //Pwork:의견등록
+
+          if  TComponent(Sender).Tag = 4 then                   //4: ?
+               Fm.Pwork := '평가자지정';                              //pwork:평가자지정
+
+          Fm.Pgubun     := TComponent(Sender).Tag;
+          if  TComponent(Sender).Name <> 'Bt_Detail' then     Fm.Pework := Lwork
+          else                                                Fm.Pework := '자세히보기';
+
+          if  TComponent(Sender).Name = 'Bt_Detail' then         //자세히보기
+          begin
+               Fm.Bt_Mod.Enabled := False;
+               Fm.Pa_Title.Caption := '개별 목표 자세히보기';
+          end
+          else
+          if  TComponent(Sender).Name = 'Bt_Mod' then       //수정
+          begin
+               Fm.Pa_Title.Caption := '개 별 목 표 수 정'
+          end
+          else
+          if  TComponent(Sender).Name = 'Bt_Add' then       //추가
+          begin
+               Fm.Pa_Title.Caption := '개 별 목 표 추 가'
+          end
+          else
+          begin
+               Fm.Bt_Mod.Enabled := True;
+          end;
+
+          Fm.Lrabasdate := Lrabasdate;
+          Fm.Lfordate   := Lfordate;
+          Fm.gsLastConEv:= gsLastConEv;
+          Fm.LSeqno     := 0;
+
+          //if (Nt_Book.ActivePage = '관리직') and (TComponent(Sender).Tag = 1) then    //관리직 수정
+          if  TComponent(Sender).Tag = 1 then //수정
+               Fm.LSeqno := Grid1.DataSource.DataSet.FieldByName('seqno').AsFloat;
+          {
+          if  TComponent(Sender).Tag = 1 then //수정
+               Fm.LSeqno := Grid1.DataSource.DataSet.FieldByName('seqno').AsFloat
+          else
+          if  TComponent(Sender).Tag = 2 then //저장
+          begin
+               if  Grid1.DataSource.DataSet.RecordCount > 0 then
+               begin
+                    Fm.LSeqno := Grid1.DataSource.DataSet.FieldByName('seqno').AsFloat;
+                    Fm.Pgubun := 1;
+               end;
+          end;
+          }
+          Fm.DbSet := Grid1.DataSource.DataSet;
+
+          {
+          if  (Nt_Book.ActivePage = '영업직') and (TComponent(Sender).Tag = 1) then    //영업직 수정
+               Fm.LSeqno := Grid2.DataSource.DataSet.FieldByName('seqno').AsFloat;
+
+          if  (Nt_Book.ActivePage = '자기계발') and (TComponent(Sender).Tag = 1) then  //자기계발 수정
+               Fm.LSeqno := Grid3.DataSource.DataSet.FieldByName('seqno').AsFloat;
+
+          if  (Nt_Book.ActivePage = '관리직') then
+               Fm.DbSet := Grid1.DataSource.DataSet
+          else
+          if  (Nt_Book.ActivePage = '영업직') then
+               Fm.DbSet := Grid2.DataSource.DataSet
+          else
+               Fm.DbSet := Grid3.DataSource.DataSet; //자기계발
+          }
+
+          //OnSumWeight값을 체크한다.
+          sWeight       := FloatToStr(Eda_weight.value);
+          Fm.iSumWeight := StrToInt(sWeight);
+          isum          := 0;
+
+          for i := 1 to sGrid1.RowCount -1 do
+          begin
+               if  sGrid1.Cells[2,i] <> '' then
+               begin
+                    isum := isum + StrToInt(sGrid1.Cells[2,i]);
+               end;
+          end;
+          Fm.iSSumWeight := isum;
+          Fm.Lempno      := Ed_empno.LabelHint;
+          Fm.Lwriteemp   := Pempno;
+          Fm.ShowModal;
+
+          Application.ProcessMessages;
+          if  (Fm.UpDateOk) or (Fm.prjview_UpDate) then
+          begin
+               Bt_SrhClick(Sender);
+          end;
+     Finally
+          Fm.Free;
+     End;
+end;
+
+procedure TMainForm.Bt_ConfirmClick(Sender: TObject);
+var
+     Lgubun     : integer;
+     Param      : OleVariant;
+     Save       : integer;    // 내역보관 유,무,이력보관(0, 1, 2)
+     Msg        : string;
+     DbSet      : TDataSet;
+     ToMail     : string;
+     detail_cnt :integer;
+     sendtime   : String;
+     SqlText    : string;
+     sInFalg  : boolean;
+begin
+     //최소 1개 이상의 공동목표와 개인목표가 있어야 한다.
+     if  (sGrid1.RowCount = 2) and (sGrid1.Cells[1,1] = '') then
+     begin
+          showmessage('공동목표가 등록되지 않았습니다.');
+          exit;
+     end;
+
+     //전체비중 합계
+     if  Eda_weight.Value <> 100 then
+     begin
+          MessageDlg('전체비중 합계(공동목표비중+개별목표비중)가 100 이어야 합니다.',mtError, [mbOk], 0);
+          System.Exit;
+     end;
+
+     if  (Lwork = '피평가자') and (sGrid2.Cells[1,1] = '') then
+     begin
+          Msg := '개인목표가 등록되지 않았습니다.' + #13 +
+                 '개인목표 설정없이 공동목표로만 작업하시겠습니까? ';
+
+          if  MessageDlg(Msg,mtConfirmation,[mbYes,mbNo],0) <> IDYES then     System.Exit;
+     end;
+
+     if  Lwork = '피평가자' then
+          Msg := '['+Bt_Confirm.Caption+']를 하시면 업무목표 내용을 편집할 수 없습니다.'#13#13+
+                 '1차평가자와 목표면담을 실시한 후 결재상신 하시기 바랍니다.'+ #13#13+
+                 '['+Bt_Confirm.Caption+'] 작업을 하시겠습니까 ?'
+     else
+     if  Lwork = '1차' then
+     begin
+          if  (gsLastConEv = '2차')  then
+               Msg := '['+Bt_Confirm.Caption+']를 하시면 업무목표 내용을 편집할 수 없습니다.'#13#13+
+                      '['+Bt_Confirm.Caption+'] 작업을 하시겠습니까 ?'
+          else
+               Msg := '['+Bt_Confirm.Caption+'] 하시겠습니까?'
+     end
+     else
+          Msg := '['+Bt_Confirm.Caption+'] 하시겠습니까?';
+
+     if  MessageDlg(Msg,mtConfirmation,[mbYes,mbNo],0) <> IDYES then     System.Exit;
+
+     //showmessage(ed_seqno_chk.text);
+
+     if  Lwork = '피평가자' then
+     begin
+          //vDeptcode //in/up체크시작
+          sInFalg := false;
+
+          SqlText := ' Select count(*) from PEHREAIM_PJT              '+
+                     '  WHERE rabasdate = '''+ Lrabasdate+'''         '+
+                     '    AND empno     = '''+ ED_EMPNO.LABELHINT+''' '+
+                     '    AND deptcode  = ''' + vDeptcode+'''         ';
+          with DBSet10 do
+          begin
+               Close;
+               ServiceName := 'PEA1060A_common';
+               ClearFieldInfo;
+               AddField('SEL_DATA', ftString, 300);
+               ClearParamInfo;
+               SQL.Text := SqlText;
+               Open;
+
+               if  RecordCount > 0 then
+               begin
+                    if  DBSet10.FieldByName('SEL_DATA').AsString = '0' then
+                    begin
+                         //showmessage('111');
+                         sInFalg := true;
+                    end
+                    else
+                    begin
+                         //showmessage('222');
+                         sInFalg := false;
+                    end;
+               end;
+               close;
+          end;
+          //in/up체크 끝
+
+          {if sInFalg =  true then
+          begin
+               if MessageDlg('[평가자 면담확인]'+#13+
+                             '1차평가자와 면담하셨습니까?',
+                             mtConfirmation,[mbYes,mbNo],0) = IDYES then
+               begin
+                    //면담여부 flag값을 Y로 설정한다.
+                    SqlText := ' INSERT INTO PEHREAIM_PJT '+
+                               ' (RABASDATE, EMPNO, DEPTCODE,E1PRJOPINON, PRJYN ) '+
+                                 'VALUES  '+
+                               ' ('''+ Lrabasdate+''','+
+                               ' '''+ ED_EMPNO.LABELHINT+''',' +
+                               ' '''+ vDeptcode+''',' +
+                               ' '''' ,  '+
+                              '  ''Y'') ';
+
+               end
+               else
+               begin
+                    //면담여부 flag값을 N으로 설정한다.
+                    SqlText := ' INSERT INTO PEHREAIM_PJT '+
+                               ' (RABASDATE, EMPNO, DEPTCODE,E1PRJOPINON, PRJYN ) '+
+                                 'VALUES  '+
+                               ' ('''+ Lrabasdate+''','+
+                               ' '''+ ED_EMPNO.LABELHINT+''',' +
+                               ' '''+ vDeptcode+''',' +
+                               ' '''' ,  '+
+                              '  ''N'') ';
+               end;
+
+               DataModule_Tmax.Cupd_SQL := Sqltext;
+               DataModule_Tmax.Cupd_Exec;
+               if not DataModule_Tmax.Cupd_ret then
+               begin
+                    Messagedlg('APP-Server Error',mtError,[mbOK],0);
+                    Exit;
+               end;
+          end
+          else
+          begin
+               if MessageDlg('[평가자 면담확인]'+#13+
+                             '1차평가자와 면담하셨습니까?',
+                             mtConfirmation,[mbYes,mbNo],0) = IDYES then
+               begin
+                    //면담여부 flag값을 Y로 설정한다.
+                    SqlText := 'UPDATE PEHREAIM_PJT SET '+
+                                      ' PRJYN = ''Y'' '+
+                               ' WHERE rabasdate = '''+ Lrabasdate+''''+
+                                 ' AND empno = '''+ ED_EMPNO.LABELHINT+'''' +
+                                 ' AND deptcode = ''' + vDeptcode+'''';
+               end
+               else
+               begin
+                    //면담여부 flag값을 N으로 설정한다.
+                    SqlText := 'UPDATE PEHREAIM_PJT SET '+
+                                     ' PRJYN = ''N'' '+
+                               ' WHERE rabasdate = '''+ Lrabasdate+''''+
+                                 ' AND empno = '''+ ED_EMPNO.LABELHINT+'''' +
+                                 ' AND deptcode = ''' + vDeptcode+'''';
+               end;
+
+               DataModule_Tmax.Cupd_SQL := Sqltext;
+               DataModule_Tmax.Cupd_Exec;
+               if  not DataModule_Tmax.Cupd_ret then
+               begin
+                    Messagedlg('APP-Server Error',mtError,[mbOK],0);
+                    Exit;
+               end;
+          end;}
+     end;
+
+     //1차평가자가 결재처리 할때 목표면담 내역을 등록하도록 팝업처리를 한다.
+     if  Lwork = '1차' then
+     begin
+          sub_Form3.Lrabasdate := Lrabasdate;
+          sub_Form3.Lempno     := Ed_empno.LabelHint;
+          //sub_Form3.LSeqno     := StrToFloat(ed_seqno_chk.Text);
+          sub_Form3.ShowModal;
+     end;
+
+     Save   := 0;
+     ToMail := '';
+
+     // 2005.03.17 수정작업
+     if  Pa_jobgun.Hint <> '22' then  // 기존에 영업직군이 '40' 이 었는데, 현재는 '22'로 바뀌었음.
+     begin
+          DbSet := Grid1.DataSource.DataSet;
+          if  Lwork = '피평가자' then
+          begin
+               MessageDlg('1차평가자에게 확인요청 메일이 발송됩니다.',mtInformation,[mbOK],0);
+               Lgubun := 0;
+               ToMail := '1차메일';
+          end;
+
+          if  Lwork = '1차' then     Lgubun := 1;
+
+          if  Lwork = '2차' then     Lgubun := 2;
+
+          if  Lgubun = 1    then // 1차결재자
+          begin
+               if  (gsLastConEv = '2차') and (Trim(Le2empno) <> '') then
+               begin
+                    MessageDlg('2차평가자에게 확인요청 메일이 발송됩니다.',mtInformation,[mbOK],0);
+                    Save   := 0;
+                    ToMail := '2차메일';
+               end
+               else
+               if  Bt_Confirm.Caption = '결재' then     Save := 2 // 내역보관
+               else                                     Save := 1; // 내역보관       //'결재상신'
+          end;
+
+          if  (gsLastConEv = '2차') and (Lgubun = 2) then // 2차결재자
+          begin
+               if  trim(DbSet.FieldByName('e2prjview').AsString) = '' then
+               begin
+               //
+               end;
+
+               if  Bt_Confirm.Caption = '결재' then     Save := 2 // 내역보관
+               else                                     Save := 1; // 내역보관       //'결재상신'
+          end;
+
+          St_Help.Panels[0].Text := ' 확인 작업 처리중입니다..';
+          St_Help.Perform(WM_PAINT,0,0);
+
+          Param          := VarArrayOf([Lrabasdate,Ed_empno.LabelHint,Pempno]);
+          DM.gsLastConEv := gsLastConEv;
+          DM.FSvr_ConfirmSql(1,Lgubun,Save,Param);
+
+     end;
+
+     if  Pa_jobgun.Hint = '22' then // 기존에 영업직군이 '40' 이 었는데, 현재는 '22'로 바뀌었음.
+     begin
+          DbSet := Grid2.DataSource.DataSet;
+          if  Lwork = '피평가자' then
+          begin
+               MessageDlg('1차평가자에게 확인요청 메일이 발송됩니다.',mtInformation,[mbOK],0);
+               Lgubun := 0;
+               ToMail := '1차메일';
+          end;
+
+          if  Lwork = '1차' then     Lgubun := 1;
+
+          if  Lwork = '2차' then     Lgubun := 2;
+
+          if  Lgubun = 1    then  // 1차결재자
+          begin
+               if  (gsLastConEv = '2차') and (Trim(Le2empno) <> '') then
+               begin
+                    MessageDlg('2차평가자에게 확인요청 메일이 발송됩니다.',mtInformation,[mbOK],0);
+                    Save   := 0;
+                    ToMail := '2차메일';
+               end
+               else
+               if  Bt_Confirm.Caption = '결재' then     Save := 2 // 내역보관
+               else                                     Save := 1; // 내역보관       //'결재상신'
+          end;
+
+          if  (gsLastConEv = '2차') and (Lgubun = 2) then  // 2차결재자
+          begin
+               if  trim(DbSet.FieldByName('e2prjview').AsString) = '' then
+               begin
+                  //
+               end;
+               if  Bt_Confirm.Caption = '결재' then     Save := 2 // 내역보관
+               else                                     Save := 1; // 내역보관       //'결재상신'
+          end;
+
+          St_Help.Panels[0].Text := ' 확인 작업 처리중입니다..';
+          St_Help.Perform(WM_PAINT,0,0);
+
+          Param          := VarArrayOf([Lrabasdate,Ed_empno.LabelHint,Pempno]);
+          DM.gsLastConEv := gsLastConEv;
+          DM.FSvr_ConfirmSql(2,Lgubun,Save,Param);
+     end;
+
+     sendtime := GetBaseYear(3);
+     sendtime := copy(sendtime,1,4)+'년'+copy(sendtime,5,2)+'월'+copy(sendtime,7,2)+'일 '+
+                 copy(sendtime,9,2)+':'+copy(sendtime,11,2)+':'+copy(sendtime,13,2);
+
+     // 메일을 보낸다.
+   //showmessage('메일 보냈음.');
+     if  ToMail = '1차메일' then
+     begin
+          //==============================================================================//
+          // 메일을 보낸다.
+          MessageDlg('상위부서장에게 확인요청 메일이 발송됩니다.',mtInformation,[mbOK],0);
+          SendProgID  := 'PEA1060D';  //프로그램 ID
+          SendEmpno   := Pempno;      //발송자(로그인 사번)
+          RcveEmpno   := Le1empno;
+          MailSubject := '[ 업무목표설정 1차평가자 확인요청 ]';
+          MailBody    := ' 사번 : '+Pempno+'   성명 : '+Pkorname+#13+#13+
+                         ' 목표설정을 완료했습니다.'+#13+#13+
+                         ' 승인해 주시기 바랍니다. (요청시각:'+sendtime+')'+#13+#13+
+                         '★결재방법:종합인사정보시스템 ▶[평가] ▶[구성원 성과관리] ▶[직무역량, 업무목표 등록/결재] ▶[개인 업무목표 결재]';
+          ReceiveYN   := 'N';
+          //if ChkReceive.Checked then ReceiveYN := 'Y';
+
+          if  Send_WebHint(SendProgID, SendEmpno, RcveEmpno, MailSubject, MailBody, ReceiveYN) then
+          Begin
+            MessageDlg('메일 전송이 성공 하였습니다...',mtInformation, [mbOk], 0);
+          End
+          else
+          begin
+               MessageDlg('메일전송중 에러가 발생하였습니다.',mtError,[mbOK],0);
+               System.Exit;
+          end;
+          //==============================================================================//
+     end;
+     if  ToMail = '2차메일' then
+     begin
+         //==============================================================================//
+         // 메일을 보낸다.
+         MessageDlg('상위부서장에게 확인요청 메일이 발송됩니다.',mtInformation,[mbOK],0);
+         SendProgID  := 'PEA1060D';  //프로그램 ID
+         SendEmpno   := Pempno;      //발송자(로그인 사번)
+         RcveEmpno   := Le1empno;
+         MailSubject := '[ 개인업무목표설정 확인요청 ]';
+         MailBody    := ' 사번 : '+Pempno+'   성명 : '+Pkorname+#13+#13+
+                        ' 목표설정을 완료했습니다.'+#13+#13+
+                        ' 승인해 주시기 바랍니다. (요청시각:'+sendtime+')'+#13+#13+
+                        '★결재방법:종합인사정보시스템 ▶[평가] ▶[구성원 성과관리] ▶[직무역량, 업무목표 등록/결재 ▶[개인 업무목표 결재]';
+         ReceiveYN   := 'N';
+         //if ChkReceive.Checked then ReceiveYN := 'Y';
+
+         if  Send_WebHint(SendProgID, SendEmpno, RcveEmpno, MailSubject, MailBody, ReceiveYN) then
+         Begin
+           MessageDlg('메일 전송이 성공 하였습니다...',mtInformation, [mbOk], 0);
+         End
+         else
+         begin
+              MessageDlg('메일전송중 에러가 발생하였습니다.',mtError,[mbOK],0);
+              System.Exit;
+         end;
+         //==============================================================================//
+     end;
+
+     Bt_Srh1Click(self);
+     Bt_SrhClick(self);
+     Bt_Confirm.Enabled := False;
+
+     showmessage('처리되었습니다');
+     if  Lwork <> '피평가자' then
+     begin
+          //Bt_Confirm.Enabled := false;
+          //Bt_can.Enabled := false;
+          //1차 2차 평가자일경우
+          {
+          LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060E.exe ,'
+                      +Passemp(cmdline,1) +','+Passemp(cmdline,2)+','+Passemp(cmdline,3)+','
+                      +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                      +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                      +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                      +Passemp(cmdline,13);
+
+          strpcopy( LAarg, LSfilename );
+          winexec(LAarg, SW_SHOWNORMAL);
+          }
+          Bt_ExitClick(self);
+     end;
+     St_Help.Panels[0].Text := '';
+     Ed_empno.SetFocus;
+end;
+
+procedure TMainForm.Bt_delClick(Sender: TObject);
+var
+     Msg   : string;
+     //DbSet : TDataSet;
+     //Param : OleVariant;
+     SqlText : String;
+begin
+     Msg := '[삭제]작업 하시면 등록된 개인목표자료가 모두 삭제처리 됩니다.' +#13+#13+
+            '[삭제] 작업을 하시겠습니까 ?.';
+     if MessageDlg(Msg,mtConfirmation,[mbYes,mbNo],0) = IDNO then     System.Exit;
+
+     SqlText := Format('DELETE FROM PEHREAIM_DET '+
+                       ' WHERE RABASDATE = ''%s'' AND EMPNO = ''%s'' AND SEQNO = %s ',
+                       [Lrabasdate, Ed_empno.LabelHint, sGrid2.Cells[8,sGrid2.Row]]);
+
+     DataModule_Tmax.Cupd_SQL := Sqltext;
+     DataModule_Tmax.Cupd_Exec;
+     if not DataModule_Tmax.Cupd_ret then
+     begin
+        Messagedlg('APP-Server Error',mtError,[mbOK],0);
+        Exit;
+     end;
+
+     Select_pehreaim_det;
+     Read_pehreaim_det; //jissi
+
+     {
+     if       (Nt_Book.ActivePage = '관리직') then     DbSet := Grid1.DataSource.DataSet
+     else if  (Nt_Book.ActivePage = '영업직') then     DbSet := Grid2.DataSource.DataSet
+     else                                              DbSet := Grid3.DataSource.DataSet;  //자기계발
+
+     St_Help.Panels[0].Text := ' 삭제 작업 처리중입니다..';
+     St_Help.Perform(WM_PAINT,0,0);
+     Param := VarArrayOf([Lrabasdate,Ed_empno.LabelHint,FloatToStr(DbSet.FieldByName('seqno').AsFloat)]);
+
+     if       Nt_Book.ActivePage = '관리직' then     DM.FSvr_DeleteSql(1,0,Param)
+     else if  Nt_Book.ActivePage = '영업직' then     DM.FSvr_DeleteSql(2,0,Param)
+     else                                            DM.FSvr_DeleteSql(5,0,Param);         //자기계발
+
+     Bt_SrhClick(Bt_Srh);
+
+     St_Help.Panels[0].Text := '';
+     }
+end;
+
+procedure TMainForm.Bt_canClick(Sender: TObject);
+var
+     Msg   : string;
+     DbSet : TDataSet;
+     Param : OleVariant;
+     Lgubun : integer;
+     ToMail : string;
+begin
+     Msg := '[반려] 작업을 하시겠습니까 ?.';
+     if MessageDlg(Msg,mtConfirmation,[mbYes,mbNo],0) = IDNO then
+       System.Exit;
+
+     St_Help.Panels[0].Text := ' 반려 작업 처리중입니다..';
+     St_Help.Perform(WM_PAINT,0,0);
+
+     Param := VarArrayOf([Lrabasdate,Ed_empno.LabelHint,Pempno]);
+
+     if  (Lwork = '1차') then      // 1차평가자 최종결재 및 결재시 이력보관
+     begin
+          Tomail := '피평가자';
+          DM.FSvr_UpdateSql(4,1,Param); //반려, 1차, (평가기준일,접속자사번,피평가자사번)
+                                        //e1prjobjyn = 'Y', rprjconyn = 'N', rprjcondate = ''
+          MessageDlg('피평가자에게 반려메일이 발송됩니다.'#13+#13+
+                     '다음에 나타나는 비밀번호 입력창에서 브로드넷의 '+#13+
+                     '비밀번호를 입력해 주시길 바랍니다.'+#13+
+                     '★주의 : 종합인사정보시스템의 비밀번호가 아니라 브로드넷의 비밀번호임',mtInformation,[mbOK],0);
+     end;
+
+     if  (gsLastConEv = '2차') and (Lwork = '2차') then
+     begin
+          Tomail := '모두';
+          DM.FSvr_UpdateSql(4,2,Param); //반려, 2차, (평가기준일,접속자사번,피평가자사번)
+                                        //e2prjobjyn = 'Y', e1prjconyn  = 'N', e1prjcondate = '',
+                                        //rprjconyn  = 'N', rprjcondate = ''
+     end;
+
+     // 메일을 보낸다.
+     if  ToMail = '피평가자' then
+     begin
+          MessageDlg('1차평가자 반려메일이 발송됩니다.',mtInformation,[mbOK],0);
+          SendProgID  := 'PEA1060D';  //프로그램 ID
+          SendEmpno   := Pempno;      //발송자(로그인 사번)
+          RcveEmpno   := Ed_empno.LabelHint;
+          MailSubject := '[ 목표설정 1차평가자 반려메일 ]';
+          MailBody    := '목표설정을 반려했습니다. 다시 설정하여 주십시오.';
+          ReceiveYN   := 'N';
+          //if ChkReceive.Checked then ReceiveYN := 'Y';
+
+          if Send_WebHint(SendProgID, SendEmpno, RcveEmpno, MailSubject, MailBody, ReceiveYN) then
+               MessageDlg('메일 전송이 성공 하였습니다...',mtInformation, [mbOk], 0)
+          else
+          begin
+               MessageDlg('메일전송중 에러가 발생하였습니다.',mtError,[mbOK],0);
+               System.Exit;
+          end;
+     end ;
+
+     if  ToMail = '모두' then            // Notes 기능 삭제
+     begin
+          MessageDlg('피평가자에게 반려메일이 발송됩니다.',mtInformation,[mbOK],0);
+     end;
+
+     showmessage('반려처리 되었습니다.');
+     //다시조회한다.
+     Bt_Confirm.Enabled := false;
+     Bt_can.Enabled := false;
+
+     if  (Lwork <> '피평가자') then
+     begin
+          {
+          showmessage('처리 되었습니다.');
+          //1차 2차 평가자일경우
+           LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060E.exe ,'
+                      +Passemp(cmdline,1) +','+Passemp(cmdline,2)+','+Passemp(cmdline,3)+','
+                      +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                      +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                      +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                      +Passemp(cmdline,13);
+
+           strpcopy( LAarg, LSfilename );
+           winexec(LAarg, SW_SHOWNORMAL);
+           }
+           Bt_ExitClick(self);
+     end;
+
+     //Ed_empno.SetFocus;
+end;
+
+//====================================================================================//
+//   30.39      2001.07.24         손종운 추가                 자기계발목표 추가
+//====================================================================================//
+procedure TMainForm.Select_Form(Sender: TObject);
+begin
+     case TComponent(Sender).Tag of
+          0 : begin                                        // 업무목표
+                   Bt_Tgt.Font.Color := clPurple;
+                   Bt_Dev.Font.Color := clBlack;
+
+                   // 2005.03.17 수정작업
+                   //if (Pa_jobgun.Hint >= '10') and (Pa_jobgun.Hint <= '40') then
+
+                   if  (Pa_jobgun.Hint = '11') OR (Pa_jobgun.Hint = '33') OR (Pa_jobgun.Hint = '44') then
+                   begin
+                        Nt_Book.ActivePage := '관리직';
+                   end;
+              end;
+          1 : begin                                        //자기계발
+                   Bt_Tgt.Font.Color  := clBlack;
+                   Bt_Dev.Font.Color  := clPurple;
+                   Nt_Book.ActivePage := '자기계발';
+              end;
+     end;
+end;
+
+procedure TMainForm.Bt_TgtClick(Sender: TObject);
+begin
+     Application.ProcessMessages;
+     Select_Form(Sender);
+     Bt_SrhClick(Sender);
+end;
+
+function TMainForm.Get_Code(Acodeid, Acodeno : String) : String;
+begin
+     Result            := '';
+     if  Trim(Acodeno) = '' then     System.Exit;
+     FM_Tmax           := TFM_Tmax.Create(Self);
+     FM_Tmax.T_Session := DataModule_Tmax.TMaxSession;
+     Result            := FM_Tmax.GetData('codename' ,Acodeid,Acodeno);
+end;
+
+function TMainForm.Get_Dept(Acodeid, Acodeno : String) : String;
+begin
+     Result            := '';
+     if  Trim(Acodeno) = '' then     System.Exit;
+     FM_Tmax           := TFM_Tmax.Create(Self);
+     FM_Tmax.T_Session := DataModule_Tmax.TMaxSession;
+     Result            := FM_Tmax.GetData('deptname' ,Acodeid,Acodeno);
+end;
+
+function TMainForm.Check_Edit1 : Boolean;
+begin
+     Result := False;
+
+     DM.DBSet1.First;
+     while not DM.DBSet1.Eof do
+     begin
+          if  Trim(DM.DBSet1.FieldByName('PROPELTASK').AsString)  = '' then
+          begin
+               MessageDlg('중점추진업무 항목 필수 입력.',mtError,[mbOK],0);
+               System.Exit;
+          end;
+
+          if  Trim(DM.DBSet1.FieldByName('DETAILTASK1').AsString)  = '' then
+          begin
+               MessageDlg('세부추진활동은 반드시 하나 이상 등록하셔야 하며' + #13#13 +
+                          ' 세부추진활동을 순차적으로 입력하셔야 합니다.',mtError,[mbOK],0);
+               System.Exit;
+          end;
+
+          if  Trim(DM.DBSet1.FieldByName('DETAILTASK1').AsString)  = '' then
+          begin
+               if  (Trim(DM.DBSet1.FieldByName('DETAILTASK2').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('DETAILTASK3').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('DETAILTASK4').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('DETAILTASK5').AsString) <> '') then
+               begin
+                    MessageDlg('세부추진활동1 부터 순차적으로 입력하셔야 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end
+          end
+          else
+          begin
+               if  ((Trim(DM.DBSet1.FieldByName('DETAILTASK1').AsString) <> '') and
+                   ((DM.DBSet1.FieldByName('DETAILWEIGHT1').AsInteger = 0) or
+                    (Trim(DM.DBSet1.FieldByName('VALIDX1').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('SRESULTCLASS1').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('ARESULTCLASS1').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('BRESULTCLASS1').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('CRESULTCLASS1').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('DRESULTCLASS1').AsString) = ''))) then
+               begin
+                    MessageDlg(Trim(DM.DBSet1.FieldByName('PROPELTASK').AsString)+'에 대한 자료가 부족 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+          end;
+
+          if  Trim(DM.DBSet1.FieldByName('DETAILTASK2').AsString) = '' then
+          begin
+               if  (Trim(DM.DBSet1.FieldByName('DETAILTASK3').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('DETAILTASK4').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('DETAILTASK5').AsString) <> '') then
+               begin
+                    MessageDlg('세부추진활동2 부터 순차적으로 입력하셔야 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+
+               if  (Trim(DM.DBSet1.FieldByName('VALIDX2').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('SRESULTCLASS2').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('ARESULTCLASS2').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('BRESULTCLASS2').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('CRESULTCLASS2').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('DRESULTCLASS2').AsString) <> '') then
+               begin
+                    MessageDlg('세부추진활동2를 입력하셔야 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+          end
+          else
+          begin
+               if  ((Trim(DM.DBSet1.FieldByName('DETAILTASK2').AsString) <> '') and
+                   ((DM.DBSet1.FieldByName('DETAILWEIGHT2').AsInteger = 0) or
+                     (Trim(DM.DBSet1.FieldByName('VALIDX2').AsString) = '') or
+                     (Trim(DM.DBSet1.FieldByName('SRESULTCLASS2').AsString) = '') or
+                     (Trim(DM.DBSet1.FieldByName('ARESULTCLASS2').AsString) = '') or
+                     (Trim(DM.DBSet1.FieldByName('BRESULTCLASS2').AsString) = '') or
+                     (Trim(DM.DBSet1.FieldByName('CRESULTCLASS2').AsString) = '') or
+                     (Trim(DM.DBSet1.FieldByName('DRESULTCLASS2').AsString) = ''))) then
+               begin
+                    MessageDlg(Trim(DM.DBSet1.FieldByName('PROPELTASK').AsString)+'에 대한 자료가 부족 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+          end;
+
+          if  Trim(DM.DBSet1.FieldByName('DETAILTASK3').AsString) = '' then
+          begin
+               if  (Trim(DM.DBSet1.FieldByName('DETAILTASK4').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('DETAILTASK5').AsString) <> '') then
+               begin
+                    MessageDlg('세부추진활동3 부터 순차적으로 입력하셔야 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+
+               if  (Trim(DM.DBSet1.FieldByName('VALIDX3').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('SRESULTCLASS3').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('ARESULTCLASS3').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('BRESULTCLASS3').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('CRESULTCLASS3').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('DRESULTCLASS3').AsString) <> '') then
+               begin
+                    MessageDlg('세부추진활동3를 입력하셔야 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+          end
+          else
+          begin
+               if  ((Trim(DM.DBSet1.FieldByName('DETAILTASK3').AsString) <> '') and
+                   ((DM.DBSet1.FieldByName('DETAILWEIGHT3').AsInteger = 0) or
+                    (Trim(DM.DBSet1.FieldByName('VALIDX3').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('SRESULTCLASS3').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('ARESULTCLASS3').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('BRESULTCLASS3').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('CRESULTCLASS3').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('DRESULTCLASS3').AsString) = ''))) then
+               begin
+                    MessageDlg(Trim(DM.DBSet1.FieldByName('PROPELTASK').AsString)+'에 대한 자료가 부족 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+          end;
+
+          if  Trim(DM.DBSet1.FieldByName('DETAILTASK4').AsString) = '' then
+          begin
+               if  Trim(DM.DBSet1.FieldByName('DETAILTASK5').AsString) <> '' then
+               begin
+                    MessageDlg('세부추진활동4 부터 순차적으로 입력하셔야 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+
+               if  (Trim(DM.DBSet1.FieldByName('VALIDX4').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('SRESULTCLASS4').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('ARESULTCLASS4').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('BRESULTCLASS4').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('CRESULTCLASS4').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('DRESULTCLASS4').AsString) <> '') then
+               begin
+                    MessageDlg('세부추진활동4를 입력하셔야 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+          end
+          else
+          begin
+               if  ((Trim(DM.DBSet1.FieldByName('DETAILTASK4').AsString) <> '') and
+                   ((DM.DBSet1.FieldByName('DETAILWEIGHT4').AsInteger = 0) or
+                    (Trim(DM.DBSet1.FieldByName('VALIDX4').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('SRESULTCLASS4').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('ARESULTCLASS4').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('BRESULTCLASS4').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('CRESULTCLASS4').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('DRESULTCLASS4').AsString) = ''))) then
+               begin
+                    MessageDlg(Trim(DM.DBSet1.FieldByName('PROPELTASK').AsString)+'에 대한 자료가 부족 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+          end;
+
+          if  Trim(DM.DBSet1.FieldByName('DETAILTASK5').AsString) <> '' then
+          begin
+               if  ((Trim(DM.DBSet1.FieldByName('DETAILTASK5').AsString) <> '') and
+                   ((DM.DBSet1.FieldByName('DETAILWEIGHT5').AsInteger = 0) or
+                    (Trim(DM.DBSet1.FieldByName('VALIDX5').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('SRESULTCLASS5').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('ARESULTCLASS5').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('BRESULTCLASS5').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('CRESULTCLASS5').AsString) = '') or
+                    (Trim(DM.DBSet1.FieldByName('DRESULTCLASS5').AsString) = ''))) then
+               begin
+                    MessageDlg(Trim(DM.DBSet1.FieldByName('PROPELTASK').AsString)+'에 대한 자료가 부족 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+          end
+          else
+          begin
+               if  (Trim(DM.DBSet1.FieldByName('VALIDX5').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('SRESULTCLASS5').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('ARESULTCLASS5').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('BRESULTCLASS5').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('CRESULTCLASS5').AsString) <> '') or
+                   (Trim(DM.DBSet1.FieldByName('DRESULTCLASS5').AsString) <> '') then
+               begin
+                    MessageDlg('세부추진활동5를 입력하셔야 합니다.',mtError,[mbOK],0);
+                    System.Exit;
+               end;
+          end;
+
+          DM.DBSet1.Next;
+     end;
+
+     Result := True;
+end;
+
+procedure TMainForm.Bt_Srh1Click(Sender: TObject);
+var  sqltext : string;
+     i : integer;//,j, iChkNo, isum, iChkRow: integer;
+     stmp : string;//, stmp2,bf_tmp : string;
+     isum : integer;
+begin
+     sGrid1.RowCount := 2;
+     for  i := 0 to 20 do
+     begin
+          sGrid1.Cells[i,1] := '';
+     end;
+
+     //개인별 공동목표 등록내용을 조회한 후 Grid1에 조회된 내용을 display처리 시킨다.
+     //H10차로 인한 deptcode,1,3->deptcode,1,4 로 변경 20051025JSH
+     sqltext := 'select nvl(a.taskcode,'''')||'';''||nvl(to_char(a.seqno),''0'')||'';''||nvl(b.taskname,'''')||'';''||                      '+
+                '       nvl(to_char(a.mainweight),''0'')||'';''||nvl(a.detailtask,'''')||'';''||nvl(to_char(a.detailweight),''0'')||'';''|| '+
+                '       nvl(a.validx,'''')||'';''||nvl(a.bresultclass,'''')||'';''||nvl(a.valfunction,'''')                                 '+
+                '  from pehreaim_comdet a, pehreaim_bas b                                                                                   '+
+                ' where a.rabasdate = '''+ Lrabasdate+'''' + ' and a.empno    = '''+ ED_EMPNO.LABELHINT+'''                                 '+
+                '   and substr(a.deptcode,1,4) = '''+copy(vDeptcode,1,4)+'''                                                                '+
+                '   and a.rabasdate            = b.rabasdate   and a.taskcode = b.taskcode                                                  '+
+                '   and substr(a.deptcode,1,4) = substr(b.deptcode,1,4)                                                                     ';
+
+     with DB_COMDET do
+     begin
+          close;
+          ServiceName := 'PEA1060A_common';
+          ClearFieldInfo;
+          AddField('SEL_DATA', ftString, 300);
+          ClearParamInfo;
+          SQL.Text := SqlText;
+          Open;
+
+          //showmessage(inttostr(RecordCount));
+
+          //Edit1.Text := SqlText;
+
+          //개인별공동목표등록내용이 존재하면 다음처리루틴을 따른다.
+          if  RecordCount > 0 then
+          begin
+               sGrid1.RowCount := RecordCount +1;
+               for  i := 1 to RecordCount do
+               begin
+                    stmp := Csel_gfd1(3);
+                    sGrid1.Cells[10,i]:= Csel_gfd1(1); //taskcode
+                    sGrid1.Cells[11,i]:= Csel_gfd1(2); //seqno
+                    sGrid1.Cells[12,i]:= stmp;         //taskname_bef
+                    sGrid1.Cells[3,i] := Csel_gfd1(5); //detailtask
+                    sGrid1.Cells[4,i] := Csel_gfd1(6); //detailweight
+                    sGrid1.Cells[5,i] := Csel_gfd1(7); //validx
+                    sGrid1.Cells[6,i] := Csel_gfd1(8); //bresultclass
+                    sGrid1.Cells[7,i] := Csel_gfd1(9); //valfunction
+
+                    if  i = 1 then
+                    begin
+                         sGrid1.Cells[1,i] := stmp;         //taskname
+                         sGrid1.Cells[2,i] := Csel_gfd1(4); //mainweight
+                         ls_taskcode       := sGrid1.Cells[10,i];
+                         ls_taskname       := sGrid1.Cells[1,i];
+                    end
+                    else
+                    begin
+                         if  sGrid1.Cells[12,i-1] = stmp then
+                         begin
+                              sGrid1.Cells[1,i] := '';
+                              sGrid1.Cells[2,i] := '';
+                         end
+                         else
+                         begin
+                              sGrid1.Cells[1,i] := stmp;
+                              sGrid1.Cells[2,i] :=  Csel_gfd1(4); //mainweight
+                         end;
+                    end;
+                    next;
+               end;
+               sGrid1.Row := 1;
+          end;
+
+     end;  //end with ~
+
+     //전체비중체크
+     isum := 0;
+     for  i := 1 to sGrid1.RowCount -1 do
+     begin
+          if  sGrid1.Cells[2,i] <> '' then
+               isum := isum + strtoint(sGrid1.Cells[2,i]);
+     end;
+
+     for  i := 1 to sGrid2.RowCount -1 do
+     begin
+          if  sGrid2.Cells[2,i] <> '' then
+               isum := isum + strtoint(sGrid2.Cells[2,i]);
+     end;
+
+     Eda_weight.Value := isum;
+end;
+
+function TMainForm.Csel_gfd1(p_loc: Integer): String;
+var
+     v_cnt, v_tmp: Integer;
+     v_data: String;
+begin
+     Result := '';
+     v_data := DB_COMDET.FieldByName('SEL_DATA').AsString;
+     v_cnt  := 1;
+     while v_cnt < p_loc do
+     begin
+          v_tmp := Pos(';',v_data);
+          if  not(v_tmp > 0) then     Exit;
+          v_cnt := v_cnt + 1;
+          Delete(v_data, 1, v_tmp);
+     end;
+     v_tmp  := Pos(';',v_data) - 1;
+     if  v_tmp < 0 then     v_tmp := Length(v_data);
+     Result := Copy(v_data,1,v_tmp);
+end;
+
+function TMainForm.Csel_gfd2(p_loc: Integer): String;
+var
+     v_cnt, v_tmp: Integer;
+     v_data: String;
+begin
+     Result := '';
+     v_data := DB_COM_SEL.FieldByName('SEL_DATA').AsString;
+     v_cnt  := 1;
+     while v_cnt < p_loc do
+     begin
+          v_tmp := Pos(';',v_data);
+          if  not(v_tmp > 0) then     Exit;
+          v_cnt := v_cnt + 1;
+          Delete(v_data, 1, v_tmp);
+     end;
+     v_tmp  := Pos(';',v_data) - 1;
+     if  v_tmp < 0 then     v_tmp := Length(v_data);
+     Result := Copy(v_data,1,v_tmp);
+end;
+
+function TMainForm.Csel_gfd10(p_loc: Integer): String;
+var
+     v_cnt, v_tmp: Integer;
+     v_data: String;
+begin
+     Result := '';
+     v_data := DBSet10.FieldByName('SEL_DATA').AsString;
+     v_cnt  := 1;
+     while v_cnt < p_loc do
+     begin
+          v_tmp := Pos(';',v_data);
+          if  not(v_tmp > 0) then     Exit;
+          v_cnt := v_cnt + 1;
+          Delete(v_data, 1, v_tmp);
+     end;
+     v_tmp  := Pos(';',v_data) - 1;
+     if  v_tmp < 0 then     v_tmp := Length(v_data);
+     Result := Copy(v_data,1,v_tmp);
+end;
+
+procedure TMainForm.Bt_Add1Click(Sender: TObject);
+var  sWeight : string;
+     i,isum : integer;
+begin
+    // Sub_Form4.Create(self);
+     Sub_Form4.Lrabasdate := Lrabasdate;
+     Sub_Form4.Lempno     := Ed_empno.LabelHint;
+     Sub_Form4.Lwriteemp  := Pempno;
+     Sub_Form4.LDeptcode  := vDeptcode;
+
+     isum    := 0;
+     sWeight := FloatToStr(Eda_weight.value);
+     //Sub_Form4.On_SumWeight.Value := StrToFloat(sWeight);
+     Sub_Form4.iSumWeight := StrToInt(sWeight);
+
+     for  i := 1 to sGrid2.RowCount -1 do
+     begin
+          if  sGrid2.Cells[2,i] <> '' then
+          begin
+               isum := isum + StrToInt(sGrid2.Cells[2,i]);
+          end;
+     end;
+     Sub_Form4.iSSumWeight := isum;
+
+     Sub_Form4.ShowModal;
+     Bt_Srh1Click(self);
+end;
+
+procedure TMainForm.Bt_Del1Click(Sender: TObject);
+var
+     Msg     : string;
+     SqlText : String;
+begin
+     Msg := '[삭제] 작업하시면 등록된 해당매체자료가 모두 삭제처리 됩니다.' +#13+#13+
+            '[삭제] 작업을 하시겠습니까 ?.';
+
+     if  MessageDlg(Msg,mtConfirmation,[mbYes,mbNo],0) = IDNO then     System.Exit;
+
+     SqlText := Format('DELETE FROM PEHREAIM_BASDET  '+
+                       ' WHERE RABASDATE = ''%s''    '+
+                       '   AND EMPNO     = ''%s''    '+
+                       '   AND TASKCODE  = %s        ',
+                       [Lrabasdate, Ed_empno.LabelHint, sGrid1.Cells[10,sGrid1.Row]]);
+
+     DataModule_Tmax.Cupd_SQL := Sqltext;
+     DataModule_Tmax.Cupd_Exec;
+     if  not DataModule_Tmax.Cupd_ret then
+     begin
+          Messagedlg('APP-Server Error',mtError,[mbOK],0);
+          Exit;
+     end;
+
+     SqlText := Format('DELETE FROM PEHREAIM_COMDET  '+
+                       ' WHERE RABASDATE = ''%s''    '+
+                       '   AND EMPNO     = ''%s''    '+
+                       '   AND TASKCODE  = %s        ',
+                       [Lrabasdate, Ed_empno.LabelHint, sGrid1.Cells[10,sGrid1.Row]]);
+
+     DataModule_Tmax.Cupd_SQL := Sqltext;
+     DataModule_Tmax.Cupd_Exec;
+     if  not DataModule_Tmax.Cupd_ret then
+     begin
+          Messagedlg('APP-Server Error',mtError,[mbOK],0);
+          Exit;
+     end;
+
+     Bt_Srh1Click(self);
+end;
+
+procedure TMainForm.Bt_Detail1Click(Sender: TObject);
+var
+     Fm : TFm_sub_Form1;
+     i : integer;
+     iRowCnt : integer;
+begin
+     Fm := TFm_sub_Form1.Create(self);
+     Fm.Lrabasdate                := Lrabasdate;
+     Fm.Lempno                    := Ed_empno.LabelHint;
+     Fm.Lwriteemp                 := Pempno;
+     Fm.vDeptcode                 := vDeptcode;
+     Fm.LvTaskCode                := ls_taskcode;
+     Fm.LvPROPELTASK              := ls_taskname;
+     Fm.PeJeonOutLookBtn2.Enabled := false;
+     Fm.Bt_Add.Enabled            := false;
+     Fm.Bt_Save.Enabled           := false;
+     Fm.Bt_del.Enabled            := false;
+     //만일 접속자가 피평가자가 아니면 Label5을 unvisible 처리 시킨다.
+     if  Lwork <> '피평가자' then
+     begin
+          Fm.Label5.Visible    := false;
+          Fm.Panel8.Visible    := true;
+          Fm.lv_String.Caption := '※ '+  Ed_empno.Text+' '+ Pa_paycl.Text+' 이(가) 등록한 공동목표 List';
+          iRowCnt := 0;
+
+          for i := 1 to sGrid1.RowCount -1 do
+          begin
+               if  sGrid1.Cells[1,i] <> '' then
+               begin
+                    inc(iRowCnt);
+                    Fm.sGrid2.Cells[1,iRowCnt] := IntToStr(iRowCnt);
+                    Fm.sGrid2.Cells[2,iRowCnt] := sGrid1.Cells[1,i];
+                    Fm.sGrid2.Cells[3,iRowCnt] := sGrid1.Cells[2,i];
+                    Fm.sGrid2.Cells[10,iRowCnt]:= sGrid1.Cells[10,i];
+               end;
+          end;
+          if  iRowcnt > 0 then     Fm.sGrid2.RowCount := iRowCnt +1
+          else                     Fm.sGrid2.RowCount := 2;
+     end
+     else
+     begin
+          Fm.Label5.Visible := true;
+          Fm.Panel8.Visible := false;
+     end;
+     Fm.ShowModal;
+end;
+
+procedure TMainForm.sGrid1Click(Sender: TObject);
+begin
+     ls_taskcode := sGrid1.Cells[10,sGrid1.Row];
+     ls_taskname := sGrid1.Cells[12,sGrid1.Row];
+end;
+
+procedure TMainForm.btn_Print2Click(Sender: TObject);
+var  i : integer;
+begin
+     Select_pehreaim_comdet;
+
+     if  ((DM.DBSet3.Eof) and (DM.DBSet3.Bof)) then
+     begin
+          MessageDlg('출력할 데이터가 없습니다.'+#13+#10+''+#13+#10+'출력 작업은 취소 되었습니다.', mtError, [mbOK], 0);
+          System.Exit;
+     end;
+
+     if  GetBaseYear(5) <= GetBaseYear(3) then      PrintForm2.PeQuickRepPrn1.Preview
+     else                                           PrintForm.PeQuickRepPrn1.Preview;
+end;
+
+// 개인별 공동목표 SELECT
+procedure TMainForm.Select_pehreaim_comdet;
+var
+     SqlText,sql : string;
+begin
+     with DM.DBSet3 do
+     begin
+        //H10차로 인한 deptcode,1,3->deptcode,1,4 로 변경 20051025JSH
+          SqlText := ' SELECT SEQNO,PROPELTASK, MAINWEIGHT, '+
+                            ' DETAILTASK1, '''' DETAILTASK2, '''' DETAILTASK3, '''' DETAILTASK4, '''' DETAILTASK5, '+
+                            ' DETAILWEIGHT1, '''' DETAILWEIGHT2, '''' DETAILWEIGHT3, '''' DETAILWEIGHT4, '''' DETAILWEIGHT5, '+
+                            ' VALIDX1, '''' VALIDX2, '''' VALIDX3, '''' VALIDX4, '''' VALIDX5, '+
+                            ' VALFUNCTION1, '''' VALFUNCTION2, '''' VALFUNCTION3, '''' VALFUNCTION4, '''' VALFUNCTION5, '+
+                            ' SRESULTCLASS1, ARESULTCLASS1, BRESULTCLASS1, CRESULTCLASS1, DRESULTCLASS1, '+
+                            ' '''' SRESULTCLASS2, '''' ARESULTCLASS2, '''' BRESULTCLASS2, '''' CRESULTCLASS2, '''' DRESULTCLASS2, '+
+                            ' '''' SRESULTCLASS3, '''' ARESULTCLASS3, '''' BRESULTCLASS3, '''' CRESULTCLASS3, '''' DRESULTCLASS3, '+
+                            ' '''' SRESULTCLASS4, '''' ARESULTCLASS4, '''' BRESULTCLASS4, '''' CRESULTCLASS4, '''' DRESULTCLASS4, '+
+                            ' '''' SRESULTCLASS5, '''' ARESULTCLASS5, '''' BRESULTCLASS5, '''' CRESULTCLASS5, '''' DRESULTCLASS5, '+
+                            ' '''' E1PRJOPINON,   '''' KORNAME,   '''' EMPNO,          '''' RPRJCONYN,     '''' RPRJCONDATE, '+
+                            ' '''' E1EMPNO,       '''' E1PRJCONYN, '''' E1PRJCONDATE,  '''' E1PRJVIEW,     '''' E1PRJOBJYN, '+
+                            ' '''' EBREMPNO,      '''' EBRPRJCONYN,'''' EBRPRJCONDATE, '''' EBRPRJVIEW,    '''' EBRVALOBJYN, '+
+                            ' '''' E2EMPNO,       '''' E2PRJCONYN, '''' E2PRJCONDATE, GUBN E2PRJVIEW, '''' E2VALOBJYN '+
+                            ' FROM (SELECT A.SEQNO , B.TASKNAME PROPELTASK, A.MAINWEIGHT MAINWEIGHT, '+
+                                         ' A.DETAILTASK   DETAILTASK1, A.DETAILWEIGHT DETAILWEIGHT1, '+
+                                         ' A.VALIDX  VALIDX1, A.VALFUNCTION  VALFUNCTION1, '+
+                                         ' A.SRESULTCLASS SRESULTCLASS1, A.ARESULTCLASS ARESULTCLASS1, '+
+                                         ' A.BRESULTCLASS BRESULTCLASS1, A.CRESULTCLASS CRESULTCLASS1, A.DRESULTCLASS DRESULTCLASS1, '+
+                                         ' ''공동목표 중점추진업무'' GUBN, A.TASKCODE '+
+                                    ' FROM PEHREAIM_COMDET A, PEHREAIM_BAS B '+
+                                   ' where a.rabasdate = '''+ Lrabasdate+''' '+
+                                     ' and a.empno = '''+ ED_EMPNO.LABELHINT + ''' '+
+                                     ' and substr(a.deptcode,1,4) = '''+copy(vDeptcode,1,4)+''' '+
+                                     ' and a.rabasdate = b.rabasdate and a.taskcode = b.taskcode '+
+                                     ' and substr(a.deptcode,1,4) = substr(b.deptcode,1,4) '+
+                              ' UNION ALL '+
+                                  ' SELECT 1 SEQNO,PROPELTASK,MAINWEIGHT, DETAILTASK1, DETAILWEIGHT1, VALIDX1, '+
+                                         ' VALFUNCTION1, SRESULTCLASS1, ARESULTCLASS1, BRESULTCLASS1, CRESULTCLASS1, DRESULTCLASS1, '+
+                                         ' ''개인목표 중점추진업무'' GUBN,  SEQNO TASKCODE '+
+                                    ' FROM PEHREAIM_DET '+
+                                   ' WHERE RABASDATE = '''+ Lrabasdate+''' '+ ' AND EMPNO = '''+ ED_EMPNO.LABELHINT + ''' '+
+                                     ' AND DETAILTASK1 IS NOT NULL '+
+                              ' UNION ALL '+
+                                 ' SELECT 2 SEQNO,PROPELTASK,MAINWEIGHT, DETAILTASK2 DETAILTASK1, DETAILWEIGHT2 DETAILWEIGHT1, '+
+                                        ' VALIDX2 VALIDX1, VALFUNCTION2 VALFUNCTION1, '+
+                                        ' SRESULTCLASS2 SRESULTCLASS1, ARESULTCLASS2 ARESULTCLASS1, '+
+                                        ' BRESULTCLASS2 BRESULTCLASS1, CRESULTCLASS2 CRESULTCLASS1, DRESULTCLASS2 DRESULTCLASS1, '+
+                                        ' ''개인목표 중점추진업무'' GUBN,  SEQNO TASKCODE '+
+                                   ' FROM PEHREAIM_DET '+
+                                  ' WHERE RABASDATE = '''+ Lrabasdate+''' '+ ' AND EMPNO = '''+ ED_EMPNO.LABELHINT + ''' '+
+                                    ' AND DETAILTASK2 IS NOT NULL '+
+                              ' UNION ALL '+
+                                 ' SELECT 3 SEQNO,PROPELTASK,MAINWEIGHT, DETAILTASK3 DETAILTASK1, DETAILWEIGHT3 DETAILWEIGHT1, '+
+                                        ' VALIDX3 VALIDX1, VALFUNCTION3 VALFUNCTION1,'+
+                                        ' SRESULTCLASS3 SRESULTCLASS1, ARESULTCLASS3 ARESULTCLASS1, BRESULTCLASS3 BRESULTCLASS1, '+
+                                        ' CRESULTCLASS3 CRESULTCLASS1, DRESULTCLASS3 DRESULTCLASS1, '+
+                                        ' ''개인목표 중점추진업무'' GUBN, SEQNO TASKCODE '+
+                                   ' FROM PEHREAIM_DET '+
+                                  ' WHERE RABASDATE = '''+ Lrabasdate+''' '+ ' AND EMPNO = '''+ ED_EMPNO.LABELHINT + ''' '+
+                                    ' AND DETAILTASK3 IS NOT NULL '+
+                              ' UNION ALL '+
+                                 ' SELECT 4 SEQNO,PROPELTASK,MAINWEIGHT, DETAILTASK4 DETAILTASK1, DETAILWEIGHT4 DETAILWEIGHT1, '+
+                                        ' VALIDX4 VALIDX1, VALFUNCTION4 VALFUNCTION1, '+
+                                        ' SRESULTCLASS4 SRESULTCLASS1, ARESULTCLASS4 ARESULTCLASS1, '+
+                                        ' BRESULTCLASS4 BRESULTCLASS1, CRESULTCLASS4 CRESULTCLASS1, DRESULTCLASS4 DRESULTCLASS1, '+
+                                        ' ''개인목표 중점추진업무'' GUBN, SEQNO TASKCODE  '+
+                                   ' FROM PEHREAIM_DET '+
+                                  ' WHERE RABASDATE = '''+ Lrabasdate+''' '+ ' AND EMPNO = '''+ ED_EMPNO.LABELHINT + ''' '+
+                                    ' AND DETAILTASK4 IS NOT NULL '+
+                              ' UNION ALL '+
+                                 ' SELECT 5 SEQNO,PROPELTASK,MAINWEIGHT, DETAILTASK5 DETAILTASK1, DETAILWEIGHT5 DETAILWEIGHT1, '+
+                                        ' VALIDX5 VALIDX1, VALFUNCTION5 VALFUNCTION1, '+
+                                        ' SRESULTCLASS5 SRESULTCLASS1, ARESULTCLASS5 ARESULTCLASS1, BRESULTCLASS5 BRESULTCLASS1, '+
+                                        ' CRESULTCLASS5 CRESULTCLASS1, DRESULTCLASS5 DRESULTCLASS1, '+
+                                        ' ''개인목표 중점추진업무'' GUBN, SEQNO TASKCODE  '+
+                                   ' FROM PEHREAIM_DET '+
+                                  ' WHERE RABASDATE = '''+ Lrabasdate+''' '+ ' AND EMPNO = '''+ ED_EMPNO.LABELHINT + ''' '+
+                                    ' AND DETAILTASK5 IS NOT NULL ) '+
+                     '  ORDER BY GUBN DESC,  TASKCODE, SEQNO ';
+
+
+          Close;
+          ServiceName := 'PEA1060A_sel2';
+          ClearFieldInfo;
+          ClearParamInfo;
+          AddField('SEQNO'              , ftString,   2 );
+          AddField('PROPELTASK'         , ftString, 100 );
+          AddField('MAINWEIGHT'         , ftString,   3 );
+          AddField('DETAILTASK1'        , ftString, 100 );
+          AddField('DETAILTASK2'        , ftString, 100 );
+          AddField('DETAILTASK3'        , ftString, 100 );
+          AddField('DETAILTASK4'        , ftString, 100 );
+          AddField('DETAILTASK5'        , ftString, 100 );
+          AddField('DETAILWEIGHT1'      , ftString,   3 );
+          AddField('DETAILWEIGHT2'      , ftString,   3 );
+          AddField('DETAILWEIGHT3'      , ftString,   3 );
+          AddField('DETAILWEIGHT4'      , ftString,   3 );
+          AddField('DETAILWEIGHT5'      , ftString,   3 );
+          AddField('VALIDX1'            , ftString, 100 );
+          AddField('VALIDX2'            , ftString, 100 );
+          AddField('VALIDX3'            , ftString, 100 );
+          AddField('VALIDX4'            , ftString, 100 );
+          AddField('VALIDX5'            , ftString, 100 );
+          AddField('VALFUNCTION1'       , ftString, 100 );
+          AddField('VALFUNCTION2'       , ftString, 100 );
+          AddField('VALFUNCTION3'       , ftString, 100 );
+          AddField('VALFUNCTION4'       , ftString, 100 );
+          AddField('VALFUNCTION5'       , ftString, 100 );
+          AddField('SRESULTCLASS1'      , ftString, 100 );
+          AddField('ARESULTCLASS1'      , ftString, 100 );
+          AddField('BRESULTCLASS1'      , ftString, 100 );
+          AddField('CRESULTCLASS1'      , ftString, 100 );
+          AddField('DRESULTCLASS1'      , ftString, 100 );
+          AddField('SRESULTCLASS2'      , ftString, 100 );
+          AddField('ARESULTCLASS2'      , ftString, 100 );
+          AddField('BRESULTCLASS2'      , ftString, 100 );
+          AddField('CRESULTCLASS2'      , ftString, 100 );
+          AddField('DRESULTCLASS2'      , ftString, 100 );
+          AddField('SRESULTCLASS3'      , ftString, 100 );
+          AddField('ARESULTCLASS3'      , ftString, 100 );
+          AddField('BRESULTCLASS3'      , ftString, 100 );
+          AddField('CRESULTCLASS3'      , ftString, 100 );
+          AddField('DRESULTCLASS3'      , ftString, 100 );
+          AddField('SRESULTCLASS4'      , ftString, 100 );
+          AddField('ARESULTCLASS4'      , ftString, 100 );
+          AddField('BRESULTCLASS4'      , ftString, 100 );
+          AddField('CRESULTCLASS4'      , ftString, 100 );
+          AddField('DRESULTCLASS4'      , ftString, 100 );
+          AddField('SRESULTCLASS5'      , ftString, 100 );
+          AddField('ARESULTCLASS5'      , ftString, 100 );
+          AddField('BRESULTCLASS5'      , ftString, 100 );
+          AddField('CRESULTCLASS5'      , ftString, 100 );
+          AddField('DRESULTCLASS5'      , ftString, 100 );
+          AddField('E1PRJOPINON'        , ftString, 200 );
+          AddField('KORNAME'            , ftString,  12 );
+          AddField('EMPNO'              , ftString,   4 );
+          AddField('RPRJCONYN'          , ftString,   1 );
+          AddField('RPRJCONDATE'        , ftString,   8 );
+          AddField('E1EMPNO'            , ftString,   4 );
+          AddField('E1PRJCONYN'         , ftString,   1 );
+          AddField('E1PRJCONDATE'       , ftString,   8 );
+          AddField('E1PRJVIEW'          , ftString, 200 );
+          AddField('E1VALOBJYN'         , ftString,   1 );
+          AddField('EBREMPNO'           , ftString,   4 );
+          AddField('EBRPRJCONYN'        , ftString,   1 );
+          AddField('EBRPRJCONDATE'      , ftString,   8 );
+          AddField('EBRPRJVIEW'         , ftString, 200 );
+          AddField('EBRVALOBJYN'        , ftString,   1 );
+          AddField('E2EMPNO'            , ftString,   4 );
+          AddField('E2PRJCONYN'         , ftString,   1 );
+          AddField('E2PRJCONDATE'       , ftString,   8 );
+          AddField('E2PRJVIEW'          , ftString, 200 );
+          AddField('E2VALOBJYN'         , ftString,   1 );
+          SQL.Text := Sqltext;
+          Open;
+     end;
+end;
+
+
+
+procedure TMainForm.bt_closeClick(Sender: TObject);
+begin
+     pn_obt.Visible := false;
+end;
+
+procedure TMainForm.pob_e1prjopinonClick(Sender: TObject);
+var
+     SqlText : string;
+begin
+     //팀장면담테이블을 조회한다. (
+     SqlText := ' select e1prjopinon FROM PEHREAIM_PJT              '+
+                '  WHERE RABASDATE = ''' + LRABASDATE + '''         '+
+                '    AND EMPNO     = ''' + ED_EMPNO.LABELHINT + ''' ';
+     with DBSet10 do
+     begin
+          Close;
+          ServiceName := 'PEA1060A_common';
+          ClearFieldInfo;
+          AddField('SEL_DATA', ftString, 300);
+          ClearParamInfo;
+          SQL.Text := SqlText;
+          Open;
+
+          if  RecordCount > 0 then
+               mo_e1prjopinon.Text := trim(DBSet10.FieldByName('SEL_DATA').AsString);
+
+          close;
+     end;
+     pn_obt.Visible := true;
+end;
+
+procedure TMainForm.Bt_ReConfirmClick(Sender: TObject);
+var
+     SqlText, Msg : string;
+begin
+     SqlText := 'select  a.empno||'';''||a.rprjconyn||'';''||sum(hap)                     '+
+                '  from  pehremas a,                                                      '+
+                '      ( select empno, 0 taskcode, sum(mainweight) hap from pehreaim_det  '+
+                '         where rabasdate = ''' + LRABASDATE + '''                        '+
+		'           and empno     = ''' + ED_EMPNO.LABELHINT + '''                '+
+                '         group by empno                                                  '+
+                '        union                                                            '+
+                '        select empno, taskcode, max(mainweight) hap from pehreaim_comdet '+
+                '         where rabasdate = ''' + LRABASDATE + '''                        '+
+		'           and empno     = ''' + ED_EMPNO.LABELHINT + '''                '+
+                '         group by empno, taskcode                                        '+
+                '      )  b                                                               '+
+                ' where  a.empno = b.empno                                                '+
+		'   and  a.rabasdate = ''' + LRABASDATE + '''                             '+
+                ' group  by a.empno, a.rprjconyn                                          '+
+                ' having sum(hap) = 100                                                   ';
+
+     with DBSet10 do
+     begin
+          close;
+          ServiceName := 'PEA1060A_common';
+          ClearFieldInfo;
+          AddField('SEL_DATA', ftString, 300);
+          ClearParamInfo;
+          SQL.Text := SqlText;
+          Open;
+
+          if  RecordCount = 1 then
+          begin
+               if  (Csel_gfd10(2) <> 'Y') or (Csel_gfd10(3) <> '100') then
+               begin
+                    showmessage('목표수립이 확정된건에 한해 [재결재상신] 가능합니다.');
+                    close;
+                    System.Exit;
+               end;
+          end
+          else
+          begin
+               showmessage('목표등록된 내역이 없습니다. 먼저 목표등록을 해주세요!');
+               close;
+               System.Exit;
+          end;
+
+          close;
+     end;
+
+     Msg := '이미 목표등록 결재가 완료된 자료입니다.' + #13#13 +
+            '[결재재상신] 처리를 하시면 목표등록을 입력/수정/삭제 하실 수 있습니다.' + #13#13 +
+            '목표등록 완료 후 다시 [결재상신] 처리를 하시고 직상위자께 결재처리를 받으셔야 합니다.' + #13#13 +
+            '재등록 하시겠습니까?';
+
+     if  MessageDlg(Msg,mtConfirmation,[mbYes,mbNo],0) <> IDYES then     System.Exit;
+
+     Bt_Add1.Enabled      := True;
+     Bt_Del1.Enabled      := True;
+     Bt_Mod.Enabled       := True;
+     Bt_Add.Enabled       := True;
+     Bt_del.Enabled       := True;
+     Bt_Confirm.Enabled   := True;
+     Bt_can.Enabled       := True;
+     Bt_ReConfirm.Enabled := False;
+
+
+     SqlText := 'UPDATE pehremas                                      '+
+                '   SET rprjconyn    = ''N'',                         '+
+                '       rprjcondate  = '''' ,                         '+
+                '       e1prjview    = '''' ,                         '+
+                '       e1prjconyn   = ''N'',                         '+
+	        '       e1prjobjyn   = ''N'',                         '+
+                '       e1prjcondate = '''' ,                         '+
+                '       e2prjview    = '''' ,                         '+
+                '       e2prjconyn   = ''N'',                         '+
+                '       e2prjobjyn   = ''N'',                         '+
+                '       e2prjcondate = ''''                           '+
+                ' WHERE rabasdate    = ''' + LRABASDATE + '''         '+
+                '   AND empno        = ''' + ED_EMPNO.LABELHINT + ''' ';
+
+     DataModule_Tmax.Cupd_SQL := Sqltext;
+     DataModule_Tmax.Cupd_Exec;
+     if  not DataModule_Tmax.Cupd_ret then
+     begin
+          Messagedlg('APP-Server Error',mtError,[mbOK],0);
+          Exit;
+     end;
+
+     Msg := '목표등록이 초기화 되었습니다.' + #13#13 +
+            '목표등록 재설정 후 반드시 [결재상신] 처리를 하세요.' + #13#13 +
+            '[결재상신] 처리를 하시지 않으면 직상위자께 결재 받으실 수 없습니다.';
+
+     MessageDlg(Msg,mtConfirmation,[mbYes],0)
+end;
+
+Function TMainForm.Send_WebHint(SendProgID, SendEmpno, RcveEmpno, MailSubject, MailBody, ReceiveYN : String) : Boolean;
+begin
+     with TDml do
+     begin
+          ServiceName := 'PIT1030A_DML';
+          Close;
+          SQL.Clear;
+          SQL.Add('insert into PZHMAIL                         ');
+          SQL.Add('values (to_char(sysdate,''YYYYMMDDHHMISS''),');  //SENDTIME   메일발송 작업시간
+          SQL.Add('        '''+ SendProgID   +''',             ');  //SENDPROG   발송프로그램 ID
+          SQL.Add('        '''+ SendEmpno    +''',             ');  //SEND_PER   발신자 사번
+          SQL.Add('        '''+ RcveEmpno    +''',             ');  //RCVR_PER,  수신자 사번
+          SQL.Add('        ''''                  ,             ');  //REFR_PER   불필요(종합인사)
+          SQL.Add('        '''+ MailSubject  +''',             ');  //SUBJECT    메일제목
+          SQL.Add('        ''''                  ,             ');  //HEADER1    불필요(종합인사)
+          SQL.Add('        '''+ MailBody     +''',             ');  //BODY1      메일내용
+          SQL.Add('        ''''                  ,             ');  //TAIL1      불필요(종합인사)
+          SQL.Add('        '''+ ReceiveYN    +''',             ');  //RECEIVEYN  'Y' 일경우 메일 읽었을경우 송신자에게 수신확인 메일 보내주기
+          SQL.Add('        ''N''                 ,             ');  //EAI_FLAG
+          SQL.Add('        ''''                  )             ');  //EAI_DATE
+
+          try
+               Execute;
+          except
+               Result := false;
+               exit;
+          end;
+          Result := True;
+     end;
+end;
+
+procedure TMainForm.Ed_empnoRightBtnClick(Sender: TObject);
+var
+     Valuer : TPeDestValuer;
+begin
+      Try
+           Valuer           := TPeDestValuer.Create(Self);
+           Valuer.rabasdate := Lrabasdate;
+           Valuer.empno     := Pempno;
+
+           if  Valuer.Execute then
+           begin
+                Ed_empno.LabelHint := Valuer.empno;
+                Bt_TgtClick( Bt_Tgt );
+           end;
+      Finally
+           Valuer.Free;
+           Valuer := nil;
+           Start := True;
+      End;
+end;
+
+end.
