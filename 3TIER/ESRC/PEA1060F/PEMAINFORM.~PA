@@ -1,0 +1,1182 @@
+//종//종합인사정보시스템 - 목표등록 MAIN 프로그램 추가개발
+//작성자 : 박은철
+//작성일 : 2005-08-22
+
+unit PeMainForm;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
+  ComCtrls, ExtCtrls,StdCtrls, Db, Mask, pebtnedit, pedbutil, hanapass,
+  NotesHana_TLB,  Pass, Tmax_DataSetText, Buttons, jpeg, registry, TmaxFunc,
+  OnScheme, peoutlookbtn, ShellApi, OnInsaCommon, PDownLoad, Func;//, PDownLoadDev;
+
+type
+  TMainForm = class(TForm)
+    DBSet1: TTMaxDataSet;
+    SF_Main: TOnSchemeForm;
+    PageControl1: TPageControl;
+    TabSheet1: TTabSheet;
+    TabSheet3: TTabSheet;
+    TabSheet4: TTabSheet;
+    TabSheet5: TTabSheet;
+    TabSheet6: TTabSheet;
+    Panel11: TPanel;
+    Panel13: TPanel;
+    Image3: TImage;
+    pbt_menual: TPeJeonOutLookBtn;
+    Panel14: TPanel;
+    Image4: TImage;
+    pbt_avi2: TPeJeonOutLookBtn;
+    Panel15: TPanel;
+    Image5: TImage;
+    Panel16: TPanel;
+    Image6: TImage;
+    PeJeonOutLookBtn1: TPeJeonOutLookBtn;
+    pbt_avi3: TPeJeonOutLookBtn;
+    pbt_avi1: TPeJeonOutLookBtn;
+    TabSheet7: TTabSheet;
+    Panel18: TPanel;
+    Panel19: TPanel;
+    Panel20: TPanel;
+    pbt_pek2020a1: TPeJeonOutLookBtn;
+    Panel21: TPanel;
+    pbt_pek2020a2: TPeJeonOutLookBtn;
+    Image1: TImage;
+    Image2: TImage;
+    Panel12: TPanel;
+    PA_Buttons: TPanel;
+    Panel2: TPanel;
+    Panel7: TPanel;
+    pbt_pit1030a: TPeJeonOutLookBtn;
+    Panel8: TPanel;
+    pbt_pit1030a1: TPeJeonOutLookBtn;
+    Panel17: TPanel;
+    Bt_Search: TPeJeonOutLookBtn;
+    Panel6: TPanel;
+    Panel5: TPanel;
+    Panel1: TPanel;
+    Panel10: TPanel;
+    pbt_pea1060e1: TPeJeonOutLookBtn;
+    BtEmp: TButton;
+    EdEmp: TEdit;
+    Panel9: TPanel;
+    pbt_pea1060c: TPeJeonOutLookBtn;
+    pbt_pea1060b: TPeJeonOutLookBtn;
+    pbt_pea1060e: TPeJeonOutLookBtn;
+    Panel3: TPanel;
+    Panel4: TPanel;
+    bt_close: TPeJeonOutLookBtn;
+    Panel22: TPanel;
+    Panel23: TPanel;
+    pbt_pea1170f: TPeJeonOutLookBtn;
+    Panel24: TPanel;
+    pbt_pea1180f: TPeJeonOutLookBtn;
+    Panel25: TPanel;
+    Bt_Menual: TPeJeonOutLookBtn;
+    Bt_Search1: TPeJeonOutLookBtn;
+    Edit1: TEdit;
+    procedure FormClose(Sender: TObject; var Action: TCloseAction);
+    procedure FormCreate(Sender: TObject);
+    procedure Bt_ExitClick(Sender: TObject);
+    procedure FormShow(Sender: TObject);
+    procedure pbt_pit1030aClick(Sender: TObject);
+    procedure pbt_pea1060cClick(Sender: TObject);
+    procedure pbt_pea1060bClick(Sender: TObject);
+    procedure pbt_pea1060eClick(Sender: TObject);
+    procedure pbt_pea1060e1Click(Sender: TObject);
+    procedure pbt_menualClick(Sender: TObject);
+    procedure pbt_avi3Click(Sender: TObject);
+    procedure pbt_avi2Click(Sender: TObject);
+    procedure bt_CloseClick(Sender: TObject);
+    procedure pbt_avi1Click(Sender: TObject);
+    procedure BtEmpClick(Sender: TObject);
+    procedure Bt_SearchClick(Sender: TObject);
+    procedure EdEmpKeyPress(Sender: TObject; var Key: Char);
+    procedure pbt_pek2020a1Click(Sender: TObject);
+    procedure pbt_pea1170fClick(Sender: TObject);
+    procedure pbt_pea1180fClick(Sender: TObject);
+    procedure Bt_MenualClick(Sender: TObject);
+    procedure FormPaint(Sender: TObject);
+    procedure Bt_Search1Click(Sender: TObject);
+
+  private
+    { Private declarations }
+    Start    : Boolean;
+    Inter    : ILotusNotes_Hana;
+    pGrade   : string;  // 로그인 등급
+    GSHomeDir: string;
+    sUnionYN : String;
+
+    function GetBaseYear(gubun : integer) : string;
+  public
+    gsLastConEv  : String;  //업무목표최종결재자 (1차 or 2차)
+    Lrabasdate   : string;  // 평가기준일.
+    pEmpno   : string;      // 로그인 사번
+    Workemp1 : string;
+    Workemp2 : string;
+    Workemp3 : string;
+    Workemp4 : string;
+    Workemp5 : string;
+    function  Csel_gfd(p_loc: Integer): String;
+    procedure Formsetup;
+    { Public declarations }
+  end;
+
+var
+  MainForm: TMainForm;
+
+const
+  Msg = '목표 면담등록 서버가 다운된 것 같습니다.'+#13#13+'담당자에게 문의 하십시오'#13;
+
+implementation
+
+uses
+  Hinsa_TmaxDM, peDm, pea1060c1, PEA1060C2;//, pea1060a2, pea1060a3, pea1060b1;
+
+{$R *.DFM}
+
+//작업상 필요한 날짜 얻기
+function TMainForm.GetBaseYear(gubun : integer) : string;
+var
+  Sql     : string;
+begin
+  Result := '';
+  if gubun = 0 then                                            //전년도 업적평가 기준일
+    Sql := 'SELECT VALUE4 FROM PEHREBAS WHERE RABASDATE = ''00000000'' AND GUBUN = ''00'' AND SGUBUN = ''0001'' ';
+
+  if gubun = 1 then                                            //업적평가 기준일(Lrabasdate)
+    Sql := 'SELECT VALUE1 FROM PEHREBAS WHERE RABASDATE = ''00000000'' AND GUBUN = ''00'' AND SGUBUN = ''0001'' ';
+
+  if gubun = 2 then                                            //하반기 업적평가 시작일(LFordate)
+    Sql := 'SELECT VALUE2 FROM PEHREBAS WHERE RABASDATE = ''00000000'' AND GUBUN = ''00'' AND SGUBUN = ''0003'' ';
+
+  if gubun = 3 then                                            //시스템 시각(Lsysdate)
+    Sql := 'SELECT TO_CHAR(SYSDATE,''YYYYMMDDHH24MISSD'') FROM DUAL ';
+
+  if gubun = 4 then                                            //
+    Sql := 'SELECT NVL(VALUE5,'' '') FROM PEHREBAS  '+
+           ' WHERE RABASDATE = ''' + Lrabasdate + ''' AND GUBUN = ''11'' AND SGUBUN = ''0003'' ';
+
+  if gubun = 5 then                                            //직위체계변경일
+    Sql := 'SELECT NVL(VALUE3,'' '') FROM PIMVARI       '+
+           ' WHERE GUBUN = ''00'' AND SGUBUN = ''0001'' ';
+
+  if gubun = 7 then                                            //전년도 업적평가 기준일
+    Sql := 'SELECT VALUE2 FROM PEHREBAS WHERE RABASDATE = ''00000000'' AND GUBUN = ''00'' AND SGUBUN = ''0002'' ';
+
+  DataModule_Tmax.Csel_SQL := Sql;
+  DataModule_Tmax.Csel_Open4;
+  Result := DataModule_Tmax.Csel_gfd4(1);
+end;
+
+procedure TMainForm.FormClose(Sender: TObject; var Action: TCloseAction);
+begin
+  Inter := nil;
+  Action := caFree;
+end;
+
+procedure TMainForm.FormCreate(Sender: TObject);
+var
+  sMsg : string;
+begin
+  sMsg := DataModule_Tmax.Connect_Session;
+
+  if sMsg <> '' then
+  begin
+    Application.MessageBox(PChar(msg),'TMAX에러',mb_ok);
+    Application.Terminate;
+    Exit;
+  end;
+
+  //2013.11. Add 파라미터와 비교하여 암호 다르면 접속 막음.
+  FM_Tmax := TFM_Tmax.Create(Self);
+  FM_Tmax.T_Session := DataModule_Tmax.TMaxSession;
+  if FM_Tmax.PassWordChk(Hinsa_Param(cmdline,1), Hinsa_Param(cmdline,3)) = 0 then
+    Application.Terminate;
+
+  Start := True;
+  Inter := nil;
+  VarLoading;
+end;
+
+procedure TMainForm.Bt_ExitClick(Sender: TObject);
+begin
+  Close;
+end;
+
+function TMainForm.Csel_gfd(p_loc: Integer): String;
+var
+  v_cnt, v_tmp: Integer;
+  v_data: String;
+begin
+  Result := '';
+  v_data := DBSet1.FieldByName('SEL_DATA').AsString;
+  v_cnt := 1;
+  while v_cnt < p_loc do
+  begin
+    v_tmp := Pos(';',v_data);
+    if not(v_tmp > 0) then Exit;
+    v_cnt := v_cnt + 1;
+    Delete(v_data, 1, v_tmp);
+  end;
+  v_tmp := Pos(';',v_data) - 1;
+  if v_tmp < 0 then v_tmp := Length(v_data);
+  Result := Copy(v_data,1,v_tmp);
+end;
+
+procedure TMainForm.FormSetup;
+const
+ ObjName = 'SOFTWARE\(주) 하나로\NEW종합인사정보시스템';
+var reg : TRegistry;
+    vCloseMent, vSqlText, vPayra, vJobPayraYN : string;
+    vColseYN : Boolean;
+    Pempcnt  : Integer;
+begin
+  sUnionYN := '';
+  vColseYN := False;
+
+  pGrade     := Copy(peParam(CmdLine,4),2,1);
+  Lrabasdate := GetBaseYear(1);            //업적평가 기준일
+  pEmpno     := peParam(CmdLine,1);
+
+  vSqlText := 'select value1||'';''||value2||'';''||value3||'';''||'+
+              '       value4||'';''||value5   from PEHREBAS        '+
+              ' where rabasdate = ''' + Lrabasdate + '''           '+
+              '   and gubun     = ''11'' and sgubun = ''0005''     ';
+
+  with DBSet1 do
+  begin
+       Close;
+       ServiceName := 'PEA1060A_common';
+       ClearFieldInfo;
+       AddField('SEL_DATA', ftString, 300);
+       ClearParamInfo;
+       SQL.Text := vSqlText;
+       Open;
+       if recordcount > 0 then
+       begin
+            Workemp1 := Csel_gfd(1);
+            Workemp2 := Csel_gfd(2);
+            Workemp3 := Csel_gfd(3);
+            Workemp4 := Csel_gfd(4);
+            Workemp5 := Csel_gfd(5);
+       end;
+       Close;
+  end;
+
+  //등록 기간 체크.
+  vSqlText := 'select value1 ||'';''|| value2 ||'';''|| value3 ||'';''|| value4 ||'';''|| '+
+              '       value5 ||'';''|| To_Char(Sysdate,''YYYYMMDD'')                      '+
+              '  from PEHREBAS                                                            '+
+              ' where rabasdate =  ''' + Lrabasdate + '''                                 '+
+              '   and gubun     = ''11'' and sgubun = ''0006''                            ';
+  with DBSet1 do
+  begin
+       SQL.Text := vSqlText;
+       Open;
+       if  Csel_gfd(6) > Csel_gfd(5) then
+       begin
+            vCloseMent := '업무목표 등록/결재';
+            vColseYN   := True;
+       end;
+      {if  (Csel_gfd(6) < Csel_gfd(3)) or (Csel_gfd(6) > Csel_gfd(4)) then
+       begin
+            vCloseMent := '업적평가 이의신청';
+            vColseYN   := True;
+       end; } //이의신청기간에 수정하여 올리기.
+       Close;
+  end;
+
+  if (pEmpno=Workemp1) or (pEmpno=Workemp2) or (pEmpno=Workemp3) or
+     (pEmpno=Workemp4) or (pEmpno=Workemp5) or (copy(pEmpno,1,1) = 'D') then
+  begin
+       if EdEmp.Text<>'' then pEmpno := EdEmp.Text;
+
+       EdEmp.Visible := True;
+       BtEmp.Visible := True;
+       vColseYN      := False; //관리자는 종료 안되도록.
+       pbt_pea1170f.Enabled  := true;
+  end
+  else
+  begin
+       EdEmp.Visible:=False;
+       BtEmp.Visible:=False;
+  end;
+
+  if   vColseYN = True then
+  begin
+       ShowMessage(vCloseMent + ' 기간이 만료 되었습니다.'+#13+#13+
+                   '프로그램은 자동 종료됩니다.  ');
+       Application.Terminate;
+  end;
+
+  //////////////////////////////////////////////////////////////////////////////
+  //직무역량 등록 확인(2013.04.01)
+(*
+  vSqlText := 'select MAX(CONYN) CONYN '+
+              '  from PEDUCEMP         '+
+              ' where rabasdate = '''+ Lrabasdate +''' '+
+              '   and Empno     = '''+ pEmpno     +''' ';
+  with DBSet1 do
+  begin
+    SQL.Text := vSqlText;
+    Open;
+
+    if Not((pEmpno=Workemp1) or (pEmpno=Workemp2) or (pEmpno=Workemp3) or
+           (pEmpno=Workemp4) or (pEmpno=Workemp5) or (copy(pEmpno,1,1) = 'D')) then
+    begin
+      if Csel_gfd(1) <> 'Y' then
+      begin
+        ShowMessage( ' 직무역량 등록이 완료 지지 않았습니다.'+#13+#13+
+                     ' 직무역량 등록 후 업무목표 등록을 진행하기 바랍니다.'+#13+#13+
+                     ' 프로그램은 자동 종료됩니다.  ');
+        Application.Terminate;
+      End;
+    End;
+  end;
+*)
+  //////////////////////////////////////////////////////////////////////////////
+  reg := TRegistry.Create;
+  reg.RootKey := HKEY_LOCAL_MACHINE;
+  if reg.OpenKey(ObjName,False) then
+     GSHomeDir := reg.ReadString('NewHomeDir');
+  reg.CloseKey;
+  reg.Free;
+{
+  panel4.Top      :=  593;
+  panel4.Height   :=  121;
+  bt_Close.Top    :=    3;
+  bt_Close.Height :=  115;
+}
+  PageControl1.ActivePage := TabSheet1;
+
+  //사원 체크 한다.
+  //팀장 또는 파견팀장은 평가자쪽 버튼 활성화 시키고 팀원이면 피평가자쪽 버튼을 활성화 시킨다.
+  //   SqlText := 'select jobpayra||'';''||unionyn||'';''||empno from PEHREAIM_COMBAS'+
+  vSqlText := 'select payra||'';''||unionyn||'';''||empno||'';''||           '+
+              '       (select count(empno) from pehremas                     '+
+              '         where rabasdate = a.rabasdate and e1empno = a.empno) '+
+              '  from PEHREAIM_COMBAS a                                      '+
+              ' where rabasdate =  ''' + Lrabasdate + '''                    '+
+              '   and empno     =  ''' + pEmpno     + '''                    ';
+
+  with DBSet1 do
+  begin
+       Close;
+       ServiceName := 'PEA1060A_common';
+       ClearFieldInfo;
+
+       AddField('SEL_DATA', ftString, 300);
+       ClearParamInfo;
+       SQL.Text := vSqlText;
+       Open;
+
+       vPayra := Csel_gfd(1);
+       if RecordCount > 0 then
+       begin
+            sUnionYN := Csel_gfd(2); //공동여부체크
+            if  GetBaseYear(5) <= GetBaseYear(1) then
+            begin
+//                 edit1.text := Csel_gfd(1)+'   '+Csel_gfd(3)+'   '+Csel_gfd(4);
+
+                 if     (Csel_gfd(1) = 'C11') or (Csel_gfd(1) = 'C15')
+                     or (Csel_gfd(1) = 'A91') or (Csel_gfd(1) = 'A71')
+                     or (Csel_gfd(1) = 'A81') or (Csel_gfd(1) = 'A84')
+                     or (Csel_gfd(1) = 'A87') or (Csel_gfd(1) = 'B50')
+                     or (Copy(Csel_gfd(3),1,1) = 'M') or (Csel_gfd(4) <> '0')
+//                     or (pEmpno = '0528')  // TFT파견중이라 임시로 추가.....20070706(신영섭 추가)
+                 then
+                 begin
+                    pbt_pit1030a.Enabled  := false;
+                    pbt_pea1060c.Enabled  := true;
+                    pbt_pea1060b.Enabled  := true;
+                    pbt_pea1060e.Enabled  := true;
+                    pbt_pea1060e1.Enabled := true; //개인 업무목표 결재에서 못불러옴.
+                    pbt_pea1170f.Enabled  := true;
+
+                 end
+                 else
+                 begin
+                    pbt_pit1030a1.Enabled := false;
+                    pbt_pea1060c.Enabled  := false;  //jissi
+                    pbt_pea1060b.Enabled  := false;  //jissi
+                    pbt_pea1060e.Enabled  := false;  //jissi
+                    pbt_pea1060e1.Enabled := true;
+                    pbt_pea1170f.Enabled  := false;
+                 end;
+            end
+            else
+            begin
+                 if     (Csel_gfd(1) = '2C') or (Csel_gfd(1) = '58')
+                     or (Csel_gfd(1) = '1B') or (Csel_gfd(1) = '16')
+                     or (Csel_gfd(1) = '19') or (Csel_gfd(1) = '38')
+                     or (Copy(Csel_gfd(3),1,1) = 'M') or (Csel_gfd(4) <> '0')
+//                     or (pEmpno = '0528')  // TFT파견중이라 임시로 추가.....20070706(신영섭 추가)
+                 then
+                 begin
+                    pbt_pit1030a.Enabled  := false;
+                    pbt_pea1060c.Enabled  := true;
+                    pbt_pea1060b.Enabled  := true;
+                    pbt_pea1060e.Enabled  := true;
+                    pbt_pea1060e1.Enabled := true; //개인 업무목표 결재에서 못불러옴.
+                 end
+                 else
+                 begin
+                    pbt_pit1030a1.Enabled := false;
+                    pbt_pea1060c.Enabled  := false;  //jissi
+                    pbt_pea1060b.Enabled  := false;  //jissi
+                    pbt_pea1060e.Enabled  := false;  //jissi
+                    pbt_pea1060e1.Enabled := true;
+                 end;
+            end;
+       end
+       else
+       begin
+            // showmessage('사용 권한이 없어 자동종료 됩니다.'); Application.Terminate;
+            //M사번 때문에
+            pbt_pit1030a1.Enabled := false;
+            pbt_pea1060e1.Enabled := true;
+            {//jissi
+            pbt_pea1060c.Enabled  := true;
+            pbt_pea1060b.Enabled  := true;
+            pbt_pea1060e.Enabled  := true;
+            }
+       end;
+       Close;
+  end;
+
+  //팀장여부(M사번도 팀장일 경우 예:M181) 2016.03.17 HeeYong.
+  vSqlText := ' SELECT JobPayraYN FROM pimeemp   '+
+              ' where empno = ''' + pEmpno + ''' ';
+
+  with DBSet1 do
+  begin
+    Close;
+    ServiceName := 'PEA1060A_common';
+    ClearFieldInfo;
+    AddField('SEL_DATA', ftString, 300);
+    ClearParamInfo;
+    SQL.Text := vSqlText;
+    Open;
+
+    vJobPayraYN := Csel_gfd(1);
+    Close;
+  end;
+
+                                                             //개인 업무목표 등록
+  //팀원 직무역량 우선순위 등록이 완료 후  활성화.
+  vSqlText := ' SELECT count(empno) FROM PEDUCEMP '+
+              ' where RABASDATE  =  ''' + Lrabasdate + '''  '+
+//              '   and CONYN      =  ''Y''                   '+
+              '   and EMPNO      =  ''' + pEmpno     + '''  ';
+
+  with DBSet1 do
+  begin
+    Close;
+    ServiceName := 'PEA1060A_common';
+    ClearFieldInfo;
+    AddField('SEL_DATA', ftString, 300);
+    ClearParamInfo;
+    SQL.Text := vSqlText;
+    Open;
+    Pempcnt  := 0;
+    Pempcnt  := strtoint(Csel_gfd(1));
+
+    // 개인 업무목표 등록
+    if  (Pempcnt > 0) then
+    Begin
+      pbt_pea1060e1.Enabled := True;
+    End
+    Else
+    Begin
+      pbt_pea1060e1.Enabled := False;
+    End;
+    Close;
+  end;
+
+  //개인 업무목표 결재
+  //팀별 직무역량 등록이 완료 후  활성화.
+  vSqlText := ' SELECT count(RABASDATE)                       '+
+              ' FROM PEDUCDepT A, PIMPMAS B                   '+
+              ' where A.RABASDATE  =  ''' + Lrabasdate + '''  '+
+              '   and A.DEPTCODE   =  B.DEPTCODE              '+
+              '   and A.CONYN      =  ''Y''                   '+
+              '   and B.PAYRAYN    =  ''Y''                   '+  //소속부서, 근무부서가 HR팀에서 왔다가다 함.
+              '   and B.EMPNO      =  ''' + pEmpno     + '''  ';
+
+  with DBSet1 do
+  begin
+    Close;
+    ServiceName := 'PEA1060A_common';
+    ClearFieldInfo;
+    AddField('SEL_DATA', ftString, 300);
+    ClearParamInfo;
+    SQL.Text := vSqlText;
+    Open;
+
+    Pempcnt  := 0;
+    Pempcnt  := strtoint(Csel_gfd(1));
+
+    // 개인 업무목표 결재
+    if  (Pempcnt > 0) then
+    Begin
+      pbt_pea1060e.Enabled  := True;
+      pbt_pea1060e1.Enabled := True;
+    End
+    Else
+    Begin
+      pbt_pea1060e.Enabled := False;
+    End;
+
+    //본부장이상 처리.
+    if Copy(vPayra,1,1) = 'A' Then
+    Begin
+//      pbt_pea1170f.Enabled  := False;
+      pbt_pea1060c.Enabled  := False;
+      pbt_pea1060b.Enabled  := False;
+      pbt_pea1060e.Enabled  := True;
+      pbt_pek2020a1.Enabled := False;
+      pbt_pek2020a2.Enabled := False;
+
+      If (vJobPayraYN = 'Y') Then
+      Begin
+        pbt_pea1170f.Enabled  := True;
+        pbt_pea1180f.Enabled  := True;
+        pbt_pea1060e1.Enabled := True;
+      End
+      Else
+      Begin
+        pbt_pea1170f.Enabled  := False;
+        pbt_pea1180f.Enabled  := False;
+        pbt_pea1060e1.Enabled := False;
+    End
+    End;
+
+    Close;
+  end;
+
+  //IDP 자료조회
+  vSqlText := ' SELECT count(empno) FROM peidpmas  '+
+              ' where base_yy  =  substrb(''' + Lrabasdate + ''',1,4)  '+
+              '   and empno   <>  ''' + pEmpno     + '''  '+
+              '   and e1empno  =  ''' + pEmpno     + '''  ';
+
+  with DBSet1 do
+  begin
+    Close;
+    ServiceName := 'PEA1060A_common';
+    ClearFieldInfo;
+    AddField('SEL_DATA', ftString, 300);
+    ClearParamInfo;
+    SQL.Text := vSqlText;
+    Open;
+
+    Pempcnt  := 0;
+    Pempcnt  := strtoint(Csel_gfd(1));
+
+(* idp 등록 끝나면 연다. 윤종준매니져 무조건 열어달라고 요청
+    // IDP버튼 활성화
+    if  (Pempcnt > 0) then
+    Begin
+      pbt_pek2020a1.Enabled := True;
+      pbt_pek2020a2.Enabled := False;
+    End
+    Else
+    Begin
+      pbt_pek2020a1.Enabled := False;
+      pbt_pek2020a2.Enabled := True;
+    End;
+*)
+    Close;
+  end;
+end;
+
+procedure TMainForm.FormShow(Sender: TObject);
+begin
+  FormSetup;
+end;
+    
+procedure TMainForm.BtEmpClick(Sender: TObject);
+begin
+  pEmpno := EdEmp.Text;
+  FormSetup;
+end;
+
+procedure TMainForm.EdEmpKeyPress(Sender: TObject; var Key: Char);
+begin
+  if key = #13 then
+  begin
+    pEmpno := EdEmp.Text;
+    FormSetup;
+  end;
+end;
+
+procedure TMainForm.pbt_pit1030aClick(Sender: TObject);
+var LSfilename : string;
+    LAarg : array[0..200] of char;
+begin
+   //공동목표등록
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.PL_VersionCHK3(3, 'PIT1030A');  //Call하는 단위 프로그램의 버젼을 체크..
+   FM_DownLoad.FL_UserID := pEmpno;   
+   if (not FM_DownLoad.FL_VersionCHK ) or
+      (not FileExists(GSHomeDir+'\Bin\3tier\PIT1030A.EXE')) then
+   begin
+      FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ibin','PIT1030A.EXE','PIT1030A',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+   end
+   else
+   begin
+      FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+      LSfilename := GSHomeDir+'\Bin\3Tier\PIT1030A.EXE ,'
+                 + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                 +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                 +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                 +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                 +Passemp(cmdline,13)+','+Passemp(cmdline,14)+','+Passemp(cmdline,15);
+
+      strpcopy( LAarg, LSfilename );
+      winexec(LAarg, SW_SHOWNORMAL);
+
+      FM_DownLoad.Close;      // 다운로드 폼 닫기.
+   end;
+end;
+
+procedure TMainForm.pbt_pea1060cClick(Sender: TObject);
+var LSfilename : string;
+    LAarg : array[0..200] of char;
+begin
+   //공동목표등록
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.PL_VersionCHK3(3, 'PEA1060C');  //Call하는 단위 프로그램의 버젼을 체크..
+   FM_DownLoad.FL_UserID := pEmpno;
+   if (not FM_DownLoad.FL_VersionCHK ) or
+      (not FileExists(GSHomeDir+'\Bin\3tier\PEA1060C.EXE')) then
+   begin
+      FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEA1060C.EXE','PEA1060C',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+   end
+   else
+   begin
+      FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+      LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060C.EXE ,'
+                 + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                 +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                 +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                 +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                 +Passemp(cmdline,13)+','+Passemp(cmdline,14)+','+Passemp(cmdline,15);
+
+      strpcopy( LAarg, LSfilename );
+      winexec(LAarg, SW_SHOWNORMAL);
+
+      FM_DownLoad.Close;      // 다운로드 폼 닫기.
+   end;
+end;
+
+
+procedure TMainForm.pbt_pea1060bClick(Sender: TObject);
+var LSfilename : string;
+    LAarg : array[0..200] of char;
+begin
+   //공동목표등록
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.PL_VersionCHK3(3, 'PEA1060B');  //Call하는 단위 프로그램의 버젼을 체크..
+   FM_DownLoad.FL_UserID := pEmpno;   
+   if (not FM_DownLoad.FL_VersionCHK ) or
+      (not FileExists(GSHomeDir+'\Bin\3tier\PEA1060B.EXE')) then
+   begin
+      FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEA1060B.EXE','PEA1060B',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+   end
+   else
+   begin
+      FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+      LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060B.EXE ,'
+                 + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                 +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                 +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                 +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                 +Passemp(cmdline,13)+','+Passemp(cmdline,14)+','+Passemp(cmdline,15);
+
+      strpcopy( LAarg, LSfilename );
+      winexec(LAarg, SW_SHOWNORMAL);
+
+      FM_DownLoad.Close;      // 다운로드 폼 닫기.
+   end;
+
+end;
+
+procedure TMainForm.pbt_pea1060eClick(Sender: TObject);
+var LSfilename : string;
+    LAarg : array[0..200] of char;
+begin
+   //공동목표등록
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.PL_VersionCHK3(3, 'PEA1060E');  //Call하는 단위 프로그램의 버젼을 체크..
+   FM_DownLoad.FL_UserID := pEmpno;
+   if (not FM_DownLoad.FL_VersionCHK ) or
+      (not FileExists(GSHomeDir+'\Bin\3tier\PEA1060E.EXE')) then
+   begin
+      FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEA1060E.EXE','PEA1060E',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+   end
+   else
+   begin
+      FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+      LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060E.EXE ,'
+                 + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                 +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                 +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                 +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                 +Passemp(cmdline,13)+','+Passemp(cmdline,14)+','+Passemp(cmdline,15);
+
+      strpcopy( LAarg, LSfilename );
+      winexec(LAarg, SW_SHOWNORMAL);
+
+      FM_DownLoad.Close;      // 다운로드 폼 닫기.
+   end;
+end;
+
+
+procedure TMainForm.pbt_pea1060e1Click(Sender: TObject);
+const
+ ObjName = 'SOFTWARE\(주) 하나로\NEW종합인사정보시스템';
+var fName: TextFile;
+    LSfilename, vSqlText : string;
+    LAarg : array[0..200] of char;
+    vNcnt : Integer;
+begin
+(* 새로운 시도 삭제요청 : 2017.02.13 김진호M
+  FM_TARGET := TFM_TARGET.Create(Self);
+  try
+    FM_TARGET.ShowModal;
+  finally
+    FM_TARGET.Free;
+  end;
+
+  vSqlText := 'SELECT COUNT(EMPNO) FROM PEHREAIM_DET A                 '+
+              ' WHERE A.RABASDATE = '''+ Lrabasdate +'''               '+
+              '   AND A.EMPNO     = '''+ pEmpno +'''                   '+
+              '   AND A.SEQNO   = (SELECT MIN(SEQNO) FROM PEHREAIM_DET '+
+              '                    WHERE RABASDATE = A.RABASDATE       '+
+              '                      AND EMPNO     = A.EMPNO)          ';
+  with DBSet1 do
+  begin
+    Close;
+    ServiceName := 'PEA1060A_common';
+    ClearFieldInfo;
+    AddField('SEL_DATA', ftString, 300);
+    ClearParamInfo;
+    SQL.Text := vSqlText;
+    Open;
+
+    vNcnt  := 0;
+    vNcnt  := strtoint(Csel_gfd(1));
+    if vNcnt = 0 then Exit;
+  end;
+
+*)
+
+   //공동목표등록
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.FL_UserID := pEmpno;
+   if sUnionYN = 'Y' then // 공동목표등록 대상자
+   begin
+      FM_DownLoad.PL_VersionCHK3(3, 'PEA1060D');  //Call하는 단위 프로그램의 버젼을 체크..
+      if (not FM_DownLoad.FL_VersionCHK ) or
+         (not FileExists(GSHomeDir+'\Bin\3tier\PEA1060D.EXE')) then
+      begin
+         FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEA1060D.EXE','PEA1060D',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+      end
+      else
+      begin
+         FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+         LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060D.EXE ,'
+                    + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                    +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                    +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                    +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                    +Passemp(cmdline,13)+','+Passemp(cmdline,14)+','+Passemp(cmdline,15);
+
+         strpcopy( LAarg, LSfilename );
+         winexec(LAarg, SW_SHOWNORMAL);
+
+         FM_DownLoad.Close;      // 다운로드 폼 닫기.
+      end;
+   end
+   else if sUnionYN = 'N' then //일반목표등록 대상자
+   begin
+//팀장이 목표등록을 해야해서 다음 루틴 추가함... 2008.10.
+//////////////////////////////////////////////////////////////////
+     AssignFile(fName, GetHomeDir+'\IDCheck1.txt');
+     Rewrite(fName);
+     //Writeln(fName, '1');                                  //구분값
+     Writeln(fName, pEmpno); //empno
+     CloseFile(fName);
+//////////////////////////////////////////////////////////////////
+
+      FM_DownLoad.PL_VersionCHK3(3, 'PEA1060A');  //Call하는 단위 프로그램의 버젼을 체크..
+      if (not FM_DownLoad.FL_VersionCHK ) or
+         (not FileExists(GSHomeDir+'\Bin\3tier\PEA1060A.EXE')) then
+      begin
+         FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEA1060A.EXE','PEA1060A',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+      end
+      else
+      begin
+         FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+         LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060A.EXE ,'
+                    + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                    +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                    +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                    +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                    +Passemp(cmdline,13)+','+Passemp(cmdline,14)+','+Passemp(cmdline,15);
+
+         strpcopy( LAarg, LSfilename );
+         winexec(LAarg, SW_SHOWNORMAL);
+
+         FM_DownLoad.Close;      // 다운로드 폼 닫기.
+      end;
+   end;
+end;
+
+procedure TMainForm.pbt_menualClick(Sender: TObject);
+begin
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson','직무경력등록 매뉴얼.hwp','직무경력등록 매뉴얼',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+end;
+
+
+procedure TMainForm.pbt_avi3Click(Sender: TObject);
+begin
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson','목표등록3.avi','목표등록3',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+end;
+
+
+procedure TMainForm.pbt_avi2Click(Sender: TObject);
+begin
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson','목표등록2.avi','목표등록2',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+end;
+
+procedure TMainForm.bt_CloseClick(Sender: TObject);
+begin
+   Close;
+end;
+
+procedure TMainForm.pbt_avi1Click(Sender: TObject);
+begin
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   if (not FileExists(GSHomeDir+'\Bin\3Tier\목표등록1.avi')) then
+   begin
+      FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson','목표등록1.avi','목표등록1',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+   end
+   else
+   begin
+     FM_DownLoad.Close;      // 다운로드 폼 닫기.
+     ShellExecute(0, 'open', pchar(GSHomeDir+'\Bin\3Tier\목표등록1.avi'), '','', SW_SHOWNORMAL);
+   end;
+end;
+
+procedure TMainForm.Bt_SearchClick(Sender: TObject);
+var LSfilename : string;
+    LAarg : array[0..200] of char;
+    sqltext : String;
+begin
+
+   SqlText := 'select payra||'';''||unionyn||'';''||empno||'';''||           '+
+              '       (select count(empno) from pehremas                     '+
+              '         where rabasdate = a.rabasdate and e1empno = a.empno) '+
+              '  from PEHREAIM_COMBAS a                                      '+
+              ' where rabasdate =  ''' + GetBaseYear(0) + '''                '+
+              '   and empno     =  ''' + pEmpno     + '''                    ';
+
+   with DBSet1 do
+   begin
+      Close;
+      ServiceName := 'PEA1060A_common';
+      ClearFieldInfo;
+      AddField('SEL_DATA', ftString, 300);
+      ClearParamInfo;
+      SQL.Text := SqlText;
+      Open;
+   end;
+
+
+   //공동목표등록
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.FL_UserID := pEmpno;
+   if Csel_gfd(2) = 'Y' then // 공동목표등록 대상자
+   begin
+      FM_DownLoad.PL_VersionCHK3(3, 'PEA1060D');  //Call하는 단위 프로그램의 버젼을 체크..
+      if (not FM_DownLoad.FL_VersionCHK ) or
+         (not FileExists(GetHomeDir+'\Bin\3tier\PEA1060D.EXE')) then
+      begin
+         FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEA1060D.EXE','PEA1060D',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+      end
+      else
+      begin
+         FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+         LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060D.EXE ,'
+                    + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                    +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                    +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                    +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                    +GetBaseYear(0);
+
+         strpcopy( LAarg, LSfilename );
+         winexec(LAarg, SW_SHOWNORMAL);
+
+         FM_DownLoad.Close;      // 다운로드 폼 닫기.
+      end;
+   end
+   else if Csel_gfd(2) = 'N' then //일반목표등록 대상자
+   begin
+      FM_DownLoad.PL_VersionCHK3(3, 'PEA1060A');  //Call하는 단위 프로그램의 버젼을 체크..
+      if (not FM_DownLoad.FL_VersionCHK ) or
+         (not FileExists(GetHomeDir+'\Bin\3tier\PEA1060A.EXE')) then
+      begin
+         FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEA1060A.EXE','PEA1060A',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+      end
+      else
+      begin
+         FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+         LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060A.EXE ,'
+                    + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                    +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                    +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                    +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                    +GetBaseYear(0);
+
+         strpcopy( LAarg, LSfilename );
+         winexec(LAarg, SW_SHOWNORMAL);
+         //Edit1.text := LSfilename;
+         FM_DownLoad.Close;      // 다운로드 폼 닫기.
+      end;
+   end;
+end;
+
+procedure TMainForm.pbt_pek2020a1Click(Sender: TObject);
+var LSfilename : string;
+    LAarg : array[0..200] of char;
+begin
+   //공동목표등록
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.PL_VersionCHK3(3, 'PEK2020A');  //Call하는 단위 프로그램의 버젼을 체크..
+   FM_DownLoad.FL_UserID := pEmpno;
+   if (not FM_DownLoad.FL_VersionCHK ) or
+      (not FileExists(GSHomeDir+'\Bin\3tier\PEK2020A.EXE')) then
+   begin
+      FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEK2020A.EXE','PEK2020A',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+   end
+   else
+   begin
+      FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+      LSfilename := GSHomeDir+'\Bin\3Tier\PEK2020A.EXE ,'
+                 + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                 +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                 +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                 +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                 +Passemp(cmdline,13)+','+Passemp(cmdline,14)+','+Passemp(cmdline,15);
+
+      strpcopy( LAarg, LSfilename );
+      winexec(LAarg, SW_SHOWNORMAL);
+
+      FM_DownLoad.Close;  // 다운로드 폼 닫기.
+   end;
+end;
+
+procedure TMainForm.pbt_pea1170fClick(Sender: TObject);
+var LSfilename : string;
+    LAarg : array[0..200] of char;
+begin
+   //팀별 직무역량 등록
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.PL_VersionCHK3(3, 'PEA1170F');  //Call하는 단위 프로그램의 버젼을 체크..
+   FM_DownLoad.FL_UserID := pEmpno;
+   if (not FM_DownLoad.FL_VersionCHK ) or
+      (not FileExists(GSHomeDir+'\Bin\3tier\PEA1170F.EXE')) then
+   begin
+      FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEA1170F.EXE','PEA1170F',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+   end
+   else
+   begin
+      FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+      LSfilename := GSHomeDir+'\Bin\3Tier\PEA1170F.EXE ,'
+                 + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                 +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                 +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                 +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                 +Passemp(cmdline,13)+','+Passemp(cmdline,14)+','+Passemp(cmdline,15);
+
+      strpcopy( LAarg, LSfilename );
+      winexec(LAarg, SW_SHOWNORMAL);
+
+      FM_DownLoad.Close;  // 다운로드 폼 닫기.
+   end;
+end;
+
+procedure TMainForm.pbt_pea1180fClick(Sender: TObject);
+var LSfilename : string;
+    LAarg : array[0..200] of char;
+begin
+   //팀원 직무역량 우선순위 등록
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.PL_VersionCHK3(3, 'PEA1180F');  //Call하는 단위 프로그램의 버젼을 체크..
+   FM_DownLoad.FL_UserID := pEmpno;
+   if (not FM_DownLoad.FL_VersionCHK ) or
+      (not FileExists(GSHomeDir+'\Bin\3tier\PEA1180F.EXE')) then
+   begin
+      FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEA1180F.EXE','PEA1180F',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+   end
+   else
+   begin
+      FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+      LSfilename := GSHomeDir+'\Bin\3Tier\PEA1180F.EXE ,'
+                 + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                 +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                 +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                 +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                 +Passemp(cmdline,13)+','+Passemp(cmdline,14)+','+Passemp(cmdline,15);
+
+      strpcopy( LAarg, LSfilename );
+      winexec(LAarg, SW_SHOWNORMAL);
+
+      FM_DownLoad.Close;  // 다운로드 폼 닫기.
+   end;
+end;
+
+procedure TMainForm.Bt_MenualClick(Sender: TObject);
+var ObjName, FL_Prog : String;
+begin
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;
+   FM_DownLoad.PL_VersionCHK3(3, 'PEA1060F');  //Call하는 단위 프로그램의 버젼을 체크..
+   FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/helpdoc','직무역량 평가 메뉴얼_13.PDF','직무역량',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+end;
+
+procedure TMainForm.FormPaint(Sender: TObject);
+begin
+   pEmpno := EdEmp.Text;
+   FormSetup;
+end;
+
+(*
+initialization
+begin
+  CreateFileMapping($FFFFFFFF, nil, PAGE_READWRITE, 0, 1, 'PEA1170F.EXE');
+  if GetLastError = ERROR_ALREADY_EXISTS then
+  begin
+    ShowMessage('이미 실행중입니다. 실행중인 프로그램을 이용하세요!!');
+    halt;
+  end;
+end;
+*)
+
+procedure TMainForm.Bt_Search1Click(Sender: TObject);
+var LSfilename : string;
+    LAarg : array[0..200] of char;
+    sqltext : String;
+begin
+
+   SqlText := 'select payra||'';''||unionyn||'';''||empno||'';''||           '+
+              '       (select count(empno) from pehremas                     '+
+              '         where rabasdate = a.rabasdate and e1empno = a.empno) '+
+              '  from PEHREAIM_COMBAS a                                      '+
+              ' where rabasdate =  ''' + GetBaseYear(0) + '''                '+
+              '   and empno     =  ''' + pEmpno     + '''                    ';
+
+   with DBSet1 do
+   begin
+      Close;
+      ServiceName := 'PEA1060A_common';
+      ClearFieldInfo;
+      AddField('SEL_DATA', ftString, 300);
+      ClearParamInfo;
+      SQL.Text := SqlText;
+      Open;
+   end;
+
+
+   //공동목표등록
+   FM_DownLoad := TFM_DownLoad.Create(Application);
+   FM_DownLoad.Show;
+   FM_DownLoad.PL_ReadEnv;                     //환경변수값(파라미터) 읽어온다.
+   FM_DownLoad.FL_UserID := pEmpno;
+   if Csel_gfd(2) = 'Y' then // 공동목표등록 대상자
+   begin
+      FM_DownLoad.PL_VersionCHK3(3, 'PEA1060D');  //Call하는 단위 프로그램의 버젼을 체크..
+      if (not FM_DownLoad.FL_VersionCHK ) or
+         (not FileExists(GSHomeDir+'\Bin\3tier\PEA1060D.EXE')) then
+      begin
+         FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEA1060D.EXE','PEA1060D',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+      end
+      else
+      begin
+         FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+         LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060D.EXE ,'
+                    + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                    +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                    +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                    +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                    +GetBaseYear(7);
+
+         strpcopy( LAarg, LSfilename );
+         winexec(LAarg, SW_SHOWNORMAL);
+
+         FM_DownLoad.Close;      // 다운로드 폼 닫기.
+      end;
+   end
+   else if Csel_gfd(2) = 'N' then //일반목표등록 대상자
+   begin
+      FM_DownLoad.PL_VersionCHK3(3, 'PEA1060A');  //Call하는 단위 프로그램의 버젼을 체크..
+      if (not FM_DownLoad.FL_VersionCHK ) or
+         (not FileExists(GSHomeDir+'\Bin\3tier\PEA1060A.EXE')) then
+      begin
+         FM_DownLoad.PL_DownLoad(3,'/hper/insa/hperson/usrbin/Ebin','PEA1060A.EXE','PEA1060A',FM_DownLoad.FL_ProgVer, FL_UnixIP, FL_FtpUser, FL_FtpPass);
+      end
+      else
+      begin
+         FM_DownLoad.SB_Help.Panels[1].Text := '로컬PC의 프로그램을 실행합니다.';
+         LSfilename := GSHomeDir+'\Bin\3Tier\PEA1060A.EXE ,'
+                    + pEmpno            +','+Passemp(cmdline,2)+','+'@@@@@'+','
+                    +Passemp(cmdline,4) +','+Passemp(cmdline,5)+','+Passemp(cmdline,6)+','
+                    +Passemp(cmdline,7) +','+Passemp(cmdline,8)+','+Passemp(cmdline,9)+','//+' '+','+' '+','+' '+','
+                    +Passemp(cmdline,10)+','+Passemp(cmdline,11)+','+Passemp(cmdline,12)+','
+                    +GetBaseYear(7);
+
+         strpcopy( LAarg, LSfilename );
+         winexec(LAarg, SW_SHOWNORMAL);
+         Edit1.text := LSfilename;
+         FM_DownLoad.Close;      // 다운로드 폼 닫기.
+      end;
+   end;
+end;
+
+end.
+
