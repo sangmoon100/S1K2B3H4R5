@@ -1,0 +1,508 @@
+/*******************************************************************************
+ 화   일   명 : pet1020a_sel1.pc                                                              
+ 작   성   일 : 2003-11-17                                                              
+ 최종  수정일 :                                                                 
+ PGM변경 이력 :                                                                 
+ 작   성   자 : 박환구                                                              
+*******************************************************************************/
+
+/******************************************************************************/
+/*   해더 선언부                                                              */
+/******************************************************************************/
+#include <stdio.h>                                                               
+#include "usrinc/atmi.h"                                                         
+#include "usrinc/tmaxapi.h"                                                      
+#include "hinsa_common.h"                                                        
+#include "hinsa_macro.h"                                                         
+#include "hinsa_string.h"                                                        
+#include "hinsa_log.h"                                                           
+#include "hinsa_oracle.h"                                                        
+#include "hinsa_tmax.h"                                                          
+
+
+/******************************************************************************/
+/*   매크로 선언부                                                            */
+/******************************************************************************/
+#define   LINE_MAX_LENGTH   100                                                 
+#define   SVCNAME     "PET1020A_sel1"
+/* Array Fetch 용 */
+#define   MAX_ARR     50
+
+/* 입력 인수 길이 정보정의... */
+#define   SQL_TEXT      9000        
+
+/* Field 길이 정보정의... */
+#define   GUBUN         4           
+#define   EMPNO         4           
+#define   KORNAME       12          
+#define   DEPTNAME      60          
+#define   PAYRACODE     3           
+#define   PAYRA         20          
+#define   PAYCLCODE     2           
+#define   PAYCL         20          
+#define   SELF          6           
+#define   DOWN1         6           
+#define   DOWNEBR       6           
+#define   DOWN2         6           
+#define   SELFA         6           
+#define   DOWN1A        6           
+#define   DOWNEBRA      6           
+#define   DOWN2A        6           
+#define   SELFB         6           
+#define   DOWN1B        6           
+#define   DOWNEBRB      6           
+#define   DOWN2B        6           
+#define   EVCNO         2 
+#define   VALUE1       10 
+#define   VALUE2       10 
+#define   VALUE3       10 
+#define   VALUE4       10 
+#define   VALUE5       10           
+
+
+/******************************************************************************/
+/*   Data I/O용 구조체 정의..                                                 */
+/******************************************************************************/
+typedef struct PET1020A_sel1_in {
+        char   c_sql_text[SQL_TEXT];
+} ts_PET1020A_sel1_in;
+
+typedef struct PET1020A_sel1_out {
+        char   c_gubun    [GUBUN    ];
+        char   c_empno    [EMPNO    ];
+        char   c_korname  [KORNAME  ];
+        char   c_deptname [DEPTNAME ];
+        char   c_payracode[PAYRACODE];
+        char   c_payra    [PAYRA    ];
+        char   c_payclcode[PAYCLCODE];
+        char   c_paycl    [PAYCL    ];
+        char   c_self     [SELF     ];
+        char   c_down1    [DOWN1    ];
+        char   c_downebr  [DOWNEBR  ];
+        char   c_down2    [DOWN2    ];
+        char   c_selfa    [SELFA    ];
+        char   c_down1a   [DOWN1A   ];
+        char   c_downebra [DOWNEBRA ];
+        char   c_down2a   [DOWN2A   ];
+        char   c_selfb    [SELFB    ];
+        char   c_down1b   [DOWN1B   ];
+        char   c_downebrb [DOWNEBRB ];
+        char   c_down2b   [DOWN2B   ];
+        char   c_evcno    [EVCNO    ];
+        char   c_value1   [VALUE1   ];
+        char   c_value2   [VALUE2   ];
+        char   c_value3   [VALUE3   ];
+        char   c_value4   [VALUE4   ];
+        char   c_value5   [VALUE5   ];
+        
+} ts_PET1020A_sel1_out;
+
+
+/******************************************************************************/
+/*   Table I/O 용 구조체 정의.                                                */
+/******************************************************************************/
+EXEC SQL BEGIN DECLARE SECTION; 
+  typedef struct PET1020A_sel1_tin {
+          varchar     v_sql_text[SQL_TEXT + 1];
+  } ts_PET1020A_sel1_tin;
+
+  typedef struct PET1020A_sel1_tout {
+          varchar     v_gubun    [MAX_ARR][GUBUN     + 1];
+          varchar     v_empno    [MAX_ARR][EMPNO     + 1];
+          varchar     v_korname  [MAX_ARR][KORNAME   + 1];
+          varchar     v_deptname [MAX_ARR][DEPTNAME  + 1];
+          varchar     v_payracode[MAX_ARR][PAYRACODE + 1];
+          varchar     v_payra    [MAX_ARR][PAYRA     + 1];
+          varchar     v_payclcode[MAX_ARR][PAYCLCODE + 1];
+          varchar     v_paycl    [MAX_ARR][PAYCL     + 1];
+          varchar     v_self     [MAX_ARR][SELF      + 1];
+          varchar     v_down1    [MAX_ARR][DOWN1     + 1];
+          varchar     v_downebr  [MAX_ARR][DOWNEBR   + 1];
+          varchar     v_down2    [MAX_ARR][DOWN2     + 1];
+          varchar     v_selfa    [MAX_ARR][SELFA     + 1];
+          varchar     v_down1a   [MAX_ARR][DOWN1A    + 1];
+          varchar     v_downebra [MAX_ARR][DOWNEBRA  + 1];
+          varchar     v_down2a   [MAX_ARR][DOWN2A    + 1];
+          varchar     v_selfb    [MAX_ARR][SELFB     + 1];
+          varchar     v_down1b   [MAX_ARR][DOWN1B    + 1];
+          varchar     v_downebrb [MAX_ARR][DOWNEBRB  + 1];
+          varchar     v_down2b   [MAX_ARR][DOWN2B    + 1];
+          varchar     v_evcno    [MAX_ARR][EVCNO     + 1];
+          varchar     v_value1   [MAX_ARR][VALUE1    + 1];
+          varchar     v_value2   [MAX_ARR][VALUE2    + 1];
+          varchar     v_value3   [MAX_ARR][VALUE3    + 1];
+          varchar     v_value4   [MAX_ARR][VALUE4    + 1];
+          varchar     v_value5   [MAX_ARR][VALUE5    + 1];
+  } ts_PET1020A_sel1_tout;
+EXEC SQL END DECLARE SECTION; 
+
+EXEC SQL INCLUDE sqlca.h;
+
+
+/******************************************************************************/
+/*   전역 Function 선언부                                                     */
+/******************************************************************************/
+void PET1020A_sel1_input_process(void);                     /* 입력       처리   */
+int  PET1020A_sel1_input_data_check(void);                  /* 입력데이타 체크   */
+int  PET1020A_sel1_database_process(void);                  /* DB         처리   */
+int  PET1020A_sel1_business_process(int,int,int,int *,int); /* 업무로직   처리   */
+
+
+/******************************************************************************/
+/*   전역변수 선언부                                                          */
+/******************************************************************************/
+static long           gpc_send_len;  /*Data 길이           */
+static char          *gpc_data;      /*Data 처리용         */
+static tmax_msg_head *gps_msg_head;  /*Header 처리용       */
+
+static ts_PET1020A_sel1_in    *gps_PET1020A_sel1_in;    /*Data I/O용          */
+static ts_PET1020A_sel1_out   *gps_PET1020A_sel1_out;
+static ts_PET1020A_sel1_tin   *gps_PET1020A_sel1_tin;   /*Oracle 자료 I/O용   */
+static ts_PET1020A_sel1_tout  *gps_PET1020A_sel1_tout;
+
+
+/*******************************************************************************/
+/*   TMAX 서비스 선언부                                                        */
+/*******************************************************************************/
+void PET1020A_sel1(transr)
+TPSVCINFO *transr;
+{
+  int  ret;
+  char f_line[LINE_MAX_LENGTH];
+  ts_PET1020A_sel1_tin s_PET1020A_sel1_tin;
+
+  STRINIT(f_line);
+  hinsa_log_print(0, hinsa_fillspace(f_line, LINE_MAX_LENGTH - 1,'*'));
+  hinsa_log_print(0, "PET1020A_sel1 서비스 시작...");
+
+  gpc_send_len = sizeof(tmax_msg_head); 
+  gpc_data     = transr->data;
+  gps_msg_head = (tmax_msg_head *) transr->data;
+  gps_PET1020A_sel1_in   = (ts_PET1020A_sel1_in *)(transr->data+sizeof(tmax_msg_head));
+  gps_PET1020A_sel1_tin  = &s_PET1020A_sel1_tin;
+
+  /* Client 입력자료 획득 */
+  hinsa_log_print(0,"PET1020A_sel1 입력데이타 할당...");
+  PET1020A_sel1_input_process();
+
+  /* Client 입력자료 유효성 검증 */
+  hinsa_log_print(0,"PET1020A_sel1 입력자료 유효성 검사...");
+  if (PET1020A_sel1_input_data_check() != SUCCESS) 
+  {
+    hinsa_log_print(0, "PET1020A_sel1 서비스 종료 (에러발생으로 인한 종료)...");
+    tpreturn(TPFAIL, 0, gpc_data, gpc_send_len, 0L);
+  }
+
+  hinsa_log_print(0,"PET1020A_sel1 데이타 프로세스 처리...");
+   /* Database 작업 처리 */
+  if (PET1020A_sel1_database_process() != SUCCESS) 
+  {
+    hinsa_log_print(0, "PET1020A_sel1 서비스 종료 (에러발생으로 인한 종료)...");
+    tpreturn(TPFAIL, 0, gpc_data, gpc_send_len, 0L);
+  }
+
+  hinsa_log_print(0, "PET1020A_sel1 서비스 종료...");
+  STRINIT(f_line);
+  hinsa_log_print(0, hinsa_fillspace(f_line, LINE_MAX_LENGTH - 1,'*'));
+  tpreturn(TPSUCCESS, 0, gpc_data, gpc_send_len, 0L);
+}
+
+/*******************************************************************************
+ 함 수 명 : PET1020A_sel1_input_process
+ 설    명 : Client로부터 전송된 입력값을 host 변수에 move한다.
+*******************************************************************************/
+void PET1020A_sel1_input_process(void)
+{
+   /* Host 변수 초기화 */
+  memset(gps_PET1020A_sel1_tin, 0x00, sizeof(ts_PET1020A_sel1_tin));
+
+   /* Client 입력 data를 host 변수에 move */
+  STR2VCTRIM(gps_PET1020A_sel1_tin->v_sql_text, gps_PET1020A_sel1_in->c_sql_text, SQL_TEXT);
+
+  return;
+}
+
+
+
+/*******************************************************************************
+ 함 수 명 : PET1020A_sel1_input_data_check
+ 설    명 : Client로부터 전송된 입력값의 유효성을 검증한다.
+ 리 턴 값 : 성공 -> SUCCESS
+            실패 -> FAILURE
+*******************************************************************************/
+int  PET1020A_sel1_input_data_check(void)
+{
+   /* 입력 필수 항목 검증 */
+  if ((gps_PET1020A_sel1_tin->v_sql_text).arr[0] == NULL) 
+  {
+    hinsa_msg_fmt(gpc_data, TMAXINS, 0, "(sql_text) 입력필수항목이 누락되었습니다!", 0, 0);
+    return(FAILURE);
+  }
+
+  return(SUCCESS);
+}
+
+
+/*******************************************************************************
+ 함 수 명 : PET1020A_sel1_database_process
+ 설    명 : DB 작업을 처리한다.
+ 리 턴 값 : 성공 -> SUCCESS
+            실패 -> FAILURE
+*******************************************************************************/
+int  PET1020A_sel1_database_process(void)
+{
+  char f_log[MAX_STRING];
+  int  i_rtn;
+  long l_realloc_size;
+
+  char c_max_row[H_ERR_CNT + 1];
+  int  i_max_row;
+  char c_send_cnt[H_RCD_CNT + 1];
+  int  i_send_cnt;
+
+  int  i_fetch_cnt;
+  int  i_loop_cnt;
+  int  i_base_idx;
+  int  i_rec_cnt;
+  int  i_eof_check;
+
+  char  c_sql_stmt[SQL_TEXT + 1];
+  ts_PET1020A_sel1_tout s_PET1020A_sel1_tout;
+
+  /*------------------------------------------------------------------------*/
+  /*  i_rtn          : 함수 return값 획득용 변수.                           */
+  /*  l_realloc_size : Buffer realloc size 계산용 변수.                     */
+  /*  i_fetch_cnt    : 자료 fetch 건수 획득용 변수.                         */
+  /*  i_loop_cnt     : DB로부터 추출해야 될 자료 건수 획득용 변수.          */
+  /*  i_base_idx     : 자료 전송용 buffer의 array base index.               */
+  /*------------------------------------------------------------------------*/
+
+  /*  클라이언트에 보낼 데이타 건수 (Delphi Property BatchRows값)... */
+  STRINIT(c_max_row);
+  strncpy(c_max_row, gps_msg_head->c_err_code, H_ERR_CNT);
+  i_max_row = atoi(c_max_row);
+
+  /*  최종적으로 Client에게 보낸 레코드 건수 획득... */
+  memset(c_send_cnt, 0x00, sizeof(c_send_cnt));
+  strncpy(c_send_cnt, gps_msg_head->c_record_count, H_RCD_CNT);
+  i_send_cnt = atoi(c_send_cnt);
+
+
+   /* Client로 전송할 buffer 확보... */
+  l_realloc_size = (long) ((sizeof(ts_PET1020A_sel1_out) * i_max_row) + sizeof(tmax_msg_head) + 1);
+  gpc_data       = tprealloc(gpc_data, l_realloc_size);
+
+  if (gpc_data == (char *) 0) 
+  {
+    hinsa_msg_fmt(gpc_data, TMAX, tperrno, "전송할 자료 메모리 할당 에러입니다.", 0, 0);
+    return(FAILURE);
+  }
+  gpc_send_len = l_realloc_size; 
+
+  gps_msg_head = (tmax_msg_head *) gpc_data;
+  gps_PET1020A_sel1_out = (ts_PET1020A_sel1_out *) (gpc_data + sizeof(tmax_msg_head));
+
+  memset((gpc_data + sizeof(tmax_msg_head)),  FILL_CHAR, (l_realloc_size - sizeof(tmax_msg_head)));
+  memset((gpc_data + (l_realloc_size - 1)), 0x00,     1);
+
+
+   /* DB자료 처리... */
+  gps_PET1020A_sel1_tout = &s_PET1020A_sel1_tout;
+  memset(&s_PET1020A_sel1_tout, 0x00, sizeof(s_PET1020A_sel1_tout));
+
+  i_fetch_cnt = 0;
+  i_loop_cnt  = 0;
+  i_base_idx  = 0;
+  i_rec_cnt   = 0;
+  /* 쿼리 인수로 설정된 인수 변수 등록 */
+  STRINIT(c_sql_stmt);
+  VC2STR(c_sql_stmt, gps_PET1020A_sel1_tin->v_sql_text);
+
+  EXEC SQL PREPARE S FROM :c_sql_stmt;
+  EXEC SQL DECLARE cur_01 CURSOR FOR S;
+
+  hinsa_log_print(0, "PET1020A_sel1 커서 열기...");
+  EXEC SQL OPEN  cur_01;
+
+  if (SQLCODE != SQL_OK) 
+  {
+    hinsa_msg_fmt(gpc_data, TMAXORA, SQLCODE, SQLERRM, 0, 0); 
+    STRINIT(f_log);
+    sprintf(f_log, "에러 내용 : [%d - %s]", SQLCODE, hinsa_storage_trim(SQLERRM)); 
+    hinsa_log_print(0,f_log);
+    return(FAILURE);
+  }
+
+  i_eof_check = FALSE;
+  while(1) 
+  {
+    memset(&s_PET1020A_sel1_tout, 0x00, sizeof(s_PET1020A_sel1_tout));
+
+    EXEC SQL FETCH cur_01 INTO 
+              :s_PET1020A_sel1_tout.v_gubun,
+              :s_PET1020A_sel1_tout.v_empno,
+              :s_PET1020A_sel1_tout.v_korname,
+              :s_PET1020A_sel1_tout.v_deptname,
+              :s_PET1020A_sel1_tout.v_payracode,
+              :s_PET1020A_sel1_tout.v_payra,
+              :s_PET1020A_sel1_tout.v_payclcode,
+              :s_PET1020A_sel1_tout.v_paycl,
+              :s_PET1020A_sel1_tout.v_self,
+              :s_PET1020A_sel1_tout.v_down1,
+              :s_PET1020A_sel1_tout.v_downebr,
+              :s_PET1020A_sel1_tout.v_down2,
+              :s_PET1020A_sel1_tout.v_selfa,
+              :s_PET1020A_sel1_tout.v_down1a,
+              :s_PET1020A_sel1_tout.v_downebra,
+              :s_PET1020A_sel1_tout.v_down2a,
+              :s_PET1020A_sel1_tout.v_selfb,
+              :s_PET1020A_sel1_tout.v_down1b,
+              :s_PET1020A_sel1_tout.v_downebrb,
+              :s_PET1020A_sel1_tout.v_down2b,
+              :s_PET1020A_sel1_tout.v_evcno,
+              :s_PET1020A_sel1_tout.v_value1,
+              :s_PET1020A_sel1_tout.v_value2,
+              :s_PET1020A_sel1_tout.v_value3,
+              :s_PET1020A_sel1_tout.v_value4,
+              :s_PET1020A_sel1_tout.v_value5;                                                         
+
+    i_loop_cnt  = sqlca.sqlerrd[2] - i_fetch_cnt;
+    i_base_idx  = i_fetch_cnt;
+    i_fetch_cnt = sqlca.sqlerrd[2];
+
+    switch (SQLCODE) 
+    {
+      case SQL_OK :
+        i_rtn = PET1020A_sel1_business_process(i_loop_cnt, i_base_idx, i_send_cnt, &i_rec_cnt, i_max_row);
+        break;
+
+      case SQL_NO_DATA :
+        i_rtn = SUCCESS;
+        i_eof_check = TRUE; 
+        break;
+
+      case (SQL_NULL_COL) :
+        i_rtn = FAILURE;
+        break;
+
+      default :
+        i_rtn = FAILURE;
+        break;
+    }
+
+    if (i_rtn == FAILURE)
+    {
+      hinsa_msg_fmt(gpc_data, TMAXORA, SQLCODE, SQLERRM, 0, 0);
+      break;
+    }
+
+    if (SQLCODE != SQL_OK)
+    {
+      STRINIT(f_log);
+      sprintf(f_log,"PET1020A_sel1 [%d]번째 조회가 완료 되었습니다...", i_rec_cnt);
+      hinsa_log_print(0,f_log);
+      if (i_eof_check)
+      {
+        i_rtn = PET1020A_sel1_business_process(i_loop_cnt, i_base_idx, i_send_cnt, &i_rec_cnt, i_max_row);
+        hinsa_msg_fmt(gpc_data, TMAXUSER, SQLCODE, "데이타 EOF 까지 조회 되었습니다.", i_rec_cnt, (int) (i_rec_cnt * sizeof(ts_PET1020A_sel1_out)));
+      }
+      else
+        hinsa_msg_fmt(gpc_data, TMAXUSER, i_rec_cnt, "조회 되었습니다.", i_rec_cnt, (int) (i_rec_cnt * sizeof(ts_PET1020A_sel1_out)));
+      break;
+    }
+  }
+
+  hinsa_log_print(0, "PET1020A_sel1 커서 닫기...");
+  STRINIT(f_log);
+  if (i_rtn != SUCCESS)
+  {
+    sprintf(f_log, "%s:FAILURE  SQLCODE=[%d]", SVCNAME, SQLCODE);
+    hinsa_log_print(0,f_log);
+  }
+  else
+  {
+    sprintf(f_log,"%s:SUCCESS  SQLCODE=[%d]", SVCNAME, SQLCODE);
+    hinsa_log_print(0,f_log);
+  }
+  EXEC SQL CLOSE cur_01;
+
+  return(i_rtn);
+}
+
+
+/*******************************************************************************
+ 함 수 명 : PET1020A_sel1_business_process
+ 파라메터 : ai_loop_cnt, ai_base_idx.
+ 설    명 : DB로부터 추출된 자료의 업무 logic을 처리한다.
+ 리 턴 값 : 성공 -> SUCCESS
+            실패 -> FAILURE
+*******************************************************************************/
+int  PET1020A_sel1_business_process(ai_loop_cnt, ai_base_idx, ai_send_cnt, api_rec_cnt, ai_max_row)
+int  ai_loop_cnt;
+int  ai_base_idx;
+int  ai_send_cnt;
+int  *api_rec_cnt;
+int  ai_max_row;
+{
+  int  ii;
+  char f_log[MAX_STRING];
+
+  /* Client에 이미 전송된 자료를 by-pass함. */
+  for (ii = 0; ii < ai_loop_cnt; ii++) 
+  {
+    if ((ai_base_idx == ai_send_cnt) || (ai_base_idx > ai_send_cnt)) 
+      break;
+    ai_base_idx++;
+  }
+
+  for (ii; ii < ai_loop_cnt; ii++) 
+  {
+    VC2STR(gps_PET1020A_sel1_out->c_gubun    , gps_PET1020A_sel1_tout->v_gubun[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_empno    , gps_PET1020A_sel1_tout->v_empno[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_korname  , gps_PET1020A_sel1_tout->v_korname[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_deptname , gps_PET1020A_sel1_tout->v_deptname[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_payracode, gps_PET1020A_sel1_tout->v_payracode[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_payra    , gps_PET1020A_sel1_tout->v_payra[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_payclcode, gps_PET1020A_sel1_tout->v_payclcode[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_paycl    , gps_PET1020A_sel1_tout->v_paycl[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_self     , gps_PET1020A_sel1_tout->v_self[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_down1    , gps_PET1020A_sel1_tout->v_down1[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_downebr  , gps_PET1020A_sel1_tout->v_downebr[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_down2    , gps_PET1020A_sel1_tout->v_down2[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_selfa    , gps_PET1020A_sel1_tout->v_selfa[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_down1a   , gps_PET1020A_sel1_tout->v_down1a[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_downebra , gps_PET1020A_sel1_tout->v_downebra[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_down2a   , gps_PET1020A_sel1_tout->v_down2a[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_selfb    , gps_PET1020A_sel1_tout->v_selfb[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_down1b   , gps_PET1020A_sel1_tout->v_down1b[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_downebrb , gps_PET1020A_sel1_tout->v_downebrb[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_down2b   , gps_PET1020A_sel1_tout->v_down2b[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_evcno    , gps_PET1020A_sel1_tout->v_evcno[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_value1   , gps_PET1020A_sel1_tout->v_value1[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_value2   , gps_PET1020A_sel1_tout->v_value2[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_value3   , gps_PET1020A_sel1_tout->v_value3[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_value4   , gps_PET1020A_sel1_tout->v_value4[ii]);
+    VC2STR(gps_PET1020A_sel1_out->c_value5   , gps_PET1020A_sel1_tout->v_value5[ii]);
+
+    ai_base_idx++;
+    (*api_rec_cnt)++;
+
+    if (*api_rec_cnt >= ai_max_row)
+    {
+      STRINIT(f_log);
+      sprintf(f_log,"PET1020A_sel1 Batch Rows[%d]갯수 데이타 전송...", *api_rec_cnt);
+      hinsa_log_print(0,f_log);
+      hinsa_msg_fmt(gpc_data, TMAXUSER, *api_rec_cnt, "퀴리 데이타 데이타 전송...", *api_rec_cnt, (int) (*api_rec_cnt * sizeof(ts_PET1020A_sel1_out)));
+      SQLCODE = SQL_NO_DATA;
+      return(SUCCESS);
+    }
+
+    gps_PET1020A_sel1_out++;
+  }
+
+  return(SUCCESS);
+}
+
+/******************************************************************************/
+/* 서비스 소스 완료...                                                        */
+/******************************************************************************/
