@@ -1,0 +1,8 @@
+[General]
+Name=PEF1020A
+Project=1
+[Classes]
+Count=3
+Class0="TFUPMain","TForm","UUPMain","0","D:\hanaro개선\평가\PEF1020A\UUPMain.pas"
+Class1="TColForm","TForm","UColForm","0","D:\hanaro개선\평가\PEF1020A\UColForm.pas"
+Class2="TDataModule_Tmax","TDataModule","Hinsa_TmaxDM","0","D:\hanaro개선\평가\PEF1020A\Hinsa_TmaxDM.pas"
