@@ -1,0 +1,75 @@
+[Active Query Builder]
+[OPTION]
+009901280
+[TABLES]
+TABLE인사MASTER_1pimpmasT11186165408
+FIELD인사MASTER_1empno
+FIELD인사MASTER_1korname
+FIELD인사MASTER_1pstate
+FIELD인사MASTER_1pstateyn
+FIELD인사MASTER_1paycl
+FIELD인사MASTER_1paygr
+FIELD인사MASTER_1deptcode
+FIELD인사MASTER_1orgnum
+FIELD인사MASTER_1fieldcode
+FIELD인사MASTER_1boncode
+FIELD인사MASTER_1fincode
+FIELD인사MASTER_1payra
+FIELD인사MASTER_1paydunm
+FIELD인사MASTER_1realtrdate
+TABLE가  족_1pimfamiT264341123386
+FIELD가  족_1empno
+FIELD가  족_1korname
+FIELD가  족_1facode
+FIELD가  족_1faschgr
+FIELD가  족_1fajobcode
+FIELD가  족_1faplace
+[JOIN]
+인사MASTER_10가  족_1000
+[WHERE]
+1t1.pstate<'80'
+[SELECT]
+1T1.empno사원번호pimpmas인사MASTER_1문자열
+2T1.korname성  명pimpmas인사MASTER_1문자열
+3T2.empno사원번호pimfami가  족_1문자열
+4T2.korname성  명pimfami가  족_1문자열
+5T2.facode본인과의관계pimfami가  족_1문자열
+6T1.pstate인사상태pimpmas인사MASTER_1문자열
+7T1.pstateyn현원포함여부pimpmas인사MASTER_1문자열
+8T1.paycl직  급pimpmas인사MASTER_1문자열일반코드I112 : 직급
+9T1.paygr호  봉pimpmas인사MASTER_1정수
+10T1.deptcode부  서pimpmas인사MASTER_1문자열
+11T1.orgnum조직차수pimpmas인사MASTER_1문자열
+12T1.fieldcode소속부문pimpmas인사MASTER_1문자열
+13T1.boncode본부코드pimpmas인사MASTER_1문자열
+14T1.fincode재무부서pimpmas인사MASTER_1문자열
+15T1.payra직  위pimpmas인사MASTER_1문자열
+16T1.paydunm직책명pimpmas인사MASTER_1문자열
+17T1.realtrdate전보일pimpmas인사MASTER_1문자열
+18T2.faschgr최종학력pimfami가  족_1문자열
+19T2.fajobcode직  업pimfami가  족_1문자열
+20T2.faplace근무처/직위pimfami가  족_1문자열
+[HAVING]
+[GROUPBY]
+[ORDERBY]
+[SQL]
+SELECT 
+       T1.empno, 
+       T1.korname, 
+       T2.empno, 
+       T2.korname, 
+       T2.facode, 
+       T1.pstate
+  FROM
+       pimfami
+ T2, 
+       pimpmas
+ T1
+ WHERE
+       (T1.empno = T2.empno)
+   AND (
+         (t1.pstate < '80')
+       )
+[DISTINCT]
+NO
+[END]

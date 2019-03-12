@@ -1,0 +1,9 @@
+정보검색Ⅱ 관련 테이블
+
+select * from AQTABLES
+
+select * from AQFIELDS WHERE ENGTABLE='PYCDEPT'
+
+select * from AQUSERQUERY
+
+select * from AQUSER
