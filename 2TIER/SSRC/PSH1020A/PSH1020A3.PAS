@@ -1,0 +1,384 @@
+{* ======================= Program Header ======================================
+ PROGRAM-NAME   : PSH1020A(복리후생 신청 승인처리: MASSEGE 발송)
+ SYSTEM-NAME    : 복리후생 / 의료비
+ SUBSYSTEM-NAME :
+ Programmer     : 이희용
+ Version        : 1.00
+ Date           : 2014.11.19
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description
+    1.1       2014.11.19         이희용          메일전송자 : 양혜림
+============================================================================= *}
+unit PSH1020A3;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
+  StdCtrls, Grids, DBGrids, pedbgrid, Buttons, Db, DBTables, pass, Mask,
+  DBClient, ExtCtrls,FormMon1, Kylib1, Func, Ora, MemDS, DBAccess,
+  Tmax_DataSetText, OnFocusButton, OnScheme, OnEditStdCtrl, OnEditBaseCtrl,
+  OnEditMemo, ComCtrls;
+
+type
+  TFM_Sms = class(TForm)
+    Panel1: TPanel;
+    SF_Main: TOnSchemeForm;
+    Sms_Text: TOnMemo;
+    Mail_Text: TOnMemo;
+    Title_Text: TOnEdit;
+    On_Send: TOnEdit;
+    GB_app: TRadioGroup;
+    GB_Send: TGroupBox;
+    cb_sms: TCheckBox;
+    cb_mail: TCheckBox;
+    SB_Help: TStatusBar;
+    BT_Exit: TOnFocusButton;
+    BT_Send: TOnFocusButton;
+    OE_Sms: TOnEdit;
+    OE_Acce: TOnEdit;
+    OraQuery1: TOraQuery;
+    DataSource3: TDataSource;
+    procedure BT_SendClick(Sender: TObject);
+    procedure FormShow(Sender: TObject);
+    procedure BT_ExitClick(Sender: TObject);
+    procedure GB_appClick(Sender: TObject);
+private
+    { Private declarations }
+    procedure SetSmsTel;        //메일, 전화번호 찾기
+    Function  Send_Sms(HandTel, SendTel, SmsSubject,SmsBody : String) : Boolean;
+
+    Function Send_Message(SENDYN : String) : Boolean;
+
+public
+    { Public declarations }
+    SendProgID, SendEmpno, RcveEmpno, MailSubject, MailBody, ReceiveYN : String;
+    HandTel,  SendTel,  SmsBody,  SmsSubject : String;
+    Tit_Str, Sms_Str, Mail_Str1, Mail_Str2, Mail_Str3, Mail_Str4 : String;
+    function  Send_WebHint(SendProgID, SendEmpno, RcveEmpno, MailSubject, MailBody, ReceiveYN : String) : Boolean;
+  end;
+
+var
+  FM_Sms: TFM_Sms;
+
+implementation
+
+uses PSH1020A1;
+{$R *.DFM}
+
+procedure TFM_Sms.BT_SendClick(Sender: TObject);
+var
+  i ,chk_cnt : integer;
+  Selemp  : TStringList;
+  TmpTitle,TmpBody, sTemp : string;
+  CONY, CONN, CONX, CONCNT : integer;
+begin
+  SB_Help.Panels[1].Text := '';
+
+  if(OE_Acce.Text = '') then
+  begin
+    MessageDlg('신청사원의 사번을 확인 하시기 바랍니다.', mtInformation, [mbOk], 0);
+    exit;
+  end;
+
+  if(On_Send.text = '') then
+  begin
+    MessageDlg('연락받을 전화번호를 입력하시기 바랍니다.', mtError, [mbOk], 0);
+    On_Send.SetFocus();
+    exit;
+  end;
+
+  if(not IsNumber(On_Send.Text)) then
+  begin
+    MessageDlg('연락받을 전화번호는 숫자만 입력하시기 바랍니다.', mtError, [mbOk], 0);
+    On_Send.SetFocus();
+    exit;
+  end;
+
+  If ((cb_sms.Checked = False) and (cb_mail.Checked = False)) Then
+  Begin
+    MessageDlg('발송방법을 선택하시기 바랍니다.', mtError, [mbOk], 0);
+    GB_Send.SetFocus();
+    exit;
+  End;
+
+  If (GB_app.ItemIndex = -1) Then
+  begin
+    MessageDlg('발송조건을 선택하시기 바랍니다.', mtError, [mbOk], 0);
+    GB_app.SetFocus();
+    exit;
+  end
+  Else
+  Begin
+    with OraQuery1 do
+    begin
+      Close;
+      SQL.Clear;
+      SQL.ADD(' SELECT SUM(DECODE(CONYN, ''Y'', 1,0)) CONYY, ');
+      SQL.ADD('        SUM(DECODE(CONYN, ''N'', 1,0)) CONNN, ');
+      SQL.ADD('        SUM(DECODE(CONYN, ''X'', 1,0)) CONNX, ');
+      SQL.ADD('        COUNT(EMPNO) CNT ');
+      SQL.ADD(' FROM PSHAPHOS           ');
+      SQL.ADD('  WHERE APPDATE = '''+Copy(FM_Mainform.CE_appdate.Text,1,4)+Copy(FM_Mainform.CE_appdate.Text,8,2)+''' ');
+      SQL.ADD('    AND   EMPNO = '''+Copy(OE_Acce.text ,1,4)+''' ');
+      Open;
+     
+
+      CONY  := StrToInt(FieldByName('CONYY').AsString); //승인
+      CONN  := StrToInt(FieldByName('CONNN').AsString); //비승인
+      CONX  := StrToInt(FieldByName('CONNX').AsString); //비지원
+      CONCNT:= StrToInt(FieldByName('CNT').AsString);   //전체건수
+    end;
+
+    If (OraQuery1.RecordCount = 0) Then
+    Begin
+      MessageDlg('조회된 자료가 없습니다. 조회 후 진행하시기 바랍니다.', mtError, [mbOk], 0);
+      exit;
+    End;
+
+    If ((CONY + CONN + CONX) <> CONCNT) Then
+    begin
+      MessageDlg('승인 안된 자료가 존재합니다. 승인/비승인/비지원 처리 후 진행하시기 바랍니다.', mtError, [mbOk], 0);
+      exit;
+    end
+    Else
+    Begin
+      If (GB_app.ItemIndex = 0) Then //전체승인
+      Begin
+        If (CONY = CONCNT) Then Send_Message('Y')
+        Else
+        Begin
+          MessageDlg('비승인/비지원 자료가 존재합니다. 승인처리 후 진행하시기 바랍니다.', mtError, [mbOk], 0);
+          exit;
+        End;
+      End
+      Else If (GB_app.ItemIndex = 1) Then //비승인(승인포함)
+      Begin
+        If (CONN > 0) Then Send_Message('N')
+        Else
+        Begin
+          MessageDlg('비승인으로 등록된 자료가 존재하지 않습니다. 발송 조건을 확인 하시기 바랍니다.' , mtError, [mbOk], 0);
+          exit;
+        End;
+      End
+      Else If (GB_app.ItemIndex = 2) Then //비지원(승인포함)
+      Begin
+        If (CONX > 0) Then Send_Message('X')
+        Else
+        Begin
+          MessageDlg('비지원으로 등록된 자료가 존재하지 않습니다. 발송 조건을 확인 하시기 바랍니다.' , mtError, [mbOk], 0);
+          exit;
+        End;
+      End
+      Else If (GB_app.ItemIndex = 3) Then //일부비승인
+      Begin
+        If (CONN > 0) Then Send_Message('N')
+        Else
+        Begin
+          MessageDlg('비승인으로 등록된 자료가 존재하지 않습니다. 발송 조건을 확인 하시기 바랍니다.' , mtError, [mbOk], 0);
+          exit;
+        End;
+      End;
+
+      if(cb_sms.Checked) then  //SMS
+      begin
+        HandTel    := OE_Sms.Text;
+        SendTel    := On_Send.Text;
+        SmsSubject := Title_Text.Text;
+        SmsBody    := Sms_Text.Text;
+        RcveEmpno  := Copy(OE_Acce.Text, 1, 4);
+
+        if not Send_Sms(HandTel, SendTel, SmsSubject,SmsBody) then
+        begin
+          MessageDlg(OE_Acce.Text+'의 SMS 전송이 실패 하였습니다...',mtError, [mbOk], 0);
+          exit;
+        end;
+      End;
+
+      if(cb_mail.Checked) then  //Mail
+      begin
+        SendProgID  := 'PSH1020A';
+        SendEmpno   := FM_Mainform.FG_empno;
+        RcveEmpno   := Copy(OE_Acce.Text, 1, 4);
+        MailSubject := Title_Text.Text;
+        MailBody    := Mail_Text.Text;
+        ReceiveYN   := 'N';
+
+        if not Send_WebHint(SendProgID, SendEmpno, RcveEmpno, MailSubject, MailBody, ReceiveYN) then
+        begin
+          MessageDlg(OE_Acce.Text+'의 Mail 전송이 실패 하였습니다...',mtError, [mbOk], 0);
+          exit;
+        end;
+      End;
+    End;
+  End;
+
+  MessageDlg('메일/SMS가 성공적으로 발송되었습니다.', mtInformation, [mbOk], 0);
+  SB_Help.Panels[1].Text := '메일/SMS가 성공적으로 발송되었습니다.';
+end;
+
+Function TFM_Sms.Send_Sms(HandTel, SendTel, SmsSubject, SmsBody : String) : Boolean;
+begin
+  with OraQuery1 do
+  begin
+    Close;
+    SQL.Clear;
+    SQL.Add('call HPER.SENDSMS (           ');
+    SQL.Add('        '''+ HandTel    +''', ');  //문자수신번호
+    SQL.Add('        '''+ SendTel    +''', ');  //문자발신번호
+    SQL.Add('        '''+ SmsBody    +''', ');  //문자내용
+    SQL.Add('        '''+ SmsSubject +'''  ');  //문자제목
+    SQL.Add('                         )    ');
+
+    try
+      ExecSql;
+    except
+      Result := false;
+      exit;
+    end;
+    Result := True;
+  end;
+end;
+
+Function TFM_Sms.Send_WebHint(SendProgID, SendEmpno, RcveEmpno, MailSubject, MailBody, ReceiveYN : String) : Boolean;
+begin
+  with OraQuery1 do
+  begin
+    Close;
+    SQL.Clear;
+    SQL.Add('insert into PZHMAIL                             ');
+    SQL.Add('values (to_char(sysdate,''yyyymmddhh24miss'' ), ');  //SENDTIME   메일발송 작업시간
+    SQL.Add('        '''+ SendProgID   +''',                 ');  //SENDPROG   발송프로그램 ID
+    SQL.Add('        '''+ SendEmpno    +''',                 ');  //SEND_PER   발신자 사번
+    SQL.Add('        '''+ RcveEmpno    +''',                 ');  //RCVR_PER,  수신자 사번
+    SQL.Add('        ''''                  ,                 ');  //REFR_PER   불필요(종합인사)
+    SQL.Add('        '''+ MailSubject  +''',                 ');  //SUBJECT    메일제목
+    SQL.Add('        ''''                  ,                 ');  //HEADER1    불필요(종합인사)
+    SQL.Add('        '''+ MailBody     +''',                 ');  //BODY1      메일내용
+    SQL.Add('        ''''                  ,                 ');  //TAIL1      불필요(종합인사)
+    SQL.Add('        '''+ ReceiveYN    +''',                 ');  //RECEIVEYN  'Y' 일경우 메일 읽었을경우 송신자에게 수신확인 메일 보내주기
+    SQL.Add('        ''N''                 ,                 ');  //EAI_FLAG
+    SQL.Add('        ''''                  )                 ');  //EAI_DATE
+
+    try
+      ExecSql;
+    except
+      Result := false;
+      exit;
+    end;
+    Result := True;
+  end;
+end;
+
+// Mail/Sms 발송여부(Y : 전체승인, N : 비승인(승인포함), X : 비지원(승인포함), Null : 미전송 2014.11.06 By HeeYong)
+Function TFM_Sms.Send_Message(SENDYN : String) : Boolean;
+begin
+  with OraQuery1 do
+  begin
+    Close;
+    SQL.Clear;
+
+    Close;
+    Sql.Clear;
+    Sql.Add('Update PSHAPHOS                ' );
+    Sql.Add('   Set MESYN     = :MESYN,     ' );
+    Sql.Add('       writeman  = :writeman,  ' );
+    Sql.Add('       writetime = TO_CHAR(SYSDATE, ''YYYYMMDDHH24MISS'')');
+    Sql.Add(' WHERE appdate   = :appdate                              ');
+    Sql.Add('   AND Empno     = :Empno                                ');
+
+    ParamByName('MESYN').AsString    := SENDYN;
+    ParamByName('writeman').AsString := FM_Mainform.FG_Empno;
+    ParamByName('Appdate').AsString  := Copy(FM_Mainform.CE_appdate.Text,1,4)+Copy(FM_Mainform.CE_appdate.Text,8,2);
+    ParamByName('Empno').AsString    := Copy(FM_Mainform.PE_appemp.text ,1,4);
+
+    try
+      ExecSql;
+    except
+      Result := false;
+      exit;
+    end;
+    Result := True;
+  end;
+end;
+
+procedure TFM_Sms.SetSmsTel;
+begin
+  with OraQuery1 do
+  begin
+    Close;
+    SQL.Clear;
+    SQL.ADD('SELECT TRANSLATE(RETCONT,''0123456789''||RETCONT,''0123456789'') RETCONT ');
+    SQL.ADD('  FROM PIMPMAS                                    ');
+    SQL.ADD(' WHERE EMPNO = '''+Copy(OE_Acce.text,1,4)+'''                     ');
+    Open;
+
+    OE_Sms.Text := FieldByName('RETCONT').AsString;
+  end;
+end;
+
+procedure TFM_Sms.FormShow(Sender: TObject);
+var vYear, vMonth : Integer;
+    scyymm : String;
+    scamt  : Double;
+begin
+  SetSmsTel;
+
+  vYear  := StrToInt(Copy(FM_Mainform.CE_appdate.Text,1,4));
+  vMonth := StrToInt(Copy(FM_Mainform.CE_appdate.Text,8,2));
+  scyymm := Copy(FM_Mainform.CE_appdate.Text,1,4)+Copy(FM_Mainform.CE_appdate.Text,8,2);
+  scamt  := FM_Mainform.NE6.Value;
+  //의료비는 2월까지 전년도로 표시 되어야 한다.
+  If vMonth <= 2 Then vYear := StrToInt(Copy(FM_Mainform.CE_appdate.Text,1,4)) - 1;
+
+  //제목
+  Tit_Str   := '복리후생 의료비 승인내역 알림';
+  //Sms
+  Sms_Str   := IntToStr(vYear)+'년 의료비 서류심사 완료/메일 확인 요망 ' + #13#10+
+               '사내고객센터 이지해';
+  //Mail 승인
+  If (vMonth <= 2) Then
+  Begin
+   // Mail_Str1 := IntToStr(vYear)+'년 의료비 서류심사가 최종적으로 완료되었습니다. ';
+//                 '★승인내역 확인방법 : 종합인사정보시스템 - 복리후생/우리사주 - 복리후생신청 - 복리후생 상세이력출력(' +IntToStr(vYear+1)+'년 1월~2월 설정) ';
+    Mail_Str1 := '의료비승인이 완료되었습니다.' + #13#10+
+                  scyymm+' 월 급여일에 '+formatfloat('#,###',scamt)+' 원이 급여에 포함되어 지급됩니다.';
+  End Else
+  Begin
+    Mail_Str1 := '의료비승인이 완료되었습니다.' + #13#10+
+                  scyymm+' 월 급여일에 '+formatfloat('#,###',scamt)+' 원이 급여에 포함되어 지급됩니다.';
+  End;
+  //Mail 비승인
+  Mail_Str2 := IntToStr(vYear)+'년 ' + '의료비 서류심사가 최종적으로 완료되었습니다. ' + #13#10+
+               '일부 비승인 항목이 있으므로 추가서류는 일까지 제출 바랍니다. ';
+//               '★비승인내역 확인방법 : 종합인사정보시스템 - 복리후생/우리사주 - 복리후생신청 - 복리후생 상세이력출력(' +IntToStr(vYear+1)+'년 1월~2월 설정) ';
+  //Mail 비지원
+  Mail_Str3 := IntToStr(vYear)+'년 ' + '의료비 서류심사가 최종적으로 완료되었습니다. ' + #13#10+
+               '일부 비승인 및 미지원 항목이 있으므로 확인 부탁드립니다. ';
+//               '★비승인내역 확인방법 : 종합인사정보시스템 - 복리후생/우리사주 - 복리후생신청 - 복리후생 상세이력출력(' +IntToStr(vYear+1)+'년 1월~2월 설정) '+ #13#10+
+//               '★비승인 항목이 있을 경우 추가서류는 일까지 제출 바랍니다.';
+
+  //Mail 일부비승인
+  Mail_Str4 := IntToStr(vYear)+'년 의료비 서류심사가 최종적으로 완료되었습니다. ' + #13#10+
+               '일부 비승인 항목이 있으므로 추가서류는 일까지 제출 바랍니다. ' ;
+//               '★비승인내역 확인방법 : 종합인사정보시스템 - 복리후생/우리사주 - 복리후생신청 - 복리후생 상세이력출력(' +IntToStr(vYear+1)+'년 1월~2월 설정) ';
+  Title_Text.Text := Tit_Str;
+  Sms_Text.Text   := Sms_Str;
+
+end;
+
+procedure TFM_Sms.GB_appClick(Sender: TObject);
+begin
+  If      GB_app.ItemIndex = 0 Then Mail_Text.Text := Mail_Str1
+  Else If GB_app.ItemIndex = 1 Then Mail_Text.Text := Mail_Str2
+  Else If GB_app.ItemIndex = 2 Then Mail_Text.Text := Mail_Str3
+  Else                              Mail_Text.Text := Mail_Str4;
+End;
+
+procedure TFM_Sms.BT_ExitClick(Sender: TObject);
+begin
+  Close;
+end;
+
+end.

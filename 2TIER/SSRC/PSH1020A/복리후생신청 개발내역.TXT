@@ -1,0 +1,80 @@
+[신규개발]
+PSH1010A
+PSH1020A
+PSH1030A
+
+htmax_ps11.mk
+ServiceName := 'PSH1030A_sel1'
+ServiceName := 'PSH1030A_sel2'
+ServiceName := 'PSH1030A_sel3'
+ServiceName := 'PSH1030A_sel4'
+
+[신규 테이블 생성]
+PSCAPBAS
+PSCAPDEP
+PSHAPHOS
+PSHAPLAY
+PSHAPSUM
+
+[활용]
+PKMYSFAM
+PKMYSCOD
+
+=============================================================================================
+drop table PSCAPDEP
+
+drop table pshaplay_200603 
+
+drop table pshapsum_200603
+=============================================================================================
+[테이블 수정] 
+- 각 테이블 근무지부서코드 칼럼 삭제 및 근무지코드 칼럼 추가 (PSCAPJOB, PSHAPHOS, PSHAPLAY)
+- 각 테이블 제외내역 칼럼 추가 (PSHAPHOS, PSHAPLAY, PSHAPSUM)
+PSCAPDEP => PSCAPJOB  : 승인자 지정 테이블 (새로 생성)
+PSHAPHOS : 의료비 등록 테이블
+PSHAPLAY : 체육활동 등록테이블
+PSHAPSUM : 합계금액 누적 테이블
+
+[기준관리 프로그램]
+- 근무지별로 담당자 지정 가능토록 프로그램 수정 완료
+
+[승인 프로그램]
+- 제외금액/제외사유 입력가능 : 일단 승인/비승인 모두 가능케
+- 근무지 중심으로 결재자 나타나도록 
+
+[신청 프로그램]
+- 모든 TMAX서비스 근무지코드 중심으로 수정완료 
+
+
+[승인 프로그램]
+- 제외금액/분할월수 화면에 보이도록 작업중 
+- 승인시 누계금액 계산 로직 작업중 
+
+[신청 프로그램]
+- 체육활동 신청시 분할 신청 가능케 작업중.
+  (첫달부터 중간월들은 소수점에서 절삭하여 신청, 마지막월에 나머지 신청금액으로 저장.)
+========================================================================================================
+[의료비 승인시] 
+ - PSHAPHOS 테이블에 제외금액/제외사유 칼럼추가
+ - 제외금액/제외사유(비고) 입력가능 : 신청->제외->승인->지원
+
+[체육활동 신청시]
+ - PSHAPLAY 테이블에 분할개월수/제외금액/제외사유/ 칼럼추가
+ - ?개월 분할 신청기능 추가
+      
+[승인자 근무지 지정시]
+- 개인별 근무지 별로 승인 처리 가능토록 기능 변경    근무지 닫기
+========================================================================================================
+--출력 
+select decode(substr(a.deptcode,2,4),'0000', b.deptname,
+              decode(substr(a.deptcode,3,3),'000', '   '||b.deptname,
+                     decode(substr(a.deptcode,4,2),'00', '      '||b.deptname,
+                            decode(substr(a.deptcode,5,1),'0', '       '||b.deptname,  
+                                   '            '||b.deptname)))) deptname,
+       a.deptcode, 
+      (select codename from pyccode where codeid='I160' and useyn='Y' and codeno=placecode) placename,
+       PLACECODE, empno, korname
+  from pscapdep a, pycdept b
+ where a.orgnum   = b.orgnum -- = (select value1 from pimvari where gubun='00' and sgubun='0001') 
+   and a.deptcode = b.deptcode  
+ order by b.deptorder
