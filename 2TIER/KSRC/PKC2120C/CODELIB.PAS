@@ -1,0 +1,189 @@
+unit Codelib;
+interface
+
+uses WinTypes, WinProcs, Classes, Graphics, Forms, Controls, Buttons,
+     StdCtrls, DB, DBTables, Grids, DBGrids, Messages,Dialogs,SysUtils,
+     Mask, ExtCtrls,datelib, MemDS, DBAccess, Ora;
+
+type
+  TcodeForm = class(TForm)
+    exit: TBitBtn;
+    DataSource1: TDataSource;
+    codeGrid: TDBGrid;
+    OKBtn: TBitBtn;
+    Panel2: TPanel;
+    Codeno: TMaskEdit;
+    Brun: TBitBtn;
+    Panel3: TPanel;
+    CodeN: TMaskEdit;
+    QueryBcode: TOraQuery;
+    QueryBcodeCODENO: TStringField;
+    QueryBcodeCODENAME: TStringField;
+    QueryBcodeCODEFNAME: TStringField;
+    procedure codeGridDrawDataCell(Sender: TObject; const Rect: TRect;
+      Field: TField; State: TGridDrawState);
+    procedure FormActivate(Sender: TObject);
+    procedure exitClick(Sender: TObject);
+    procedure codeGridDblClick(Sender: TObject);
+    procedure codeGridKeyPress(Sender: TObject; var Key: Char);
+    procedure BrunClick(Sender: TObject);
+    procedure CodenoKeyUp(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure CodenoClick(Sender: TObject);
+  private
+    { Private declarations }
+  public
+    DataVal1 : String;
+    DataVal2 : String;
+    DataVal3 : String;
+    FormData : String;
+    Code     : String;  {코드}
+    CodeName : String;  {코드명}
+    gu       : integer;
+    function QcodeDisp(s1,s2 : string; codeGu : integer) : String;
+  end;
+
+var
+  codeForm: TcodeForm;
+implementation
+
+procedure CodeSetup; forward;
+
+{$R *.DFM}
+
+procedure CodeSetup;
+{찾고자하는 코드값을 설정하여 데이타베이스에서 찾아온다..}
+var
+  ErrorHelp : array[0..255] of char;
+begin
+Try
+ with codeForm.QueryBcode do begin
+    Close;
+    CodeForm.DataVal2 := codeForm.codeno.Text;
+    CodeForm.DataVal3 := codeForm.coden.Text;
+    Sql.Clear;
+    Sql.Add(' select codeid,codeno,codename,codefname from pyccode ');
+    Sql.Add('  where nvl(useyn,''Y'') = ''Y''                      ');
+    if (trim(CodeForm.DataVal2)<> '') and
+       (trim(CodeForm.DataVal3)<> '') then begin
+       Sql.Add(' and (codeid = :lcode and (codeno like :lno and codename like :lname)) ');
+       Sql.Add('order by codename');
+       ParamByName('lcode').AsString  := codeForm.DataVal1;
+       ParamByName('lno').AsString    := codeForm.DataVal2+'%';
+       ParamByName('lname').AsString  := codeForm.DataVal3+'%';
+    end;
+    if (trim(CodeForm.DataVal2)<> '') and
+       (trim(CodeForm.DataVal3) = '') then begin
+       Sql.Add('and (codeid = :lcode and codeno like :lno)' );
+       Sql.Add('order by codeno');
+       ParamByName('lcode').AsString  := codeForm.DataVal1;
+       ParamByName('lno').AsString    := codeForm.DataVal2+'%';
+    end;
+    if (trim(CodeForm.DataVal2) = '') and
+       (trim(CodeForm.DataVal3) <>'') then begin
+       Sql.Add('and (codeid = :lcode and codename like :lname)' );
+       Sql.Add('order by codename');
+       ParamByName('lcode').AsString  := codeForm.DataVal1;
+       ParamByName('lname').AsString  := codeForm.DataVal3+'%';
+    end;
+    if (trim(CodeForm.DataVal2) = '') and
+       (trim(CodeForm.DataVal3) = '') then begin
+       Sql.Add('and (codeid = :lcode)' );
+       Sql.Add('order by codeno');
+       ParamByName('lcode').AsString  := codeForm.DataVal1;
+    end;
+    Open;
+    codeForm.codeGrid.SetFocus;
+ end;
+EXCEPT ON E : EDataBaseError DO
+  MessageBox(codeForm.handle,StrPcopy(ErrorHelp,E.Message),'에  러',MB_OK or $0040);
+END;
+end;
+
+function TcodeForm.QCodeDisp(s1,s2 : String; codeGu :integer) : String;
+{입력받은 데이타를 코드 화일에서 찾아서 해당 필드에 보여준다..}
+var
+  ErrorHelp : array[0..255] of char;
+begin
+ Try
+ with QueryBcode do begin
+  Close;
+  ParamByName('Lcode').AsString  := s1;
+  ParamByName('Lno').AsString    := s2;
+  Open;
+ end;
+ case codegu of
+   1 :  QCodeDisp := QueryBcodeCODENAME.AsString;
+   2 :  QCodeDisp := QueryBcodeCODEFNAME.AsString;
+ end;
+
+EXCEPT ON E : EDataBaseError DO
+  MessageBox(codeForm.handle,StrPcopy(ErrorHelp,E.Message),'에  러',MB_OK or $0040);
+END;
+end;
+
+procedure TcodeForm.codeGridDrawDataCell(Sender: TObject; const Rect: TRect;
+  Field: TField; State: TGridDrawState);
+{리스트된 데이타를 꾸민다..}
+begin
+
+if gdSelected in state then
+   begin
+    Code     := QueryBcodeCODENO.AsString;
+    CodeName := QueryBcodeCODENAME.AsString;
+    end;    
+end;
+
+procedure TcodeForm.FormActivate(Sender: TObject);
+{폼이 생성될때}
+begin
+ gu := 2;
+ CodeSetup;
+ CodeForm.Caption := FormData+'[코드ID : '+Dataval1+']';
+end;
+
+procedure TcodeForm.exitClick(Sender: TObject);
+begin
+  QueryBcode.Close;
+  close;
+end;
+
+procedure TcodeForm.codeGridDblClick(Sender: TObject);
+{코드값을 넘겨준다..}
+begin
+  Code     := QueryBcodeCODENO.AsString;
+  CodeName := QueryBcodeCODENAME.AsString;
+  ModalResult := mrOK;
+end;
+
+procedure TcodeForm.codeGridKeyPress(Sender: TObject; var Key: Char);
+{Enter 키소리제거 }
+begin
+if Key = chr(27) then begin QueryBcode.Close; close; end;
+if key = chr(13) then begin
+  Key := chr(0);
+  codeGridDblClick(codeGrid);
+end;
+
+end;
+
+procedure TcodeForm.BrunClick(Sender: TObject);
+{실행버턴을 누를경우}
+begin
+  DataVal2 := codeno.Text;
+  CodeSetUp;
+end;
+
+procedure TcodeForm.CodenoKeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+ if Key = VK_TAB then gu := TmaskEdit(Sender).Tag;
+end;
+
+procedure TcodeForm.CodenoClick(Sender: TObject);
+begin
+ gu := TmaskEdit(Sender).Tag;
+end;
+
+end.
+
