@@ -1,0 +1,28 @@
+{* ======================= Program Header ======================================
+
+ PROGRAM-NAME   : PKG3070G(초과근무수 계산/월별집계)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 수당
+ Programmer     : 김승회
+ Version        : 1.00
+ Date           : 1997.12.01
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   1.00       1997.12.01         김승회          최초개발본      설계명세서
+
+============================================================================= *}
+program pkg3070g;
+
+uses
+  Forms,
+  pkg30701 in 'pkg30701.pas' {M_KG3070G};
+
+{$R *.RES}
+
+begin
+  Application.Initialize;
+  Application.Title := '초과근무수당 계산 / 월별집계';
+  Application.CreateForm(TM_KG3070G, M_KG3070G);
+  Application.Run;
+end.
