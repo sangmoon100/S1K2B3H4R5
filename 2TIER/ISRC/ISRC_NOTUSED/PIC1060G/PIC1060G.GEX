@@ -1,0 +1,8 @@
+[General]
+Name=pic1060g
+Project=1
+
+[Classes]
+Count=2
+Class0="Tpic1061gForm","TForm","PIC1061G","0","C:\hanaro\Src\2Tier\Isrc\PIC1060G\PIC1061G.PAS"
+Class1="TsubForm","TForm","PIC1062G","0","C:\hanaro\Src\2Tier\Isrc\PIC1060G\PIC1062G.PAS"
