@@ -1,0 +1,1363 @@
+/*======================== Program Header ==========================================================
+   PROGRAM-NAME      : insa2fin.pc
+   PROGRM-Decription : ÀÎ»çÅ×ÀÌºíÀ» ÀÐ¾î¼­ ERPÂÊ Interface Å×ÀÌºí¿¡ Ãß°¡ ¸ÅÀÏ 1È¸(20:00) cron ½ÇÇà
+   USAGE             :
+   SYSTEM-NAME       :
+   SUBSYSTEM-NAME    :
+   Programmer        : ÀüÃ¶È£Ç
+   Version           : 1.00
+   Date              : 2003.03.31
+  
+  Update Contents
+   Version      date(yy.mm.dd)     programmer      description            relevant doc.n
+     1.00       2003.03.31         ÀüÃ¶È£          ÃÖÃÊÀÛ¼º
+  Comments
+     1) Àç¹«ºÎ¼­ÄÚµå°¡ ¾øÀ» °æ¿ì ÀÎ»çÆÀÀÇ ºÎ¼­ÄÚµå°¡ µé¾î°¡±â¶§¹®¿¡ ÀÎ»çÆÀÀÇ ºÎ¼­ÄÚµå°¡ º¯°æ µÇ¸é ¹Ýµå½Ã     2005.01.17 Á¤±Ô¿ë
+        cur_02ÀÇ ºÎ¼­ÄÚµå¸¦ ¹Ýµå½Ã º¯°æÇÑ´Ù. *ÇöÀç H09Â÷ ÀÎ»çÆÀ Àç¹«ºÎ¼­ÄÚµå(CCB10)                              
+     2) FL_dept.v_empno À» FL_dept.v_empno.arr·Î º¯°æÇÏ¿© coredump¿¡·¯ Ã³¸®ÇÔ                            2003.11.18 ÀÌ¹Î¿ë
+     3) Ã³¸®°úÁ¤ 7) ½Ç±Ù¹«ÁöºÎ¼­[EK140] <> ¼Ò¼ÓºÎ¼­[QI100] °æ¿ì Á÷»óÀ§ÀÚ »ç¹ø¸¦ ½Ç±Ù¹«ÁöºÎ¼­ »óÀ§ÀÚ·Î ÇÑ´Ù. 2003.12.01 ÀÌ¹Î¿ë
+        Ã³¸®°úÁ¤ 7) deptcode¸¦ jobdept·Î ¼öÁ¤  
+     4) ºñÁ¤»óÀûÀÎ »ç¿ø ÃßÃâ¿¡¼­  maxseqno ¿À·ù¼öÁ¤                                                       2004.01.07 Á¤±Ô¿ë
+     5) ºñ¼­ÆÀÀå °áÀÚÀç°¡ »çÀå´Ô¿¡¼­ °æ¿µÁö¿ø½ÇÀåÀ¸·Î º¯°æ                                                 2005.01.17 Á¤±Ô¿ë 
+     6) ·Î±×·®À» ÁÙÀÌ±â À§ÇØ Á¤»óÀûÀ¸·Î ¼öÇàµÈ sprintf()ºÎºÐÀº ¸·À½                                        2005.02.17 °­·ûÁ¾(dsa2000)
+==================================================================================================*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+/*#include <sqlcpr.h>*/
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+
+#define   EMPNO       4
+#define   YYMMDD      8
+#define   YYMM        6
+#define   STATE       1
+#define   KORNAME     12
+#define   ORGNUM      3
+#define   DEPTCODE    6
+#define   JUMINID     13
+#define   TELNO       15
+#define   CODENAME    20
+#define   CURADDR     50
+#define   ZIPNO       7
+#define   PAYACNT     20
+#define   PAYBANK     2
+#define   REFER       12
+
+/* EXEC SQL INCLUDE sqlca.h; */
+
+EXEC SQL BEGIN DECLARE SECTION;
+  /* ÀÎÅÍÆäÀÌ½º ÄÜÆ®·Ñ Å×ÀÌºí º¯¼öµé */
+  typedef struct HINSA_ctrl_inter {
+          varchar  v_dt_create  [YYMMDD   + 1];  /* »ý¼ºÀÏÀÚ */
+          varchar  v_cd_data    [EMPNO    + 1];  /* Employee Data Code -> AP03 */
+          varchar  v_ym_acct    [YYMM     + 1];  /* È¸°è³â¿ù */
+          varchar  v_ph_proc    [STATE    + 1];  /* Ã³¸® ´Ü°è */
+          varchar  v_st_proc    [STATE    + 1];  /* Ã³¸® »óÅÂ ( P, N, A) */
+          varchar  v_cl_data_use[STATE    + 1];  /* Data È°¿ë ±¸ºÐ */
+          varchar  v_id_crt_user[EMPNO    + 1];  /* »ý¼º User ID */
+          int      v_no_crt_srl;                 /* »ý¼º ÀÏ·Ã¹øÈ£ */
+          int      v_cnt_line;                   /* ¶óÀÎ °Ç¼ö */
+  } ts_ctrl_inter;
+
+  /* ÀÎÅÍÆäÀÌ½º Employee Å×ÀÌºí º¯¼öµé */
+  typedef struct HINSA_empployee_inter {
+          varchar  v_rst_valid[STATE    + 1];
+          varchar  v_empno    [EMPNO    + 1];    /* »ç¿ø¹øÈ£ */
+          varchar  v_korname  [KORNAME  + 1];    /* ¼º¸í */
+          varchar  v_orgnum   [ORGNUM   + 1];    /* Á¶Á÷Â÷¼ö */
+          varchar  v_deptcode [DEPTCODE + 1];    /* ½Ç±Ù¹«ºÎ¼­ÄÚµå */
+          varchar  v_juminid  [JUMINID  + 1];    /* ÁÖ¹Î¹øÈ£ */
+          varchar  v_fincode  [DEPTCODE + 1];    /* Àç¹«ºÎ¼­ */
+          varchar  v_empdate  [YYMMDD   + 1];    /* ÀÔ»çÀÏÀÚ */
+          varchar  v_retdate  [YYMMDD   + 1];    /* Åð»çÀÏÀÚ */
+          varchar  v_telno    [TELNO    + 1];    /* ÀüÈ­¹øÈ£ */
+          varchar  v_clname   [CODENAME + 1];    /* Á÷±Þ¸í */
+          varchar  v_raname   [CODENAME + 1];    /* Á÷À§¸í */
+          varchar  v_payrayn  [STATE    + 1];    /* º¸ÀÓ¿©ºÎ */
+          varchar  v_curaddr  [CURADDR  + 1];    /* ÁÖ¼Ò */
+          varchar  v_zipno    [ZIPNO    + 1];    /* ¿ìÆí¹øÈ£ */
+          varchar  v_payacnt  [PAYACNT  + 1];    /* ±Þ¿©°èÁÂ¹øÈ£ */
+          varchar  v_paybank  [PAYBANK  + 1];    /* ±Þ¿©°èÁÂÀºÇàÄÚµå */
+          varchar  v_refer    [REFER    + 1];    /* Á÷¹« */
+          varchar  v_sempno   [EMPNO    + 1];    /* Á÷»óÀ§ÀÚ */
+  } ts_employee_inter;
+
+/* °âÁ÷ÀÚ Ã¼Å©½Ã »ç¿ëÇÏ´Â Å×ÀÌºí º¯¼öµé */
+  typedef struct HINSA_dept_inter {
+          varchar  v_empno  [EMPNO    + 1];    /* °âÁ÷ÀÚ »ç¹ø */
+          varchar  v_korname[KORNAME  + 1];    /* °âÁ÷ÀÚ »ç   */
+          varchar  v_orgnum [ORGNUM   + 1];    /* Á¶Á÷Â÷¼ö    */
+          varchar  v_jobdept[DEPTCODE + 1];    /* °âÁ÷ºÎ¼­    */
+  } ts_dept_inter;
+  
+/* °âÁ÷ÀÚ Ã¼Å©½Ã »ç¿ëÇÏ´Â Å×ÀÌºí º¯¼öµé */
+  typedef struct HINSA_dept_inter1 {
+          varchar  v_empno  [EMPNO    + 1];    /* °âÁ÷ÀÚ »ç¹ø */
+          varchar  v_korname[KORNAME  + 1];    /* °âÁ÷ÀÚ »ç   */
+          varchar  v_orgnum [ORGNUM   + 1];    /* Á¶Á÷Â÷¼ö    */
+          varchar  v_jobdept[DEPTCODE + 1];    /* °âÁ÷ºÎ¼­    */
+  } ts_dept_inter1;  
+
+  varchar  v_presempno     [EMPNO    + 1];    /* »çÀå »ç¹ø */
+  varchar  v_temp_orgnum   [ORGNUM   + 1];    /* Á¶Á÷Â÷¼ö  */
+  varchar  v_temp_deptcode [DEPTCODE + 1];    /* ºÎ¼­ÄÚµå  */
+  varchar  v_temp_sempno   [EMPNO + 1];       /* Á÷»óÀ§ÀÚ Ãß·êÀ» ÇÏ±âÀ§ÇÑ ÀÓ½Ã º¯¼ö */
+EXEC SQL END DECLARE SECTION;
+
+int PL_get_chairman(void);
+int PL_ctrl_control(void);
+int PL_delete_erp(void);
+int PL_write_ctrl_control(int amod);
+int PL_double_jobdept_check(void);
+int PL_write_erp(void);
+int PL_get_sempno(char *aorgnum, char *adeptcode, char *asempno);
+
+
+static ts_employee_inter FG_inter_emp;
+static ts_ctrl_inter     FG_inter_ctrl;
+
+static ts_employee_inter *FGP_inter_emp;
+static ts_ctrl_inter     *FGP_inter_ctrl;
+
+static int  FG_loopcnt;
+
+void main(void)
+{
+  char *FL_date;
+  char FL_dir[255];
+  char FL_Line[255];
+  char FL_file[255];
+
+  STRINIT(FL_file);
+  STRINIT(FL_Line);
+  strcpy(FL_file,"insa2fin");
+
+  hinsa_get_filename(1, FL_file);
+  if (hinsa_log_open(FL_file) == FAILURE)
+  {
+    hinsa_exit(0,"·Î±×ÆÄÀÏ »ý¼º¿¡·¯·Î ÀÎÇÑ ÇÁ·Î±×·¥ Á¾·á...");
+  }
+
+  memset(FG_inter_emp,  0x00, sizeof(ts_employee_inter));
+  memset(FG_inter_ctrl, 0x00, sizeof(ts_ctrl_inter));
+
+
+  FGP_inter_emp  = &FG_inter_emp;
+  FGP_inter_ctrl = &FG_inter_ctrl;
+  FGP_inter_ctrl->v_cnt_line = 0;
+
+  /* »ý¼ºÀÏÀÚ, È¸°è³â¿ùÀ» µî·ÏÇÑ´Ù.. */
+  FL_date = hinsa_sys_date(1);
+  STR2VCTRIM(FGP_inter_ctrl->v_dt_create,FL_date,YYMMDD);
+  FL_date = hinsa_sys_date(2);
+  STR2VCTRIM(FGP_inter_ctrl->v_ym_acct,FL_date,YYMM);
+
+  hinsa_log_print(0,"Àç¹«ÀÎÅÍÆäÀÌ½º(insa2fin) ÇÁ·Î±×·¥ ½ÃÀÛ...");
+
+  hinsa_db_connect();
+
+  if (PL_get_chairman()  == FAILURE)
+  {
+    EXEC SQL ROLLBACK WORK RELEASE;
+    hinsa_exit(0,"PL_get_chairman Function ¿¡·¯·Î Á¾·á...");
+    return;
+  }
+
+  if (PL_ctrl_control() == FAILURE)
+  {
+    EXEC SQL ROLLBACK WORK RELEASE;
+    hinsa_exit(0,"PL_ctrl_control Function ¿¡·¯·Î Á¾·á...");
+    return;
+  }
+
+  if (PL_delete_erp() == FAILURE)
+  {
+    EXEC SQL ROLLBACK WORK RELEASE;
+    hinsa_exit(0,"PL_delete_erp Function ¿¡·¯·Î Á¾·á...");
+    return;
+  }
+
+  if (PL_write_ctrl_control(0) == FAILURE)
+  {
+    EXEC SQL ROLLBACK WORK RELEASE;
+    hinsa_exit(0,"PL_write_ctrl_control Function ¿¡·¯·Î Á¾·á...");
+    return;
+  }
+
+  if (PL_write_erp() == FAILURE)
+  {
+     if (PL_write_ctrl_control(2) == FAILURE)
+     {
+       EXEC SQL ROLLBACK WORK RELEASE;
+       hinsa_exit(0,"PL_write_ctrl_control Function ¿¡·¯·Î Á¾·á...");
+       return;
+     }
+    EXEC SQL ROLLBACK WORK RELEASE;
+    hinsa_exit(0,"PL_write_ctrl_control Function ¿¡·¯·Î Á¾·á...");
+    return;
+  }
+  else
+  {
+     if (PL_write_ctrl_control(1) == FAILURE)
+     {
+       EXEC SQL ROLLBACK WORK RELEASE;
+       hinsa_exit(0,"PL_write_ctrl_control Function ¿¡·¯·Î Á¾·á...");
+       return;
+     }
+  }
+
+  hinsa_exit(0,"Àç¹«ÀÎÅÍÆäÀÌ½º(insa2fin) ÇÁ·Î±×·¥ Á¤»ó Ã³¸®...");
+  return;
+}
+
+/*==================================================================================================
+   ÇöÀç ³¯Â¥ÀÇ »ý¼ºÀÏ·Ã¹øÈ£¸¦ °¡Á®¿Â´Ù...
+==================================================================================================*/
+int PL_ctrl_control(void)
+{
+  char FL_Line[255];
+
+  STRINIT(FL_Line);
+  FGP_inter_ctrl->v_no_crt_srl = 0;
+
+  STR2VCTRIM(FGP_inter_ctrl->v_cd_data,"AP03",EMPNO);
+
+  sprintf(FL_Line, "³ª. PL_ctrl_control, ¹ÙÀÎµù°ª(v_cd_data, v_dt_create) : %s, %s",
+          FGP_inter_ctrl->v_cd_data.arr, FGP_inter_ctrl->v_dt_create.arr);
+  hinsa_log_print(0, FL_Line);
+
+  EXEC SQL SELECT MAX(no_crt_srl)
+             INTO :FGP_inter_ctrl->v_no_crt_srl
+             FROM INSA_HIT_CTRL
+            WHERE cd_data   = :FGP_inter_ctrl->v_cd_data
+              AND dt_create = TO_DATE(:FGP_inter_ctrl->v_dt_create, 'YYYYMMDD');
+
+  if ((SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA) && (SQLCODE != SQL_NULL_COL))
+  {
+    sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+
+  STRINIT(FL_Line);
+  FGP_inter_ctrl->v_no_crt_srl++;
+  sprintf(FL_Line, "³ª.PL_ctrl_control, »ý¼ºÀÏ·Ã¹øÈ£(v_no_crt_srl) : %d",FGP_inter_ctrl->v_no_crt_srl);
+  hinsa_log_print(0, FL_Line);
+
+  return (SUCCESS);
+}
+
+/*==================================================================================================
+   ERP_HAP_AP04 TableÀ» »èÁ¦ÇÑ´Ù...
+==================================================================================================*/
+int PL_delete_erp(void)
+{
+  char FL_Line[255];
+
+  STRINIT(FL_Line);
+
+  hinsa_log_print(0, "´Ù. PL_delete_erp, erp_hap_ap04 Å×ÀÌºí »èÁ¦½ÃÀÛ...");
+  EXEC SQL DELETE
+             FROM erp_hap_ap04;
+  hinsa_log_print(0, "´Ù. PL_delete_erp, erp_hap_ap04 Å×ÀÌºí »èÁ¦¿Ï·á...");
+
+  if ((SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA))
+  {
+    sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+
+  return (SUCCESS);
+}
+
+/*==================================================================================================
+   INSA_HIT_CTRL Table¿¡ Inert, Update ÇÑ´Ù...
+   ÇÁ·Î±×·¥À» ÇÑ¹ø ½ÇÇàÇÒ ¶§ ¸¶´Ù no_crt_srlÀ» 1¾¿ Áõ°¡ÇÏ¿© Å×ÀÌºí¿¡ Ãß°¡ÇÏ¸ç
+   st_proc¿¡ ½ÇÇàÀ» ÀÇ¹ÌÇÏ´Â 'P' ±¸ºÐÀÚ¸¦ ³Ö°í
+   ÇÁ·Î±×·¥ ½ÇÇà µµÁß ¿¡·¯°¡ ³­ °æ¿ì´Â ºñÁ¤»ó Á¾·á ±¸ºÐÀÚ 'A'¸¦ st_proc ÇÊµå¿¡ ³Ö°í
+   Á¤»óÁ¾·á½Ã¿¡´Â 'N'À» ³Ö´Â´Ù.
+==================================================================================================*/
+int PL_write_ctrl_control(int amod)
+{
+  char FL_Line[255];
+
+  STRINIT(FL_Line);
+  STR2VCTRIM(FGP_inter_ctrl->v_ph_proc, "P", STATE);
+  STR2VCTRIM(FGP_inter_ctrl->v_cl_data_use, "A", STATE);
+  STR2VCTRIM(FGP_inter_ctrl->v_id_crt_user, "0000", EMPNO);
+
+  if (amod == 0)
+    STR2VCTRIM(FGP_inter_ctrl->v_st_proc, "P", STATE);
+  else if (amod == 1)
+    STR2VCTRIM(FGP_inter_ctrl->v_st_proc, "N", STATE);
+  else if (amod == 2)
+    STR2VCTRIM(FGP_inter_ctrl->v_st_proc, "A", STATE);
+
+  if (amod == 0)
+  {
+    hinsa_log_print(0, "¶ó. PL_write_ctrl_control, amod == 0, INSA_HIT_CTRL Å×ÀÌºí Ãß°¡...");
+
+    EXEC SQL INSERT INTO INSA_HIT_CTRL
+                    (dt_create,
+                     cd_data,
+                     no_crt_srl,
+                     ym_acct,
+                     ph_proc,
+                     st_proc,
+                     cl_data_use,
+                     id_crt_user)
+             VALUES (TO_DATE(:FGP_inter_ctrl->v_dt_create,'YYYYMMDD'),
+                     :FGP_inter_ctrl->v_cd_data,
+                     :FGP_inter_ctrl->v_no_crt_srl,
+                     :FGP_inter_ctrl->v_ym_acct,
+                     :FGP_inter_ctrl->v_ph_proc,
+                     :FGP_inter_ctrl->v_st_proc,
+                     :FGP_inter_ctrl->v_cl_data_use,
+                     :FGP_inter_ctrl->v_id_crt_user);
+  }
+
+  if (amod == 1)
+  {
+    hinsa_log_print(0, "¶ó. PL_write_ctrl_control, amod == 1, INSA_HIT_CTRL ¼öÁ¤... (ÀÛ¾÷ Á¤»ó Á¾·á)");
+
+    EXEC SQL UPDATE INSA_HIT_CTRL
+                SET cnt_line    = :FGP_inter_ctrl->v_cnt_line,       -- Ã³¸®°Ç¼ö
+                    st_proc     = :FGP_inter_ctrl->v_st_proc,        -- Ã³¸®»óÅÂ
+                    dt_crt_comp = SYSDATE                            -- ÀÛ¾÷¿Ï·áÀÏÀÚ
+              WHERE dt_create   = TO_DATE(:FGP_inter_ctrl->v_dt_create, 'YYYYMMDD')
+                AND cd_data     = :FGP_inter_ctrl->v_cd_data
+                AND no_crt_srl  = :FGP_inter_ctrl->v_no_crt_srl;
+  }
+
+  if (amod == 2)
+  {
+    hinsa_log_print(0, "¶ó. PL_write_ctrl_control, amod == 2, INSA_HIT_CTRL ¼öÁ¤... (ÀÛ¾÷ ºñÁ¤»ó Á¾·á)");
+
+    EXEC SQL UPDATE INSA_HIT_CTRL
+                SET st_proc    = :FGP_inter_ctrl->v_st_proc           -- Ã³¸®»óÅÂ
+              WHERE dt_create  = TO_DATE(:FGP_inter_ctrl->v_dt_create, 'YYYYMMDD')
+                AND cd_data    = :FGP_inter_ctrl->v_cd_data
+                AND no_crt_srl = :FGP_inter_ctrl->v_no_crt_srl;
+  }
+
+  if ((SQLCODE != SQL_OK))
+  {
+    sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+  return (SUCCESS);
+}
+
+/*==================================================================================================
+   ±Þ¿©Áö±Þ±âÁØÅ×ÀÌºí¿¡¼­ »çÀå »ç¹øÀ» ÀÐ´Â´Ù...
+==================================================================================================*/
+int PL_get_chairman(void)
+{
+  char FL_Line[255];
+
+  hinsa_log_print(0, "°¡. PL_get_chairman, »çÀå »ç¹øÀ» ÀÐ´Â´Ù...");
+  STRINIT(FL_Line);
+  STRINIT(v_presempno);
+
+  EXEC SQL SELECT presempno
+             INTO :v_presempno
+             FROM pkcpbas;
+
+  if (SQLCODE != SQL_OK)
+  {
+    sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+
+  if ((SQLCODE == SQL_NO_DATA) || (SQLCODE == SQL_NULL_COL))
+  {
+    STRINIT(FL_Line);
+    sprintf(FL_Line, "±Þ¿©±âÁØÅ×ÀÌºí¿¡ »çÀå »ç¹ø µ¥ÀÌÅ¸ ¹ÌÁ¸Àç... : Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+
+  return (SUCCESS);
+}
+
+
+/*==================================================================================================
+   °âÁ÷ÀÚ°¡ 2¸íÀÎ ºÎ¼­¸¦ Ã¼Å©ÇÑ´Ù...
+   °âÁ÷ÀÚ°¡ 2¸íÀÎ ºÎ¼­°¡ ÀÖÀ» °æ¿ì°¡ Á¸ÀçÇÏ¸é ¾ÈµÊ..
+   ÀÌ¶§ ÀÎ»ç ¸¶½ºÅÍ¿¡ º¸ÀÓ¿©ºÎ(payrayn)¿Í ½Ç±Ù¹«ºÎ¼­ º¸ÀÓ¿©ºÎ(jobpayrayn)À» Ã¼Å©ÇÑ´Ù...
+   µÑÁß¿¡ ÇÏ³ª¸¸ 'Y'·Î ¼ÂÆÃµÇ¾î¾ß ÇÔ.
+==================================================================================================*/
+int PL_double_jobdept_check(void)
+{
+  char FL_Line[255];
+  int  FL_count;
+
+  ts_dept_inter FL_dept;
+
+  STRINIT(FL_Line);
+  hinsa_log_print(0, "¸¶. PL_double_jobdept_check, °âÁ÷ÀÚ°¡ 2¸í ÀÌ»óÀÎ ºÎ¼­ Ã¼Å©...");
+
+  EXEC SQL DECLARE cur_01 CURSOR FOR
+       SELECT A.empno, A.korname, A.orgnum, A.jobdept
+         FROM pimpmas A,
+              ( SELECT orgnum,jobdept
+                  FROM pimpmas
+                 WHERE pstate     <'60'
+                   AND jobpayrayn ='Y'
+                 GROUP BY orgnum, jobdept
+                HAVING count(empno) > 1
+              ) B
+        WHERE A.orgnum  = B.orgnum
+          AND A.jobdept = B.jobdept;
+  EXEC SQL OPEN cur_01;
+
+  if (SQLCODE != SQL_OK)
+  {
+    sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+
+  FL_count = 0;
+  while(TRUE)
+  {
+    memset(FL_dept,0x00,sizeof(ts_dept_inter));
+
+    EXEC SQL FETCH cur_01 INTO
+                   :FL_dept.v_empno,
+                   :FL_dept.v_korname,
+                   :FL_dept.v_orgnum,
+                   :FL_dept.v_jobdept;
+
+    if (SQLCODE == SQL_NO_DATA)
+      break;
+
+    if ((SQLCODE != SQL_NULL_COL) && (SQLCODE != SQL_OK))
+    {
+      sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+      hinsa_log_print(0, FL_Line);
+      EXEC SQL CLOSE cur_01;
+      return (FAILURE);
+    }
+
+    FL_count++;    
+    /*dsa2000  2005.02.16.  ·Î±×·®À» ÁÙÀÌ±â À§ÇØ ¸·¾Æ³õÀ½     
+    STRINIT(FL_Line);
+    sprintf(FL_Line, "°âÁ÷ÀÚ Á¤º¸ : »ç¹ø[%s] ¼º¸í[%s] Á¶Á÷Â÷¼ö[%s] ºÎ¼­ÄÚµå[%s]",
+            FL_dept.v_empno.arr, FL_dept.v_korname.arr, FL_dept.v_orgnum.arr, FL_dept.v_jobdept.arr);
+    hinsa_log_print(0, FL_Line);   */
+  }
+
+  EXEC SQL CLOSE cur_01;
+
+  if (FL_count > 0)
+  {
+    STRINIT(FL_Line);
+    sprintf(FL_Line, "°âÁ÷ÀÚ ºÎ¼­ Á¸Àç [%d]",FL_count);
+    return (FAILURE);
+  }
+
+  return (SUCCESS);
+}
+
+
+/*==================================================================================================
+   Á÷»óÀ§ÀÚ ÆÇ´ÜÇÏ´Â ÇÔ¼ö..
+==================================================================================================*/
+int PL_get_sempno(char *aorgnum, char *adeptcode, char *asempno)
+{
+  char FL_Line[255];
+
+  STRINIT(FL_Line);
+  STRINIT(v_temp_orgnum);
+  STRINIT(v_temp_deptcode);
+  STRINIT(v_temp_sempno);
+
+  if (FG_loopcnt > 5)
+  {
+    /* »çÀå »ç¹øÀ» Á÷»óÀ§ÀÚ·Î ¼³Á¤ */
+    sprintf(asempno, "%s", v_presempno.arr);
+    /*dsa2000  2005.02.16.  ·Î±×·®À» ÁÙÀÌ±â À§ÇØ ¸·¾Æ³õÀ½         
+    STRINIT(FL_Line);
+    sprintf(FL_Line, "      »ç...........Ã³¸®°úÁ¤ 5) ¹«ÇÑ·çÇÁ »çÀå »ç¹ø [%s]", asempno);
+    hinsa_log_print(0, FL_Line);  dsa2000*/
+    return (SUCCESS);
+  }
+  FG_loopcnt++;
+
+  /* Çö Á¶Á÷Â÷¼ö¿¡¼­ ´ã´çÀ» Á¦¿ÜÇÑ °âÁ÷ÀÎ »ç¿ø ÀÚ·á ÃßÃâ */
+  
+  /* K.J ¼öÁ¤ : °âÁ÷, Á÷¹«´ëÇà ¸ðµÎ Ã³¸® ÇØ¾ß ÇÔ*/
+  /* new_version */
+  EXEC SQL SELECT D.empno
+                  -- D.korname, D.orgnum, D.deptcode, D.addeptcode
+             INTO :v_temp_sempno
+             FROM pimpmas C,
+                 (SELECT A.empno, A.korname, A.orgnum, A.deptcode, A.addeptcode, decode(a.ancode,'233','233','243')
+                    FROM pihanno A
+                   WHERE A.anupdyn    = 'Y'
+                     AND A.ancode      in ('233','243')
+                     AND A.orgnum     = :aorgnum
+                     AND A.addeptcode is not null
+                   MINUS
+                  SELECT B.empno, B.korname, B.orgnum, B.deptcode, B.addeptcode, decode(b.ancode,'238','233','243')
+                    FROM pihanno B
+                   WHERE B.anupdyn    = 'Y'
+                     AND B.ancode     in ('238','248')
+                     AND B.orgnum     = :aorgnum
+                     AND B.addeptcode is not null
+                 ) D
+            WHERE C.empno         = D.empno
+              AND C.pstate        < '60'
+              AND C.jobpayra     <> '4C'
+              AND D.orgnum        = :aorgnum
+              AND D.addeptcode    = :adeptcode;
+  
+  /* old_version
+  EXEC SQL SELECT D.empno
+                  -- D.korname, D.orgnum, D.deptcode, D.addeptcode
+             INTO :v_temp_sempno
+             FROM pimpmas C,
+                 (SELECT A.empno, A.korname, A.orgnum, A.deptcode, A.addeptcode
+                    FROM pihanno A
+                   WHERE A.anupdyn    = 'Y'
+                     AND A.ancode     = '233'
+                     AND A.orgnum     = :aorgnum
+                     AND A.addeptcode is not null
+                   MINUS
+                  SELECT B.empno, B.korname, B.orgnum, B.deptcode, B.addeptcode
+                    FROM pihanno B
+                   WHERE B.anupdyn    = 'Y'
+                     AND B.ancode     = '238'
+                     AND B.orgnum     = :aorgnum
+                     AND B.addeptcode is not null
+                 ) D
+            WHERE C.empno         = D.empno
+              AND C.pstate        < '60'
+              AND C.jobpayra     <> '4C'
+              AND D.orgnum        = :aorgnum
+              AND D.addeptcode    = :adeptcode;
+*/
+  if ((SQLCODE != SQL_NULL_COL) && (SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA))
+  {
+    sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+
+  /* °âÁ÷ÀÚ »ç¹ø°ú »ç¹øÀÌ °°À¸¸é ¹«È¿ */
+  if ((SQLCODE != SQL_NO_DATA) && (strcmp(v_temp_sempno.arr,FGP_inter_emp->v_empno.arr) != 0))
+  {
+    sprintf(asempno, "%s", v_temp_sempno.arr);
+    /*dsa2000  2005.02.16.  ·Î±×·®À» ÁÙÀÌ±â À§ÇØ ¸·¾Æ³õÀ½     
+    STRINIT(FL_Line);
+    sprintf(FL_Line, "      »ç...........Ã³¸®°úÁ¤ 1) °âÁ÷¹ß·É Á÷»óÀ§ÀÚ »ç¹ø [%s]", asempno);
+    hinsa_log_print(0, FL_Line);  dsa2000 */
+    return (SUCCESS);
+  }
+
+  /* ºÎ¼­ÄÚµå <> ½Ç±Ù¹«ºÎ¼­ ÄÚµå and º¸ÀÓ¿©ºÎ = 'Y' and ½Ç±Ù¹«ºÎ¼­ º¸ÀÓ¿©ºÎ N ÀÎ°æ¿ìÀÇ Á÷»óÀ§ÀÚ¸¦
+     Ã£¾Æ¼­ ±×»ç¿øÀ» Á÷»óÀ§ÀÚ·Î µî·ÏÇÑ´Ù..
+     ¹ß»ýµÇ´Â °æ¿ì : ÆÄ°ßÀÏ °æ¿ì ½Ç±Ù¹«ºÎ¼­´Â ÆÄ°ß±Ù¹«Áö·Î µÇ±â ¶§¹®...*/
+
+  if (strcmp(FGP_inter_emp->v_payrayn.arr, "Y") != 0)
+  {
+    STRINIT(v_temp_orgnum);
+    STRINIT(v_temp_deptcode);
+    STRINIT(v_temp_sempno);
+
+    EXEC SQL SELECT orgnum, jobdept, empno
+               INTO :v_temp_orgnum, :v_temp_deptcode, :v_temp_sempno
+               FROM pimpmas
+              WHERE pstate   < '60'
+                AND payra    <> '4C'
+                AND payrayn  = 'Y'
+                AND orgnum   = :aorgnum
+                AND deptcode = (SELECT jobdept FROM pimpmas WHERE empno = :FGP_inter_emp->v_empno);
+
+    if ((SQLCODE != SQL_NULL_COL) && (SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA))
+    {
+      STRINIT(FL_Line);
+      sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+      hinsa_log_print(0, FL_Line);
+      return (FAILURE);
+    }
+
+    if ((SQLCODE != SQL_NULL_COL) && (SQLCODE != SQL_NO_DATA))
+    {
+      if (strcmp(FGP_inter_emp->v_deptcode.arr, v_temp_deptcode.arr) != 0)
+      {
+        sprintf(asempno, "%s", v_temp_sempno.arr);
+        /*dsa2000  2005.02.16.  ·Î±×·®À» ÁÙÀÌ±â À§ÇØ ¸·¾Æ³õÀ½     
+        STRINIT(FL_Line);
+        sprintf(FL_Line, "      »ç...........Ã³¸®°úÁ¤ 7) ½Ç±Ù¹«ÁöºÎ¼­[%s] <> ºÎ¼­[%s] °æ¿ì »ç¹ø[%s]",
+                FGP_inter_emp->v_deptcode.arr, v_temp_deptcode.arr, asempno);
+        hinsa_log_print(0, FL_Line);  */
+        return (SUCCESS);
+      }
+      
+    }
+  }
+   
+  /* »óÀ§ºÎ¼­¸¦ Ã£¾Æ¼­ »óÀ§ºÎ¼­¿Í ÀÎ»ç¸¶½ºÅÍÀÇ ±Ù¹«ºÎ¼­¿Í ÀÏÄ¡ÇÏ´Â »ç¹øÀ» Ã£¾Æ¼­ Á÷»óÀ§ÀÚ·Î µî·ÏÇÑ´Ù. */
+  STRINIT(v_temp_orgnum);
+  STRINIT(v_temp_deptcode);
+  STRINIT(v_temp_sempno);
+  EXEC SQL SELECT orgnum, NVL(extcode,'*****')
+             INTO :v_temp_orgnum, :v_temp_deptcode
+             FROM pycdept
+            WHERE orgnum   = :aorgnum
+              AND deptcode = :adeptcode;
+
+  if ((SQLCODE != SQL_NULL_COL) && (SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA))
+  {
+    STRINIT(FL_Line);
+    sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+  /*dsa2000  2005.02.16.  ·Î±×·®À» ÁÙÀÌ±â À§ÇØ ¸·¾Æ³õÀ½ 
+  STRINIT(FL_Line);
+  sprintf(FL_Line, "      »ç..........Ã³¸®°úÁ¤ 2,3,4 °øÅë) »óÀ§ºÎ¼­[%s] È®ÀÎÀÛ¾÷", v_temp_deptcode.arr);
+  hinsa_log_print(0, FL_Line);
+  dsa2000.............................*/
+  
+  if ((SQLCODE != SQL_NO_DATA) && (strncmp(v_temp_deptcode.arr,"*****",5) == 0))
+  {
+    /* »çÀå »ç¹øÀ» Á÷»óÀ§ÀÚ·Î ¼³Á¤ */
+    sprintf(asempno, "%s", v_presempno.arr);
+    /*dsa2000  2005.02.16.  ·Î±×·®À» ÁÙÀÌ±â À§ÇØ ¸·¾Æ³õÀ½ 
+    STRINIT(FL_Line);
+    sprintf(FL_Line, "      »ç...........Ã³¸®°úÁ¤ 2) »óÀ§ºÎ¼­[%s] »çÀå »ç¹ø [%s]", v_temp_deptcode.arr, asempno);
+    hinsa_log_print(0, FL_Line);
+    return (SUCCESS);  dsa2000 */
+  }
+  else
+  {
+    EXEC SQL SELECT empno
+               INTO :v_temp_sempno
+               FROM pimpmas
+              WHERE orgnum    = :v_temp_orgnum
+                AND ((deptcode = :v_temp_deptcode AND payrayn = 'Y') OR (jobdept  = :v_temp_deptcode AND jobpayrayn  = 'Y'))
+                AND pstate   < '60';
+
+    if ((SQLCODE == SQL_NO_DATA) || (SQLCODE == SQL_NULL_COL))
+    {
+      VC2VC(FGP_inter_emp->v_orgnum, v_temp_orgnum);
+      VC2VC(FGP_inter_emp->v_deptcode, v_temp_deptcode);
+
+      /* Àç±Í È£Ãâ..*/
+      /*dsa2000  2005.02.16.  ·Î±×·®À» ÁÙÀÌ±â À§ÇØ ¸·¾Æ³õÀ½     
+      STRINIT(FL_Line);
+      sprintf(FL_Line, "      »ç...........Ã³¸®°úÁ¤ 3) »óÀ§ºÎ¼­ Àç±ÍÈ£Ãâ [%s | %s]",  v_temp_orgnum.arr,  v_temp_deptcode.arr);
+      hinsa_log_print(0, FL_Line); dsa2000 */
+      PL_get_sempno((char *)FGP_inter_emp->v_orgnum.arr, (char *)FGP_inter_emp->v_deptcode.arr, (char *)FGP_inter_emp->v_sempno.arr);
+    }
+    else if (SQLCODE != SQL_OK)
+    {
+      STRINIT(FL_Line);
+      sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+      hinsa_log_print(0, FL_Line);
+      return (FAILURE);
+    }
+    else
+    {
+      sprintf(asempno, "%s", v_temp_sempno.arr);
+      VC2VC(FGP_inter_emp->v_orgnum, v_temp_orgnum);
+      VC2VC(FGP_inter_emp->v_deptcode, v_temp_deptcode);
+      /*dsa2000  2005.02.16.  ·Î±×·®À» ÁÙÀÌ±â À§ÇØ ¸·¾Æ³õÀ½     
+      STRINIT(FL_Line);
+      sprintf(FL_Line, "      »ç...........Ã³¸®°úÁ¤ 4) »óÀ§ºÎ¼­[%s] »ç¹ø [%s]", v_temp_deptcode.arr, asempno);
+      hinsa_log_print(0, FL_Line);  dsa2000 */
+    }
+  }
+
+  return (SUCCESS);
+}
+
+/*============================ ======================================================================
+   ERP_HAP_AP04 Table¿¡ µ¥ÀÌÅ¸¸¦ ±â·ÏÇÑ´Ù...
+==================================================================================================*/
+int PL_write_erp(void)
+{
+  char FL_Line[255];
+  int  FL_count;
+  int  FL_result;
+
+  STRINIT(FL_Line);
+
+  if (PL_double_jobdept_check() == FAILURE)
+  {
+    hinsa_exit(0,"PL_double_jobdept_check Function ¿¡·¯...");
+    return (FAILURE);
+  }
+
+  hinsa_log_print(0, "¹Ù. PL_write_erp, Á¤»óÀûÀÎ »ç¿øº° Á÷»óÀ§ÀÚ ÃßÃâ ½ÃÀÛ...");
+
+  /*=============================================================================================
+    ½Ç±Ù¹«ÁöºÎ¼­ º¸ÀÓ¿©ºÎ°¡ Y and ½Ç±Ù¹«ÁöºÎ¼­ Á÷À§°¡ ´ã´ç(4C)ÀÌ ¾Æ´Ñ »ç¶÷ and ½Ç±Ù¹«ÁöºÎ¼­¿Í
+    ºÎ¼­°¡ °°°í and ÀÎ»ç»óÅÂ°¡ < '60ÀÎ »ç¿øÀ» Á÷»óÀ§ÀÚ·Î µî·ÏÇÑ´Ù.
+    (Á÷»óÀ§ÀÚ°¡ ¾ø´Â »ç¿øÀº '****' ¸¶Å©¸¦ ÇÑ´Ù.)
+  =============================================================================================*/
+  EXEC SQL DECLARE  cur_02 CURSOR  FOR
+	       SELECT /*+ ordered A, A1, B */
+	              A.empno,                                        -- »ç¿ø¹øÈ£
+	              A.korname,                                      -- ¼º¸í
+	              A.orgnum,                                       -- Á¶Á÷Â÷¼ö
+	              A.jobdept,                                      -- ±Ù¹«ºÎ¼­
+	              NVL(REPLACE(A.juminid, '-'), '9999999999999'),  -- ÁÖ¹Î¹øÈ£
+	              NVL(C.fincode, 'CCB10'),                        -- Àç¹«ºÎ¼­ÄÚµå
+	              NVL(A.empdate,'00000000'),                      -- ÀÔ»çÀÏ
+	              NVL(A.retdate,'20501231'),                      -- ÅðÁ÷ÀÏ
+	              NVL(A.telno,' '),                               -- ÀüÈ­¹øÈ£
+	              NVL(D.codename,' '),                            -- Á÷±Þ¸í
+	              NVL(E.codename,' '),                            -- Á÷À§¸í
+	              -- ½Ç±Ù¹«Áö º¸ÀÓ¿©ºÎ : ½Ç±Ù¹«Áö Á÷À§¿¡¼­ ´ã´ç(4C)Àº °áÀç±ÇÇÑÀÌ ¾ø°í ÆÀÀåÀÌ»ó¸¸ °áÀç±ÇÇÑÀÌ ÀÖÀ½.
+	              -- °áÀç±ÇÀÚ : ÆÀÀå, ¼ÒÆÀÀå, ´ëÆÀÀå, ´ÜÀå, ½ÇÀå, ´ÜÀå, Áö»çÀåµîµî..
+	              NVL(DECODE(A.jobpayra, '4C', 'N', A.jobpayrayn), 'N'),
+	              NVL(A.curaddr,'¼­¿ï'),                          -- ÇöÁÖ¼ÒÁö(¼­¿ï)
+	              NVL(A.zipno,'   -   '),                         -- ¿ìÆí¹øÈ£
+	              NVL(B.payacnt,' '),                             -- ±Þ¿©ÀÌ¿Ü°èÁÂ¹øÈ£
+	              NVL(B.paybank,' '),                             -- ±Þ¿©°èÁÂÀºÇàÄÚµå
+	              NVL(A.tjobduty,' '),                            -- ´ã´çÁ÷¹« : ºñ¼­check¿ë
+	              NVL(A1.empno,'****')                            -- Á÷»óÀ§ÀÚ
+         FROM pimpmas A, pimpmas A1, pkmpmas B, pycdept C, pyccode D, pyccode E
+        WHERE A.empno          = B.empno(+)
+          AND A.pstate         < '60'
+          AND A1.pstate(+)     < '60'
+          AND A1.jobpayrayn(+) = 'Y'                          -- ½Ç±Ù¹«ºÎ¼­ º¸ÀÓ¿©ºÎ
+          AND A1.jobpayra(+)   <> '4C'                        -- 4C´Â ´ã´çÄÚµå¸¦ ÀÇ¹ÌÇÔ.
+          AND A1.orgnum(+)     = A.orgnum
+          AND A1.jobdept(+)    = A.jobdept
+          AND A.orgnum         = C.orgnum(+)
+          AND A.jobdept        = C.deptcode(+)
+          AND D.codeid(+)      = 'I112'
+          AND E.codeid(+)      = 'I113'
+          AND A.paycl          = D.codeno(+)
+          AND A.jobpayra       = E.codeno(+)
+        ORDER BY C.fincode, A.empno;
+
+  EXEC SQL OPEN cur_02;
+
+  if (SQLCODE != SQL_OK)
+  {
+    sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+
+  FL_count = 1;
+  while(TRUE)
+  {
+    memset(FG_inter_emp,  0x00, sizeof(ts_employee_inter));
+
+    EXEC SQL FETCH cur_02 INTO
+      :FGP_inter_emp->v_empno,
+      :FGP_inter_emp->v_korname,
+      :FGP_inter_emp->v_orgnum,
+      :FGP_inter_emp->v_deptcode,
+      :FGP_inter_emp->v_juminid,
+      :FGP_inter_emp->v_fincode,
+      :FGP_inter_emp->v_empdate,
+      :FGP_inter_emp->v_retdate,
+      :FGP_inter_emp->v_telno,
+      :FGP_inter_emp->v_clname,
+      :FGP_inter_emp->v_raname,
+      :FGP_inter_emp->v_payrayn,
+      :FGP_inter_emp->v_curaddr,
+      :FGP_inter_emp->v_zipno,
+      :FGP_inter_emp->v_payacnt,
+      :FGP_inter_emp->v_paybank,
+      :FGP_inter_emp->v_refer,
+      :FGP_inter_emp->v_sempno;
+
+    if (SQLCODE == SQL_NO_DATA)
+      break;
+
+    if ((SQLCODE != SQL_NULL_COL) && (SQLCODE != SQL_OK))
+    {
+      hinsa_log_print(0, "Á¤»óÀûÀÎ »ç¿øº° Á÷»óÀ§ÀÚ ÃßÃâ ½ÇÆÐ...");
+      sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+      hinsa_log_print(0, FL_Line);
+      EXEC SQL CLOSE cur_02;
+      return (FAILURE);
+    }
+    
+    STRINIT(FL_Line);
+    sprintf(FL_Line, " ¢Ñ %5d : »ç¹ø[%s : %s] º¸ÀÓ[%s : %s] ºÎ¼­[%s] Àç¹«ºÎ¼­[%s] Á÷»óÀ§ÀÚ[%s] ",
+            FL_count,
+            FGP_inter_emp->v_empno.arr,   FGP_inter_emp->v_korname.arr,
+            FGP_inter_emp->v_payrayn.arr, FGP_inter_emp->v_raname.arr,
+            FGP_inter_emp->v_deptcode.arr,FGP_inter_emp->v_fincode.arr, FGP_inter_emp->v_sempno.arr);
+    hinsa_log_print(0, FL_Line);
+    
+    /*==============================================================================================
+       ** Á÷»óÀ§°¡ °¡Á®¿À´Â ÇÔ¼ö **
+       1. º¸ÀÓÀÚÀÏ °æ¿ì..
+          ¹ß·ÉÅ×ÀÌºí¿¡¼­ °âÁ÷ÀÚ¸¦ °Ë»öÇÏ¿© °âÁ÷ÀÚ°¡ ÀÖÀ¸¸é Á÷»óÀ§ÀÚ´Â °âÁ÷ÀÚ »ç¹øÀÌ µÇ°í
+          ¾Æ´Ï¸é ºÎ¼­Å×ÀÌºí¿¡¼­ »óÀ§ºÎ¼­¸¦ °Ë»öÇÏ¿© ÀÎ»ç¸¶½ºÅÍÀÇ ±Ù¹«ºÎ¼­¿Í »óÀ§ºÎ¼­°¡ °°Àº »ç¹øÀ»
+          °âÁ÷ÀÚ »ç¹øÀ¸·Î ÇÑ´Ù.
+       2. º¸ÀÓÀÚ°¡ ¾Æ´Ò °æ¿ì..
+          Çö»óÀ§ÀÚ°¡ ÀÖÀ¸¸é Á÷»óÀ§ÀÚ´Â Çö»óÀ§ÀÚ
+          Çö»óÀ§ÀÚ°¡ ¾øÀ¸¸é 1¹ø ·çÆ¾À» ½ÇÇàÇÑ´Ù.
+    ==============================================================================================*/
+    FG_loopcnt = 0;
+    FL_result  = 0;
+    if (strcmp(FGP_inter_emp->v_payrayn.arr, "Y") == 0)
+    {
+      /*dsa2000  hinsa_log_print(0,"..........º¸ÀÓÀÚ Ã³¸®..."); */
+      FL_result = PL_get_sempno((char *)FGP_inter_emp->v_orgnum.arr,
+                                (char *)FGP_inter_emp->v_deptcode.arr,
+                                (char *)FGP_inter_emp->v_sempno.arr);
+    }
+    else
+    {
+      if (strcmp(FGP_inter_emp->v_sempno.arr,"****") == 0)
+      {
+        /*dsa2000 hinsa_log_print(0,"..........[****] Á÷»óÀ§ÀÚ Ã³¸®..."); */
+        FL_result = PL_get_sempno((char *)FGP_inter_emp->v_orgnum.arr,
+                                  (char *)FGP_inter_emp->v_deptcode.arr,
+                                  (char *)FGP_inter_emp->v_sempno.arr);
+      }
+    }
+
+    if (FL_result == FAILURE)
+    {
+      EXEC SQL CLOSE cur_02;
+      hinsa_exit(0,"PL_get_sempno Function ¿¡·¯·Î Á¾·á...");
+      return (FAILURE);
+    }
+
+    STR2VCTRIM(FGP_inter_emp->v_rst_valid, "A", STATE);
+
+    /* ÇÇ°áÀçÀÚ¿Í °áÀçÀÚ°¡ °°À» °æ¿ì »ç¹øÀ» 0000À¸·Î ¼ÂÆÃÇÑ´Ù... */
+    if (strcmp((char *)FGP_inter_emp->v_empno.arr,(char *)FGP_inter_emp->v_sempno.arr) == 0)
+    {
+      STR2VCTRIM(FGP_inter_emp->v_sempno, "0000", EMPNO);
+      /*dsa2000  hinsa_log_print(0, "..........Ã³¸®°úÁ¤ 6) ÇÇ°áÀçÀÚ °áÀçÀÚ°¡ °°Àº °æ¿ì ¹ß»ý.");*/
+    }
+
+    /* key DT_CREATE, CD_DATA, NO_CRT_SRL, EMPCODE */
+    EXEC SQL INSERT INTO erp_hap_ap04
+                    ( trandate,           -- »ý¼ºÀÏÀÚ
+                      extno,              -- Employee Data Code "AP03"
+                      nocrt,              -- »ý¼º ÀÏ·Ã¹øÈ£
+                      empcode,            -- »ç¹ø
+                      empname,            -- ¼º¸í
+                      regno,              -- ÁÖ¹Î¹øÈ£(9999999999999)
+                      defaultdept,        -- Àç¹«ºÎ¼­ÄÚµå
+                      empbdate,           -- ÀÔ»çÀÏ
+                      empedate,           -- ÅðÁ÷ÀÏ
+                      telno,              -- ÀüÈ­¹øÈ£
+                      rank,               -- Á÷±Þ¸í.Á÷À§¸í
+                      title,              -- Á÷À§¸í
+                      assign,             -- º¸ÀÓ¿©ºÎ
+                      address,            -- ÇöÁÖ¼ÒÁö(¼­¿ï)
+                      zipcode,            -- ¿ìÆí¹øÈ£
+                      bankaccount,        -- ±Þ¿©°è*ÁÂ¹øÈ£
+                      bankgubun,          -- ±Þ¿©°èÁÂÀºÇàÄÚµå
+                      reference1,         -- ´ã´ç Á÷¹«(ºñ¼­ 09)
+                      superempcode,       -- »óÀ§ÀÚ
+                      valid,              -- "A"
+                      sitecode )
+             VALUES
+                    ( :FGP_inter_ctrl->v_dt_create,
+                      :FGP_inter_ctrl->v_cd_data,
+                      :FGP_inter_ctrl->v_no_crt_srl,
+                      :FGP_inter_emp->v_empno,
+                      :FGP_inter_emp->v_korname,
+                      :FGP_inter_emp->v_juminid,
+                      SUBSTR(:FGP_inter_emp->v_fincode,1,5),
+                      :FGP_inter_emp->v_empdate,
+                      :FGP_inter_emp->v_retdate,
+                      :FGP_inter_emp->v_telno,
+                      :FGP_inter_emp->v_clname,
+                      :FGP_inter_emp->v_raname,
+                      :FGP_inter_emp->v_payrayn,
+                      :FGP_inter_emp->v_curaddr,
+                      :FGP_inter_emp->v_zipno,
+                      :FGP_inter_emp->v_payacnt,
+                      :FGP_inter_emp->v_paybank,
+                      :FGP_inter_emp->v_refer,
+                      :FGP_inter_emp->v_sempno,
+                      :FGP_inter_emp->v_rst_valid,
+                      'T001' );
+
+    if ((SQLCODE != SQL_OK))
+    {
+      STRINIT(FL_Line);
+      sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+      hinsa_log_print(0, FL_Line);
+      return (FAILURE);
+    }
+
+    FL_count++;
+  }
+
+  EXEC SQL CLOSE cur_02;
+  hinsa_log_print(0, "¹Ù. PL_write_erp,Á¤»êÀûÀÎ »ç¿øº° Á÷»óÀ§ÀÚ ÃßÃâ ¿Ï·á...");
+  
+  
+  hinsa_log_print(0, "¹Ù. PL_write_erp,ºñÁ¤»êÀûÀÎ »ç¿øº° µ¥ÀÌÅ¸ ÀúÀå...");
+  EXEC SQL INSERT INTO erp_hap_ap04
+                     ( trandate,
+                       extno,
+                       nocrt,
+                       empcode,
+                       empname,
+                       regno,
+                       defaultdept,
+                       empbdate,
+                       empedate,
+                       telno,
+                       rank,
+                       title,
+                       assign,
+                       address,
+                       zipcode,
+                       bankaccount,
+                       bankgubun,
+                       superempcode,
+                       valid,
+                       sitecode
+                     )
+          SELECT :FGP_inter_ctrl->v_dt_create,
+                 :FGP_inter_ctrl->v_cd_data,
+                 :FGP_inter_ctrl->v_no_crt_srl,
+                 SUBSTR(A.empno,1, 4),
+                 SUBSTR(A.korname,1, 8),
+                 SUBSTR(NVL(REPLACE(A.juminid, '-'),'9999999999999'),1, 13),
+                 'CCB10',
+                 SUBSTR(NVL(A.empdate,'00000000'),1, 8),
+                 SUBSTR(NVL(A.retdate,F.anfrdate),1, 8),
+                 SUBSTR(NVL(A.telno,' '),1, 20),
+                 SUBSTR(NVL(D.codename,' '),1, 20),
+                 SUBSTR(NVL(E.codename,' '),1, 20),
+                 SUBSTR(NVL(A.jobpayrayn,'N'),1, 1),
+                 SUBSTR(NVL(A.curaddr,'¼­¿ï'),1,35),
+                 SUBSTR(NVL(A.zipno,  '   -   '),1, 7),
+                 SUBSTR(NVL(B.payacnt,' '),1, 30),
+                 SUBSTR(NVL(B.paybank,' '),1, 2),
+                 NULL,
+                 SUBSTR(:FGP_inter_emp->v_rst_valid,1, 1),
+                 'T001'
+            FROM pimpmas A,
+                 pkmpmas B,
+                 pyccode D,
+                 pyccode E,
+                 (SELECT A1.empno, A1.korname, A1.anfrdate, A1.antodate, A1.ancode
+                    FROM pihanno A1,
+                        (/*SELECT empno, MAX(anfrdate) maxfrdate, MAX(anseqno) maxseqno
+                           FROM pihanno
+                          WHERE anupdyn  = 'Y'
+                            AND (ancode IN ('511','512','600','619','629','631','641') OR  ancode LIKE '8%')
+                          GROUP BY empno*/
+                          SELECT empno, anfrdate maxfrdate, anseqno maxseqno
+                            FROM pihanno
+                           WHERE anupdyn  = 'Y'
+					                   AND (empno,anfrdate) in (select empno,max(anfrdate) 
+							                                           from pihanno
+											                                  where ancode IN ('511','512','600','619','629','631','641') OR  ancode LIKE '8%'
+													                            group by empno)  
+                          ) B1
+                   WHERE A1.empno    = B1.empno
+                     AND A1.anfrdate = B1.maxfrdate
+                     AND A1.anseqno  = B1.maxseqno
+                     AND A1.anupdyn  = 'Y'
+                     /* 511 ÈÞÁ÷; 512 ÈÞÁ÷¿¬Àå; 600 Â¡°è; 619 Â¡°èÇØ°í; 629 ±Ç°í»çÁ÷; 631 °­Á÷; 641 Á¤Á÷; 8 ÈÞÁ÷ */
+                     AND (A1.ancode IN ('511','512','600','619','629','631','641') OR  A1.ancode LIKE '8%')
+                 ) F
+           WHERE D.codeid(+) = 'I112'
+             AND E.codeid(+) = 'I113'
+             AND A.paycl     = D.codeno(+)
+             AND A.jobpayra  = E.codeno(+)
+             AND A.pstate   >= '60'
+             AND A.pstate   <> '80'
+             AND A.empno     = B.empno(+)
+             AND A.empno     = F.empno
+             AND TO_CHAR(SYSDATE,'YYYYMMDD') >= F.anfrdate;
+
+  if ((SQLCODE != SQL_OK))
+  {
+    STRINIT(FL_Line);
+    sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+
+  hinsa_log_print(0, "¹Ù.PL_write_erp,ºñÁ¤»êÀûÀÎ »ç¿øº° µ¥ÀÌÅ¸ ÀúÀå ¿Ï·á...");
+  
+  /* Á¤±Ô¿ë*/
+  hinsa_log_print(0, "ºñ¼­ÆÀÀå °áÀÚÀç°¡ »çÀå´Ô¿¡¼­ °æ¿µÁö¿ø½ÇÀåÀ¸·Î º¯°æ, ÇÏµåÄÚµù...");
+  EXEC SQL UPDATE erp_hap_ap04
+           SET superempcode=(select empcode from erp_hap_ap04
+                             where defaultdept='CCB00'       /* °æ¿µÁö¿ø½Ç fincode */
+                             and assign='Y')
+           where defaultdept='C0010'                         /*  ºñ¼­ÆÀ fincode  */
+             and assign='Y';
+             
+  /* ÀÌ¹Î¿ë*/
+  hinsa_log_print(0, "³ëµ¿Á¶ÇÕ¿ø °áÀÚÀç°¡ »çÀå´Ô¿¡¼­ ³Î·Î º¯°æ, ÇÏµåÄÚµù...");
+  EXEC SQL UPDATE erp_hap_ap04
+              SET superempcode=''
+           where empcode in (select empno from pimpmas
+                              where deptcode='YDE00'
+                                and pstate  < '60');           /*  ³ëµ¿Á¶ÇÕ¿ø  */
+                                
+ 
+  hinsa_log_print(0, "¹Ù.PL_write_erp, ERP_HAP_AP04 Å×ÀÌºí -> EMPMASTER_TEMP¿¡ ÀÌ°ü...");
+                               
+  
+  EXEC SQL INSERT INTO TOPENT.EMPMASTER_TEMP@HAIS /* EXEC SQL INSERT INTO EMPMASTER_TEMP   /* Test */
+                 ( trandate,
+                   nocrt,
+                   empcode,
+                   empname,
+                   regno,
+                   defaultdept,
+                   empbdate,
+                   empedate,
+                   telno,
+                   rank,
+                   title,
+                   assign,
+                   address,
+                   zipcode,
+                   bankaccount,
+                   bankgubun,
+                   reference1,
+                   reference4,
+                   reference5,
+                   superempcode,
+                   valid,
+                   sitecode )
+           SELECT trandate,
+                  nocrt,
+                  empcode,
+                  empname,
+                  regno,
+                  /*decode(defaultdept,'IHE40','CCB10',defaultdept),*/
+                  DECODE(DEFAULTDEPT,'IHE40','CCB10',DECODE(EMPCODE,'0139','CTB20',DEFAULTDEPT)), 
+                  empbdate,
+                  empedate,
+                  telno,
+                  rank,
+                  title,
+                  assign,
+                  address,
+                  zipcode,
+                  bankaccount,
+                  bankgubun,
+                  DECODE(reference1,'09','ºñ¼­','') ,
+                  /*decode(   (select count(*) 
+                             from (select distinct m.empno, h.addeptcode deptcode, i.fincode
+                                   from pimpmas m, pihorga g, pihanno h, pycdept i                                         
+                                   where m.pstate < '60'                                     
+                                     and g.orgym  = to_char(sysdate,'yyyymm')                          
+                                     and m.empno  = g.empno                                           
+                                     and m.orgnum = g.orgnum                                          
+                                     and g.gubun  = '0'                                             
+                                     and g.adpayrayn = 'Y'   
+                                     and h.orgnum = m.orgnum
+                                     and h.empno = m.empno
+                                     and h.ancode = '233'
+                                     and h.addeptcode = g.deptcode
+                                     and i.orgnum = m.orgnum
+                                     and i.deptcode = h.addeptcode
+                                    union
+                                    select c.empno, c.jobdept deptcode, d.fincode
+                                    from pimpmas c, pycdept d
+                                    where c.deptcode <> c.jobdept
+                                      and c.orgnum = (select value1
+                                                        from pimvari
+                                                       where gubun = '00'
+                                                         and sgubun = '0001')
+                                      and c.orgnum = d.orgnum
+                                      and c.jobdept = d.deptcode) a
+                             where a.empno = empcode) ,1,
+                             (select a.fincode
+                             from (select distinct m.empno, h.addeptcode deptcode, i.fincode
+                                   from pimpmas m, pihorga g, pihanno h, pycdept i                                         
+                                   where m.pstate < '60'                                     
+                                     and g.orgym  = to_char(sysdate,'yyyymm')                          
+                                     and m.empno  = g.empno                                           
+                                     and m.orgnum = g.orgnum                                          
+                                     and g.gubun  = '0'                                             
+                                     and g.adpayrayn = 'Y'   
+                                     and h.orgnum = m.orgnum
+                                     and h.empno = m.empno
+                                     and h.ancode = '233'
+                                     and h.addeptcode = g.deptcode
+                                     and i.orgnum = m.orgnum
+                                     and i.deptcode = h.addeptcode
+                                    union
+                                    select a.empno, a.jobdept deptcode, b.fincode
+                                    from pimpmas a, pycdept b
+                                    where a.deptcode <> a.jobdept
+                                      and a.orgnum =(select value1
+                                                       from pimvari
+                                                      where gubun = '00'
+                                                        and sgubun = '0001')
+                                      and a.orgnum = b.orgnum
+                                      and a.jobdept = b.deptcode) a
+                             where a.empno = empcode),
+                             (select a.fincode
+                              from (select distinct m.empno, h.addeptcode deptcode, i.fincode
+                                    from pimpmas m, pihorga g, pihanno h, pycdept i                                         
+                                    where m.pstate < '60'                                     
+                                      and g.orgym  = to_char(sysdate,'yyyymm')                          
+                                      and m.empno  = g.empno                                           
+                                      and m.orgnum = g.orgnum                                          
+                                      and g.gubun  = '0'                                             
+                                      and g.adpayrayn = 'Y'   
+                                      and h.orgnum = m.orgnum
+                                      and h.empno = m.empno
+                                      and h.ancode = '233'
+                                      and h.addeptcode = g.deptcode
+                                      and i.orgnum = m.orgnum
+                                      and i.deptcode = h.addeptcode
+                                    union
+                                    select a.empno, a.jobdept deptcode, b.fincode
+                                    from pimpmas a, pycdept b
+                                    where a.deptcode <> a.jobdept
+                                      and a.orgnum = (select value1
+                                                        from pimvari
+                                                       where gubun = '00'
+                                                         and sgubun = '0001')
+                                      and a.orgnum = b.orgnum
+                                      and a.jobdept = b.deptcode) a
+                              where a.empno = empcode
+                                and rownum = 1)), 
+                  decode( (select count(*) 
+                             from (select distinct m.empno, h.addeptcode deptcode, i.fincode
+                                   from pimpmas m, pihorga g, pihanno h, pycdept i                                         
+                                   where m.pstate < '60'                                     
+                                     and g.orgym  = to_char(sysdate,'yyyymm')                          
+                                     and m.empno  = g.empno                                           
+                                     and m.orgnum = g.orgnum                                          
+                                     and g.gubun  = '0'                                             
+                                     and g.adpayrayn = 'Y'   
+                                     and h.orgnum = m.orgnum
+                                     and h.empno = m.empno
+                                     and h.ancode = '233'
+                                     and h.addeptcode = g.deptcode
+                                     and i.orgnum = m.orgnum
+                                     and i.deptcode = h.addeptcode) a
+                             where a.empno = empcode) , 1 ,'',
+                             (select a.fincode
+                              from (select distinct m.empno, h.addeptcode deptcode, i.fincode, rownum inum
+                                    from pimpmas m, pihorga g, pihanno h, pycdept i                                         
+                                    where m.pstate < '60'                                     
+                                      and g.orgym  = to_char(sysdate,'yyyymm')                          
+                                      and m.empno  = g.empno                                           
+                                      and m.orgnum = g.orgnum                                          
+                                      and g.gubun  = '0'                                             
+                                      and g.adpayrayn = 'Y'   
+                                      and h.orgnum = m.orgnum
+                                      and h.empno = m.empno
+                                      and h.ancode = '233'
+                                      and h.addeptcode = g.deptcode
+                                      and i.orgnum = m.orgnum
+                                      and i.deptcode = h.addeptcode) a
+                              where a.empno = empcode
+                                and a.inum = 2)) ,*/
+/* ------- 2005.09.08. kj¼öÁ¤
+         => »èÁ¦ : ['0139','CZB20'], ['0362','CSD30'],['M071','CZA10']
+         => Ãß°¡ : ['M052','CO000'], ['0013','COB00']
+                   decode(empcode,'0362','CSD30','0143','CDA20',
+                                 'M071','CZA10','M074','CC000','M073','CSD00','0139','CZB20',''), */
+                 /* ¸·À½ Ã³¸® 20051010*/
+                 /*
+                  decode(empcode, '0143','CDA20', 'M074','CC000', 'M073','CSD00'
+                                , 'M052','CO000', '0013','COB00', ''             ),
+                  decode(empcode,'M073','CSD10',''),
+                  */
+                  '' reference4,
+                  '' reference5,
+                  decode(empcode,'M075','M074','M088','M074','M028','M074',superempcode), 
+                  valid,
+                  sitecode
+             FROM erp_hap_ap04
+            WHERE trandate  = :FGP_inter_ctrl->v_dt_create;
+                           /*'M071','CZA10','M072','CC000','M073','CSD00',''),*/
+
+  if ((SQLCODE != SQL_OK))
+  {
+    STRINIT(FL_Line);
+    sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+
+/************/
+  /* ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
+  /* °æÁø */
+  /* »ç¿øÄÚµå Á¶È¸ */
+/*  printf("---³¯Â¥ -[%s] -- ½ÃÄö½º - [%s]\n", FGP_inter_ctrl->v_dt_create, FGP_inter_ctrl->v_no_crt_srl);
+  
+  EXEC SQL DECLARE cur_07 CURSOR FOR
+     SELECT empcode 
+       FROM TOPENT.EMPMASTER_TEMP@HAIS 
+       WHERE trandate = :FGP_inter_ctrl->v_dt_create
+         and nocrt = :FGP_inter_ctrl->v_no_crt_srl;
+
+  EXEC SQL OPEN cur_07; 
+
+  if (SQLCODE != SQL_OK)
+  {
+
+    sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);  
+  }
+
+  FL_count = 0;
+
+  while(TRUE)
+  {
+
+    EXEC SQL FETCH cur_07 INTO :v_empno;
+
+    if (SQLCODE == SQL_NO_DATA)
+      break;
+   
+    exec sql select count(*) into :v_count 
+             from (select distinct m.empno, h.addeptcode deptcode, i.fincode
+                                   from pimpmas m, pihorga g, pihanno h, pycdept i                                         
+                                   where m.pstate < '60'                                     
+                                     and g.orgym  = to_char(sysdate,'yyyymm')                          
+                                     and m.empno  = g.empno                                           
+                                     and m.orgnum = g.orgnum                                          
+                                     and g.gubun  = '0'                                             
+                                     and g.adpayrayn = 'Y'   
+                                     and h.orgnum = m.orgnum
+                                     and h.empno = m.empno
+                                     and h.ancode = '233'
+                                     and h.addeptcode = g.deptcode
+                                     and i.orgnum = m.orgnum
+                                     and i.deptcode = h.addeptcode
+                                    union
+                                    select c.empno, c.jobdept deptcode, d.fincode
+                                    from pimpmas c, pycdept d
+                                    where c.deptcode <> c.jobdept
+                                      and c.orgnum = (select value1
+                                                        from pimvari
+                                                       where gubun = '00'
+                                                         and sgubun = '0001')
+                                      and c.orgnum = d.orgnum
+                                      and c.jobdept = d.deptcode) a
+                             where a.empno = :v_empno; 
+                     
+                               
+   if (v_count >= 1) 
+   {
+      printf("»ç¿ø¹øÈ£ : [%s] \n",  v_empno.arr);
+      	 
+      EXEC SQL update TOPENT.EMPMASTER_TEMP@HAIS set reference4 = 
+                           (select a.fincode
+                             from (select distinct m.empno, h.addeptcode deptcode, i.fincode
+                                   from pimpmas m, pihorga g, pihanno h, pycdept i                                         
+                                   where m.pstate < '60'                                     
+                                     and g.orgym  = to_char(sysdate,'yyyymm')                          
+                                     and m.empno  = g.empno                                           
+                                     and m.orgnum = g.orgnum                                          
+                                     and g.gubun  = '0'                                             
+                                     and g.adpayrayn = 'Y'   
+                                     and h.orgnum = m.orgnum
+                                     and h.empno = m.empno
+                                     and h.ancode = '233'
+                                     and h.addeptcode = g.deptcode
+                                     and i.orgnum = m.orgnum
+                                     and i.deptcode = h.addeptcode
+                                    union
+                                    select a.empno, a.jobdept deptcode, b.fincode
+                                    from pimpmas a, pycdept b
+                                    where a.deptcode <> a.jobdept
+                                      and a.orgnum = (select value1
+                                                        from pimvari
+                                                       where gubun = '00'
+                                                         and sgubun = '0001')
+                                      and a.orgnum = b.orgnum
+                                      and a.jobdept = b.deptcode) a
+                             where a.empno = :v_empno
+                               and rownum = 1 )
+               where empcode = :v_empno              
+                 and trandate = :FGP_inter_ctrl->v_dt_create
+                 and nocrt = :FGP_inter_ctrl->v_no_crt_srl;
+                 
+
+       if ((SQLCODE != SQL_OK))
+       {
+          STRINIT(FL_Line);
+          sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          return (FAILURE);
+       }
+             
+       FGP_inter_ctrl->v_cnt_line = SQL_PROCESS_COUNT;
+       hinsa_log_print(0, "°âÁ÷ÀÚ ºÎ¼­Á¤º¸ update : reference4.");                 
+   }
+   if( v_count >= 2 )
+   {
+   	
+	EXEC SQL update TOPENT.EMPMASTER_TEMP@HAIS set reference5 = 
+			(select a.fincode
+                              from (select distinct m.empno, h.addeptcode deptcode, i.fincode  
+                                    from pimpmas m, pihorga g, pihanno h, pycdept i                                         
+                                    where m.pstate < '60'                                     
+                                      and g.orgym  = to_char(sysdate,'yyyymm')                          
+                                      and m.empno  = g.empno                                           
+                                      and m.orgnum = g.orgnum                                          
+                                      and g.gubun  = '0'                                             
+                                      and g.adpayrayn = 'Y'   
+                                      and h.orgnum = m.orgnum
+                                      and h.empno = m.empno
+                                      and h.ancode = '233'
+                                      and h.addeptcode = g.deptcode
+                                      and i.orgnum = m.orgnum
+                                      and i.deptcode = h.addeptcode
+                                      order by i.fincode desc) a
+                              where a.empno = :v_empno
+                                and rownum = 1) 
+		 where empcode = :v_empno  
+                   and trandate = :FGP_inter_ctrl->v_dt_create
+                   and trandate = :FGP_inter_ctrl->v_dt_create                   
+                   and nocrt = :FGP_inter_ctrl->v_no_crt_srl;
+       
+       if ((SQLCODE != SQL_OK))
+       {
+          STRINIT(FL_Line);
+          sprintf(FL_Line, "Oracle ¿¡·¯ : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          return (FAILURE);
+       }
+             
+       FGP_inter_ctrl->v_cnt_line = SQL_PROCESS_COUNT;
+       hinsa_log_print(0, "°âÁ÷ÀÚ ºÎ¼­Á¤º¸ update : reference5.");    
+   }
+    FL_count++;       
+   
+  }
+      
+  EXEC SQL CLOSE cur_07;  */
+/************/
+             
+  FGP_inter_ctrl->v_cnt_line = SQL_PROCESS_COUNT;
+  hinsa_log_print(0, "¹Ù.PL_write_erp, ERP_HAP_AP04 Å×ÀÌºí -> EMPMASTER_TEMP¿¡ ¿Ï·á...");
+ 
+  return (SUCCESS);
+}
+ 
+                                                   

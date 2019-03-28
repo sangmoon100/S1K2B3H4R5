@@ -1,0 +1,129 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : pzsendsms
+ SYSTEM-NAME    : 종합인사메뉴.
+ SUBSYSTEM-NAME : 로그인 비밀번호관리.(Logindll.dll)
+ Programmer     : 강륜종
+ Version        : 1.00
+ Date           : 2013.04.10
+ Help           : 전용컴파일스크립트 사용 hinsacc_sms pzsendsms
+ 
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   1.00       2013.04.10         강륜종dsa2000   최초개발본      로그인창에서 비밀번호 초기화.
+============================================================================= */
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <math.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+EXEC SQL INCLUDE sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+     char  vHandTel[24+1];
+     char  vSendTel[24+1];
+     char  vNewpass[10+1];
+     char  vMailBody[1024+1];
+     char  vMailSubject[200+1];
+     char  sqlstr[1024];     
+EXEC SQL END  DECLARE SECTION;
+
+FILE *fp = stdout;
+
+char  log_rundate[16] = ""; 
+char  log_progid[16]  = "";
+char  log_writeman[5] = "";
+char  log_buff[100]   = "";
+int   seqno = 0; 
+
+
+void main(argc,argv)
+int argc;
+char *argv[];
+{       
+     char FL_file[255];
+             
+     if  (argc != 7) 
+     {    
+          printf("[Usage] : pzsendsms 2096 pzsendsms 201304090101 01053655222 0262664314 비밀번호\n");
+          fclose(fp);
+          exit(1);
+     }
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pzsendsms");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     /*========================================================*/     
+     hinsa_log_print(0,"SMS SEND 시작...0");
+     hinsa_db_connect();  /*DB Connect 실시..*/
+          
+     strcpy(log_writeman, argv[1]);
+     strcpy(log_progid,   argv[2]);
+     strcpy(log_rundate,  argv[3]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     strcpy(vHandTel,    argv[4]);
+     strcpy(vSendTel,    argv[5]);
+     strcpy(vNewpass,    argv[6]);     
+     sprintf(vMailBody, "귀하의 종합인사 비밀번호는 아래와 같이 초기화 되었습니다.\n       %s\n초기화된 암호로 로그인후에 사용자 암호변경후 이용하시면 됩니다.", vNewpass);
+     sprintf(vMailSubject, "[종합인사 초기화 비밀번호 안내]");     
+     
+     sprintf(log_buff, "DB Procedure HPER.SENDSMS ... ");
+     Write_batlog(seqno++, log_buff);
+     
+     /*장비변경으로 SMS전송 실행로직 변경 : 2014.11.05. dsa2000
+     EXEC SQL EXECUTE
+     BEGIN 
+          HPER.SENDSMS(:vHandTel, :vSendTel, :vMailBody, :vMailSubject);
+     END;
+     END-EXEC;*/     
+     sprintf(sqlstr,"Call HPER.SENDSMS('%s', '%s', '%s', '%s')", vHandTel,vSendTel,vMailBody,vMailSubject);
+     EXEC SQL EXECUTE IMMEDIATE :sqlstr;              
+                                        
+     /* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [SMS SEND 실패] ORA-%05d - \n",sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);             
+          error_quit("ERROR ====== [SMS SEND 실패] =====\n");
+     }
+     else  
+     {
+          sprintf(log_buff, "OK ====== [SMS SEND 성공] =====\n"); //sprintf(log_buff, "ORA-%05d - \n",sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);           
+          hinsa_exit(0,"OK ====== [SMS SEND 성공] =====\n");
+     }         
+}
+
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

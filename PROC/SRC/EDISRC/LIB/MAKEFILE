@@ -1,0 +1,35 @@
+###############################################################################
+#  [종합인사정보시스템] 급여이체                                              #
+#  프로그램명 : EDI전송 프로그램 라이브러리인 hostlib.a 파일 생성하는 makefile# 
+###############################################################################
+
+CC = /usr/bin/cc
+AR = ar ruv
+
+INC = -I../include
+
+SOURCE = atoilib.c lock.c comm.c tm.c upper.c log.c 
+OBJECT = $(SOURCE:.c=.o)
+
+#64bit Compile Option(-Ae +DD64) 추가 2007.02.
+CFLAGS = -Ae +DD64 -g -c -w1
+
+TARGET = all.local hostlib.a
+
+all: $(TARGET)
+
+all.local: $(OBJECT)
+
+hostlib.a: $(OBJECT)
+	$(AR) $@ $(OBJECT)
+	ranlib $@
+
+hostlib.a(%.o): %.o
+	@true
+
+$(OBJECT):
+	$(CC) $(CFLAGS) $< $(INC)
+
+clear:
+	rm -f *.o
+	

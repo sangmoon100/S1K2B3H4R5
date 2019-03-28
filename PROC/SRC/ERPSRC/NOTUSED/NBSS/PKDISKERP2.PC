@@ -1,0 +1,1026 @@
+/* ======================= Program Header =====================================
+ PROGRAM-NAME      : pkdiskerp2 (INSA->ERP Interface Program)
+ PROGRM-Decription : 전산매체 작성을 위한 디스켓 작성을 위해 ERP쪽 Interface 테이블에 Insert 
+ SYSTEM-NAME       : 퇴직금/중간정산금액 인터페이스 
+ SUBSYSTEM-NAME    : SUBDATE가 아닌 RETDATE/MRTODATE 기준으로 전송
+ Programmer        : 강륜종
+ Version           : 10.0
+ Date              : 2004.04.13.
+
+Update Contents
+   Version    date(yy.mm.dd)  programmer   description
+    10.0       2004.04.        강륜종       퇴직금/중간정산금 결과를 디스켓 작성을 위해 1년에 한번 인터페이스 하기위해 
+                                           pkmp2erp2.pc 프로그램에 전근무지 관련 칼럼을 추가하여 이 프로그램을 만듬.
+    11.00      2004.04.26      강륜종       MIS2 장비에 맞게 경로 및 환경 설정...                  
+    12.00      2005.01.17      dsa2000     Rexec대체 서비스를 위한 수정작업.
+    13.00      2005.02.04.     dsa2000     2004년 귀속 연말정산 칼럼 반영.     
+ ============================================================================= */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+void CreateLog(void);
+void InitVariables(void);
+void Initialize(void);
+void WriteLog(char *message);
+int  WriteEmployee(void);
+int  Check_date(void);
+
+
+EXEC SQL INCLUDE sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+/****************************************************************************** 
+  Interface Control Table Variables
+******************************************************************************/ 
+char	v_dt_create[9];			/* 생성일자 */
+char	v_cd_data[5] = "TX10";		/* Employee Data Code */
+int	v_no_crt_srl = 0;		/* 생성 일련번호 */
+
+char	v_sscode[3+1] = "B10";		/* 정규직_퇴직소득세*/
+char	v_sscodeil[3+1] = "B20";	/* 일용직_퇴직소득세*/
+
+char	v_ym_acct[7];			/* 회계년월 */
+int	v_cnt_line = 0;			/* Line건수 */ 
+char	v_ph_proc[2] = "A";		/* 처리단계 */
+char	v_st_proc[2] = "P";		/* 처리상태 (P:Processing, N:Normal Termination, A:Abnormal Termination) */
+char	v_cl_data_use[2] = "A";		/* Data 활용구분 */
+char	v_id_crt_user[5];		/* 생성 UserID */
+char	v_paydate[7];                   /* 지급년월 */
+char    v_yyyy[5]; 			/* 지급년 */
+char    v_mm[3];			/* 지급월 */
+double   v_amttot = 0;                  /* 퇴직총액   */
+double   v_amtin  = 0;			/* 차감소득세총액   */
+double   v_amtju  = 0;			/* 차감주민세총액   */
+double   v_amttot1 = 0;                 /* 총액   */
+double   v_amtin1  = 0;			/* 차감소득세총액   */
+double   v_amtju1  = 0;			/* 차감주민세총액   */
+
+/****************************************************************************** 
+  Interface Employee Table Variables
+******************************************************************************/ 
+char	v_rst_validation[2] = "A";
+
+EXEC SQL END   DECLARE SECTION;
+
+/****************************************************************************** 
+  Other Variables
+******************************************************************************/ 
+/*char	logdir[100] = "/hper/insa/ERP/log/";*/
+char    *HOMEDIR;
+char	logfile[40];
+char	logfile_fullname[140];
+int	id;
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[200]       = "";
+int     seqno = 0; 
+
+/***** Log File Pointer *****/
+FILE *fp;	
+
+void main(int argc, char *argv[])
+{
+        
+        if (argc != 5) {  /* pkdiskerp2 2005 1821 pkdiskerp2 2006022200000*/ 
+		printf("사용법 : disk_interface2 1.퇴직년도(YYYY) 2.작업자 3.progid 4.시작시간\n");
+		fclose(fp);
+		exit(1);
+	} 
+	
+	sprintf(v_yyyy,        argv[1]);        /* 지급년도   */     
+	sprintf(v_id_crt_user, argv[2]);	/* 작업자사번 */	
+
+	/* DB 접속 */
+	hinsa_log_print(0,"ERP 인터페이스 시작...");      
+        hinsa_db_connect();
+	/* 수정..End......................................*/
+	
+	/*=== dsa2000 2005.01. Rexec대체 서비스를 위한 =============*/
+	strcpy(log_writeman, argv[2]);
+	strcpy(log_progid,   argv[3]);
+	strcpy(log_rundate,  argv[4]);	
+		
+	EXEC SQL DECLARE log_db DATABASE;    
+	hinsa_log_db_connect();
+	/*========================================================*/
+	
+	InitVariables();		/* 변수 초기화 */
+	
+	Initialize();			/* 초기화 루틴 */
+
+	CreateLog();			/* 로그파일 경로 & 이름 지정*/
+	
+	if(Check_date() != 0) {
+    	        sprintf(log_buff, "지급년에 해당하는 자료가 없습니다. %s\n", v_yyyy);
+		WriteLog(log_buff);
+		Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+
+		fclose(fp);
+                printf("지급년에 해당하는 자료가 없습니다.\n");
+                exit(1);
+        }     
+         
+	if (WriteEmployee() == -1)
+		error_quit("ERROR ===== [작업 실패] ===== \n");
+	else
+	{
+		fclose(fp);
+        	printf("총    건   수 : %d\n"   , v_cnt_line);
+		printf("차감소득세합계 : %0.0f\n", v_amtin);
+		printf("차감주민세합계 : %0.0f\n", v_amtju);
+		
+		sprintf(log_buff, "총    건   수 : %d\n"   , v_cnt_line);	        
+	        Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+	        sprintf(log_buff, "차감소득세합계 : %0.0f\n", v_amtin);
+	        Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+	        sprintf(log_buff, "차감주민세합계 : %0.0f\n", v_amtju);
+	        Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+	 
+	    	Write_batlog(seqno++, "OK  ===== [작업 완료] ===== \n");   /*dsa2000 Rexec 대체*/   
+	    	hinsa_exit(0,"OK ===== [작업 완료] ===== \n");
+	 
+	}
+	   
+}
+
+void InitVariables(void)
+{
+	memset(logfile, NULL, sizeof(logfile));
+	memset(logfile_fullname, NULL, sizeof(logfile_fullname));
+	
+	memset(v_dt_create, NULL, sizeof(v_dt_create));
+	memset(v_ym_acct, NULL, sizeof(v_ym_acct));
+}
+
+void Initialize(void)
+{	
+	sprintf(v_ym_acct, v_paydate );
+	
+	EXEC SQL 
+	SELECT	TO_CHAR(SYSDATE, 'YYYYMMDD') DT_CREATE
+	INTO   	:v_dt_create
+	FROM	DUAL;
+	
+	if (sqlca.sqlcode != 0)
+	{
+		printf("ORA-%05d - 현재날짜 가져오기  Error\n", sqlca.sqlcode);
+		fclose(fp);
+		exit(1);
+	}
+	
+	EXEC SQL 
+	SELECT	NVL(MAX(NO_CRT_SRL),900)
+	INTO	:v_no_crt_srl	
+	FROM	HTX_V_VAT10
+	WHERE	DT_CREATE = TO_DATE(:v_dt_create, 'YYYYMMDD')
+	  AND	CD_DATA   = :v_cd_data;
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != -1403) && (sqlca.sqlcode != -1405)) {
+		printf("ORA-%05d - MAX Seril# 가져오기  Error\n", sqlca.sqlcode);
+		fclose(fp);
+		exit(1);
+	} 
+	
+	v_no_crt_srl++;	/* 생성일련번호 + 1 */
+}
+
+void CreateLog()
+{	/*2004.04.26 logdir => HOMEDIR*/
+	HOMEDIR = hinsa_home();
+	strcat(HOMEDIR,"/log/ERPlog/");
+	
+	/* 로그파일명을 세팅 */
+	sprintf(logfile_fullname, "%sdisk_interface2_%s%02d.log", HOMEDIR, v_dt_create, v_no_crt_srl); 
+	
+	/* 로그파일 오픈 */
+	fp = fopen(logfile_fullname, "w+");
+
+	if (fp == NULL) {
+		printf("로그파일오픈(%s) 에러\n", logfile_fullname);
+		exit(1);
+	}
+}
+
+void WriteLog(char *message)
+{
+	fprintf(fp, "%s", message);
+}
+
+int WriteEmployee(void)
+{
+	WriteLog("< Write HTX_V_VAT10 Starting >-------------------------------\n");
+
+	sprintf(log_buff, "v_dt_create : (%s)\n", v_dt_create);
+	WriteLog(log_buff);
+	sprintf(log_buff, "v_cd_data : (%s)\n", v_cd_data);
+	WriteLog(log_buff);
+	sprintf(log_buff, "v_no_crt_srl : (%d)\n", v_no_crt_srl);
+	WriteLog(log_buff);
+	sprintf(log_buff, "v_rst_validation : (%s)\n", v_rst_validation);
+	WriteLog(log_buff);
+	
+	printf("생성일   v_dt_create  : %s\n",    v_dt_create);
+	printf("자료구분 v_cd_data    : %s\n",    v_cd_data);
+	printf("순서     v_no_crt_srl : %d\n",    v_no_crt_srl);
+	printf("신고년월 v_yyyy       : %s %s\n", v_yyyy, v_mm);
+	
+/* -----------------------퇴직이력 ---------------------------------------- */
+	EXEC SQL INSERT INTO HTX_V_VAT10 (
+		 	DT_CREATE,
+			CD_DATA,
+			NO_CRT_SRL,
+			H_YEAR,
+			H_MONTH,
+                        H_SSCODE,                        
+			H_EMPNO,
+			H_UNIT,
+			H_DEDAT,
+			H_DEPT,
+			H_ENAME,
+			H_JOSGU,
+			H_RETIRE,
+			H_MYUNG,
+			H_BOHUM,
+			H_TOTAL,
+			H_GONG,
+ 			H_STANDARD,
+ 			H_STNDYY,       
+			H_TAXYY,        
+			H_SANTAX,       
+			H_GONGTAX,      
+ 			H_FIXTAX,       
+ 			H_FIXNONG,      
+ 			H_FIXJUMIN,     
+ 			H_FIXTOTAL,     
+ 			H_NAPTAX,       
+ 			H_NAPNONG,      
+ 			H_NAPHUMIN,     
+ 			H_NAPTOTAL,     
+ 			H_WONTAX,       
+ 			H_WONNONG,      
+ 			H_WONJUMIN,     
+ 			H_WONTOTAL,     
+ 			RST_VALIDATION,
+ 			H_IDAY,
+ 			H_TDAY,
+ 			H_WOL,
+ 			H_KS_FROM,
+ 			H_KS_TO,
+                        H_GUNMU ,      /*근무지--널이면 본사로 */           		
+	                H_JUMINID   ,  /*주민번호"            */  
+		        H_HORRETAMT ,  /*명예퇴직수당"        */  
+		        H_DUTYMM    ,  /*(현)근속월수"        */  
+		        H_DUTYYY    ,  /*(현)근속연수"        */
+		        H_BRETFRDAY ,   /*(종)귀속시작일       */  	                
+		        H_BRETTODAY,
+		        H_BRETMM
+	) SELECT	--+ORDERED
+		TO_DATE(:v_dt_create, 'YYYYMMDD') DT_CREATE,
+		:v_cd_data               CD_DATA,
+		:v_no_crt_srl            NO_CRT_SRL,
+		SUBSTR(A.SUBDATE,1,4)    H_YEAR,
+		SUBSTR(A.SUBDATE,5,2)    H_MONTH,
+		:v_sscode                H_SSCODE,
+		A.EMPNO    	         H_EMP,
+                '000'      	         H_UNIT,  
+                A.SUBDATE	         H_DEDAT,
+                NVL(B.FINCODE, 'xxxxx')	 H_DEPT,
+		A.KORNAME	         H_ENAME,
+		'Y'		         H_JOSGU,
+		A.RETAMT+A.BRETAMT       H_RETIRE,
+		'0'		         H_MYUNG,
+		'0'		         H_BOHUM,
+		A.RETAMTSUM	         H_TOTAL,
+		A.RINDED	         H_GONG,
+		A.TAXSTAMT 	         H_STANDARD,
+		A.AVGTAXSTAMT  	         H_STNDYY,
+		A.RETAVGTAX	         H_TAXYY,
+		A.RETCALCTAX	         H_SANTAX,
+		A.RETTAXDED	         H_GONGTAX,
+		A.RETINTAX	         H_FIXTAX,
+                '0'		         H_FIXNONG,
+		A.RETJUTAX	         H_FIXJUMIN,
+		A.RETINTAX+A.RETJUTAX	 H_FIXTOTAL,
+		A.BRETINTAX	         H_NAPTAX,
+		'0'		         H_NAPNONG,
+		A.BRETJUTAX	         H_NAPHUMIN,
+		A.BRETINTAX +A.BRETJUTAX H_NAPTOTAL,
+		A.RETINTAX - A.BRETINTAX H_WONTAX,
+		'0'		         H_WONNONG,
+		A.RETJUTAX - A.BRETJUTAX H_WONJUMIN,
+		(A.RETINTAX - A.BRETINTAX + A.RETJUTAX-A.BRETJUTAX) H_WONTOTAL,
+		:v_rst_validation        RST_VALIDATION,
+		NVL(BRETFRDAY,A.EMPDATE) H_IDAY,
+		A.RETDATE   		 H_TDAY,
+		A.REALMM    		 H_WOL,
+		GREATEST(NVL(BRETFRDAY, A.EMPDATE), '20050101')  H_KS_FROM,
+		A.RETDATE   		 H_KS_TO,
+	        NVL(JOBPLACE, 'A1')      H_GUNMU ,      /*근무지--널이면 본사로 */           		
+	        M.JUMINID                H_JUMINID   ,  /*주민번호"            */  
+		HORRETAMT                H_HORRETAMT ,  /*명예퇴직수당"        */  
+		NVL(realmm,0) + nvl(bretmm,0) H_DUTYMM, /*(현)근속월수"        */  
+		nvl(realyy,0)            H_DUTYYY    ,  /*(현)근속연수"        */
+		BRETFRDAY                H_BRETFRDAY,    /*(종)귀속시작일       */  
+		BRETTODAY                H_BRETTODAY,    /*(종)귀속시작일       */  
+		0                        H_BRETMM        /*(종)귀속시작일       */  
+	FROM 	PKHRTHIS_2005 A, PYCDEPT B, PIMPMAS M
+	WHERE 	A.ORGNUM   = B.ORGNUM(+)
+	  AND   A.DEPTCODE = B.DEPTCODE(+)	
+	  AND   A.EMPNO    = M.EMPNO(+)
+	  AND   A.RETDATE  like :v_yyyy||'%'
+	  AND   A.RETAMTSUM > 0
+	  AND   A.Empno    not like 'M%'
+	  AND   A.Empno not in (
+                '0011','0147','0167','0400','0451','0454','0481','0558','0560','0572',
+                '0881','0966','1547','1713','0023','0158','0159','0204','0212','0226',
+                '0237','0254','0273','0293','0324','0372','0483','0576','0581','0602',
+                '0632','0706','0926','0981','1028','1078','1138','1569','1696','1702',
+                '1769','0232','0306','1427','1673','0307','0421','0501','0216','0364',
+                '0308','0057','0061','0093','0094','0101','0164','0284','0122','0055',
+                '0160','0436','0471','0373','0234','0478','0201','0412','0406','0177',
+                '0503','1490','1507','0337','0995','0224','1017','1276','1667','0877',
+                '0052','0225','0777','1412','0358','0456','0914','1681','0168','0470',
+                '0524','0231','J027','0757','1542','0105','0443','J036','0731','1309',
+                '0366','P329','P397','P294','1801','P297','0612','0865','1691','P409',
+                '0453','P345','0100','0104','0107','0151','0175','0176','0417','0429',
+                '0674','0681','0860','1338','1400','1468','1706','1711','1818','0205',
+                'J033','0485','1636','P384','0075','0654','P313','P392','0368','0435',
+                '1131','0689');
+
+	if (sqlca.sqlcode != 0) {	/* 에러이면 */
+		sprintf(log_buff, "ORA-%05d - Insert TEMP HTX_V_VAT10 Error--------\n", sqlca.sqlcode);
+		WriteLog(log_buff);
+		Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+		return(-1);
+	} else {			/* 에러가 아니면 */
+		v_cnt_line = sqlca.sqlerrd[2];
+		WriteLog("Insert TEMP HTX_V_VAT10 Success\n");
+		sprintf(log_buff, "Process Count(퇴직자) : %d\n", v_cnt_line);
+		WriteLog(log_buff);
+		Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+	}
+	
+	/*중간정산 받고 명예퇴직금이 있는 사원 따로 분류 저장.*/
+	EXEC SQL INSERT INTO HTX_V_VAT12 (
+		 	DT_CREATE,
+			CD_DATA,
+			NO_CRT_SRL,
+			H_YEAR,
+			H_MONTH,
+                        H_SSCODE,                        
+			H_EMPNO,
+			H_UNIT,
+			H_DEDAT,
+			H_DEPT,
+			H_ENAME,
+			H_JOSGU,
+			H_RETIRE,
+			H_MYUNG,
+			H_BOHUM,
+			H_TOTAL,
+			H_TOTAL_A,
+			H_TOTAL_T,
+			H_JUNA_PAY,
+			H_JUNA_TOTAL,
+			H_GONG,
+			H_GONG_A,
+			H_GONG_T,
+ 			H_STANDARD,
+ 			H_STANDARD_A,
+ 			H_STANDARD_T,
+ 			H_STNDYY,       
+ 			H_STNDYY_A,   
+ 			H_STNDYY_T,   
+			H_TAXYY,        
+			H_TAXYY_A,        
+			H_TAXYY_T,        
+			H_SANTAX,       
+			H_SANTAX_A,
+			H_SANTAX_T,
+			H_GONGTAX,      
+			H_GONGTAX_A,
+			H_GONGTAX_T,
+ 			H_FIXTAX,       
+ 			H_FIXNONG,      
+ 			H_FIXJUMIN,     
+ 			H_FIXTOTAL,     
+ 			H_NAPTAX,       
+ 			H_NAPNONG,      
+ 			H_NAPHUMIN,     
+ 			H_NAPTOTAL,     
+ 			H_WONTAX,       
+ 			H_WONNONG,      
+ 			H_WONJUMIN,     
+ 			H_WONTOTAL,     
+ 			RST_VALIDATION,
+ 			H_IDAY,
+ 			H_IDAY_A,			
+ 			H_TDAY,
+ 			H_TDAY_A,			
+ 			H_WOL,
+ 			H_KS_FROM,
+ 			H_KS_TO,
+                        H_GUNMU ,      /*근무지--널이면 본사로 */           		
+	                H_JUMINID   ,  /*주민번호"            */  
+		        H_HORRETAMT ,  /*명예퇴직수당"        */  
+		        H_DUTYMM    ,  /*(현)근속월수"        */  
+		        H_DUTYMM_A,
+		        H_DUTYYY    ,  /*(현)근속연수"        */
+		        H_DUTYYY_A,
+		        H_BRETFRDAY,    /*(종)귀속시작일       */  
+		        H_BRETTODAY,    /*(종)귀속시작일       */  
+		        H_BRETMM   ,    /*(종)귀속시작일       */	                
+		        H_BRETFRDAY_A,  /*(종)귀속시작일_법정외       */  
+		        H_BRETTODAY_A,  /*(종)귀속시작일_법정외       */  
+		        H_BRETMM_A      /*(종)귀속시작일_법정외*/
+	) SELECT	--+ORDERED
+		TO_DATE(:v_dt_create, 'YYYYMMDD') DT_CREATE,
+		:v_cd_data               CD_DATA,
+		:v_no_crt_srl            NO_CRT_SRL,
+		SUBSTR(A.SUBDATE,1,4)    H_YEAR,
+		SUBSTR(A.SUBDATE,5,2)    H_MONTH,
+		:v_sscode                H_SSCODE,
+		A.EMPNO    	         H_EMP,
+                '000'      	         H_UNIT,  
+                A.SUBDATE	         H_DEDAT,
+                NVL(B.FINCODE, 'xxxxx')	 H_DEPT,
+		A.KORNAME	         H_ENAME,
+		'Y'		         H_JOSGU,
+		A.RETAMT+A.BRETAMT       H_RETIRE, 
+		'0'		         H_MYUNG, 
+		'0'		         H_BOHUM,
+		A.RETAMT                 H_TOTAL,
+		HORRETAMT	         H_TOTAL_A,
+		A.RETAMT+HORRETAMT       H_TOTAL_T,
+		A.BRETAMT                H_JUNA_PAY, /*종전근무지*/
+		A.BRETAMT                H_JUNA_TOTAL, /*종전근무지*/		
+		A.RINDED2	         H_GONG,   /*법정*/
+		A.RINDED1	         H_GONG_A,
+		A.RINDED2+A.RINDED1      H_GONG_T,				
+		A.TAXSTAMT2 	         H_STANDARD, /*법정*/
+		A.TAXSTAMT1 	         H_STANDARD_A,
+		A.TAXSTAMT1+A.TAXSTAMT2  H_STANDARD_T,				
+		A.AVGTAXSTAMT2  	 H_STNDYY,
+		A.AVGTAXSTAMT1  	 H_STNDYY_A,
+		A.AVGTAXSTAMT1+A.AVGTAXSTAMT2  H_STNDYY_T,				
+		A.RETAVGTAX2	          H_TAXYY,
+		A.RETAVGTAX1	          H_TAXYY_A,
+		A.RETAVGTAX1+A.RETAVGTAX2 H_TAXYY_T,				
+		A.RETCALCTAX2	          H_SANTAX,
+		A.RETCALCTAX1	          H_SANTAX_A,
+		A.RETCALCTAX1+A.RETCALCTAX2 H_SANTAX_T,					
+		0	                 H_GONGTAX,
+		0	                 H_GONGTAX_A,
+		0	                 H_GONGTAX_T,				
+		A.RETINTAX	         H_FIXTAX,
+                '0'		         H_FIXNONG,
+		A.RETJUTAX	         H_FIXJUMIN,
+		A.RETINTAX+A.RETJUTAX	 H_FIXTOTAL,
+		A.BRETINTAX	         H_NAPTAX,
+		'0'		         H_NAPNONG,
+		A.BRETJUTAX	         H_NAPHUMIN,
+		A.BRETINTAX +A.BRETJUTAX H_NAPTOTAL,
+		A.RETINTAX - A.BRETINTAX H_WONTAX,
+		'0'		         H_WONNONG,
+		A.RETJUTAX - A.BRETJUTAX H_WONJUMIN,
+		(A.RETINTAX - A.BRETINTAX + A.RETJUTAX-A.BRETJUTAX) H_WONTOTAL,
+		:v_rst_validation        RST_VALIDATION,
+		/*NVL(BRETFRDAY,A.EMPDATE) H_IDAY,*/
+		NVL(TO_CHAR(TO_DATE(BRETTODAY,'yyyymmdd')+1,'yyyymmdd'),A.EMPDATE) H_IDAY,
+		A.ORGEMPDATE             H_IDAY_A,		
+		A.RETDATE   		 H_TDAY,
+		A.RETDATE   		 H_TDAY_A,		
+		A.REALMM    		 H_WOL,		
+		GREATEST(NVL(BRETFRDAY, A.EMPDATE), '20050101')  H_KS_FROM,
+		A.RETDATE   		 H_KS_TO,
+	        NVL(JOBPLACE, 'A1')      H_GUNMU ,      /*근무지--널이면 본사로 */           		
+	        M.JUMINID                H_JUMINID   ,  /*주민번호"            */  
+		HORRETAMT                H_HORRETAMT ,  /*명예퇴직수당"        */  
+		/*NVL(realmm,0) + nvl(bretmm,0) H_DUTYMM, /*(현)근속월수"        */
+		NVL(realmm,0)            H_DUTYMM, /*(현)근속월수"        */
+		ceil(months_between(to_date(A.retdate,'YYYYMMDD') + 1,to_date(A.ORGempdate,'YYYYMMDD'))) H_DUTYMM_A, 		  
+		nvl(realyy,0)            H_DUTYYY    ,  /*(현)근속연수"        */
+		ceil(months_between(to_date(A.retdate,'YYYYMMDD') + 1,to_date(A.ORGempdate,'YYYYMMDD')))/12 H_DUTYYY_A,		
+		BRETFRDAY                H_BRETFRDAY,    /*(종)귀속시작일       */  
+		BRETTODAY                H_BRETTODAY,    /*(종)귀속시작일       */  
+		nvl(bretmm,0)            H_BRETMM   ,    /*(종)귀속시작일       */
+		'00000000'               H_BRETFRDAY_A,  /*(종)귀속시작일       */  
+		'00000000'               H_BRETTODAY_A,  /*(종)귀속시작일       */  
+		'00000'                  H_BRETMM_A      /*(종)귀속시작일       */
+	FROM 	pkrthor_2005_14 A, PYCDEPT B, PIMPMAS M
+	WHERE 	A.ORGNUM   = B.ORGNUM(+)
+	  AND   A.DEPTCODE = B.DEPTCODE(+)	
+	  AND   A.EMPNO    = M.EMPNO(+); 
+	  	
+	if (sqlca.sqlcode != 0) {	/* 에러이면 */
+		sprintf(log_buff, "ORA-%05d - Insert TEMP HTX_V_VAT10 Error--------\n", sqlca.sqlcode);
+		WriteLog(log_buff);
+		Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+		return(-1);
+	} else {			/* 에러가 아니면 */
+		v_cnt_line = sqlca.sqlerrd[2];
+		WriteLog("Insert TEMP HTX_V_VAT10 Success\n");
+		sprintf(log_buff, "Process Count(퇴직자) : %d\n", v_cnt_line);
+		WriteLog(log_buff);
+		Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+	}
+		  	
+/* -----------------------중간퇴직이력 ---------------------------------------- */
+	EXEC SQL INSERT INTO HTX_V_VAT10 (
+		 	DT_CREATE,
+			CD_DATA,
+			NO_CRT_SRL,
+			H_YEAR,
+			H_MONTH,
+			H_SSCODE,
+			H_EMPNO,
+			H_UNIT,
+			H_DEDAT,
+			H_DEPT,
+			H_ENAME,
+			H_JOSGU,
+			H_RETIRE,
+			H_MYUNG,
+			H_BOHUM,
+			H_TOTAL,
+			H_GONG,
+ 			H_STANDARD,
+ 			H_STNDYY,       
+			H_TAXYY,        
+			H_SANTAX,       
+			H_GONGTAX,      
+ 			H_FIXTAX,       
+ 			H_FIXNONG,      
+ 			H_FIXJUMIN,     
+ 			H_FIXTOTAL,     
+ 			H_NAPTAX,       
+ 			H_NAPNONG,      
+ 			H_NAPHUMIN,     
+ 			H_NAPTOTAL,     
+ 			H_WONTAX,       
+ 			H_WONNONG,      
+ 			H_WONJUMIN,     
+ 			H_WONTOTAL,     
+ 			RST_VALIDATION,
+ 			H_IDAY,
+ 			H_TDAY,
+ 			H_WOL,
+ 			H_KS_FROM,
+ 			H_KS_TO,
+	                H_GUNMU ,      /*근무지--널이면 본사로 */           		
+	                H_JUMINID   ,  /*주민번호"            */  
+		        H_HORRETAMT ,  /*명예퇴직수당"        */  
+		        H_DUTYMM    ,  /*(현)근속월수"        */  
+		        H_DUTYYY    ,  /*(현)근속연수"        */
+		        H_BRETFRDAY,    /*(종)귀속시작일       */  
+		        H_BRETTODAY,    /*(종)귀속시작일       */  
+		        H_BRETMM   
+	) SELECT	--+ORDERED
+		TO_DATE(:v_dt_create, 'YYYYMMDD') DT_CREATE,
+		:v_cd_data              CD_DATA,
+		:v_no_crt_srl           NO_CRT_SRL,
+		SUBSTR(A.SUBDATE,1,4)   H_YEAR,
+		SUBSTR(A.SUBDATE,5,2)   H_MONTH,
+		:v_sscode               H_SSCODE,
+		A.EMPNO    	        H_EMP,
+                '000'      	        H_UNIT,  
+                A.subdate	        H_DEDAT,
+                NVL(B.FINCODE, 'xxxxx')	H_DEPT,
+		A.KORNAME	        H_ENAME,
+		'Y'		        H_JOSGU,
+		A.RETAMT+A.BRETAMT      H_RETIRE,
+		'0'		        H_MYUNG,
+		'0'		        H_BOHUM,
+		A.RETAMTSUM	        H_TOTAL,
+		A.RINDED	        H_GONG,
+		A.TAXSTAMT 	        H_STANDARD,
+		A.AVGTAXSTAMT  	        H_STNDYY,
+		A.RETAVGTAX	        H_TAXYY,
+		A.RETCALCTAX	        H_SANTAX,
+		A.RETTAXDED	        H_GONGTAX,
+		A.RETINTAX	        H_FIXTAX,
+                '0'		        H_FIXNONG,
+		A.RETJUTAX	        H_FIXJUMIN,
+		(A.RETINTAX+A.RETJUTAX) H_FIXTOTAL,
+		'0'		        H_NAPTAX,
+		'0'		        H_NAPNONG,
+		'0'		        H_NAPHUMIN,
+		'0'		        H_NAPTOTAL,
+		A.RETINTAX 	        H_WONTAX,
+		'0'		        H_WONNONG,
+		A.RETJUTAX	        H_WONJUMIN,
+		(A.RETINTAX+A.RETJUTAX) H_WONTOTAL,
+		:v_rst_validation       RST_VALIDATION,
+		TO_CHAR((TO_DATE(MRFRDATE,'YYYYMMDD')  + EXDD),'YYYYMMDD')   H_IDAY,
+		A.MRTODATE              H_TDAY,
+		RETMM                   H_WOL,
+		GREATEST(MRFRDATE, '20050101')    H_KS_FROM,		
+		A.MRTODATE              H_KS_TO,
+	        NVL(JOBPLACE, 'A1')     H_GUNMU ,      /*근무지--널이면 본사로 */           		
+	        M.JUMINID               H_JUMINID   ,  /*주민번호"            */  
+		0                       H_HORRETAMT ,  /*명예퇴직수당"        */  
+		retmm                   H_DUTYMM    ,  /*(현)근속월수"        */  
+		ceil(retmm/12)          H_DUTYYY    ,  /*(현)근속연수"        */
+		null                    H_BRETFRDAY,   /*(종)귀속시작일       */  
+		null                    H_BRETTODAY,   /*(종)귀속시작일       */  
+		null                    H_BRETMM  
+	 FROM 	PKHMRHIS_2005 A, PYCDEPT B, PIMPMAS M   /*PKHMRHIS_2005 년도중 여러번 중간정산자 하나의 Row로 만듬.*/
+	WHERE   A.ORGNUM   = B.ORGNUM(+)
+	  AND   A.DEPTCODE = B.DEPTCODE(+)	
+	  AND   A.EMPNO    = M.EMPNO(+)
+          AND   A.MRTODATE like :v_yyyy||'%'
+          AND   A.SUBDATE IS NOT NULL    /*두루넷 입사자들의(MRTODATE='20051231') 데이터 걸러내기위해 추가  DSA2000  2006.02.*/                 AND   A.EMPNO not like 'M%'
+          AND   A.empno not in (Select Empno from PKHRTHIS Where Retdate like :v_yyyy||'%')	/*퇴직자 제외*/
+	  AND   A.Empno not in (
+                '0011','0147','0167','0400','0451','0454','0481','0558','0560','0572',
+                '0881','0966','1547','1713','0023','0158','0159','0204','0212','0226',
+                '0237','0254','0273','0293','0324','0372','0483','0576','0581','0602',
+                '0632','0706','0926','0981','1028','1078','1138','1569','1696','1702',
+                '1769','0232','0306','1427','1673','0307','0421','0501','0216','0364',
+                '0308','0057','0061','0093','0094','0101','0164','0284','0122','0055',
+                '0160','0436','0471','0373','0234','0478','0201','0412','0406','0177',
+                '0503','1490','1507','0337','0995','0224','1017','1276','1667','0877',
+                '0052','0225','0777','1412','0358','0456','0914','1681','0168','0470',
+                '0524','0231','J027','0757','1542','0105','0443','J036','0731','1309',
+                '0366','P329','P397','P294','1801','P297','0612','0865','1691','P409',
+                '0453','P345','0100','0104','0107','0151','0175','0176','0417','0429',
+                '0674','0681','0860','1338','1400','1468','1706','1711','1818','0205',
+                'J033','0485','1636','P384','0075','0654','P313','P392','0368','0435',
+                '1131','0689');
+
+	if (sqlca.sqlcode != 0) {	/* 에러이면 */
+		sprintf(log_buff, "ORA-%05d - Insert TEMP HTX_V_VAT10 Error-------- 중간\n", sqlca.sqlcode);
+		WriteLog(log_buff);
+		Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+		return(-1);
+
+	} else {			/* 에러가 아니면 */
+		v_cnt_line = v_cnt_line + sqlca.sqlerrd[2];
+		WriteLog("Insert TEMP HTX_V_VAT10 Success\n");
+		sprintf(log_buff, "Process Count(중간정산자): %d\n", v_cnt_line);
+		WriteLog(log_buff);
+		Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+	}
+	
+	/*EXEC SQL INSERT INTO HTX_V_VAT10_TEST (  /* 테스트시에 사용*/
+	EXEC SQL INSERT INTO HTX_V_VAT10@HAIS (   /*  */
+			DT_CREATE,
+			CD_DATA,
+			NO_CRT_SRL,
+			H_YEAR,
+			H_MONTH,
+			H_SSCODE,
+			H_EMPNO,
+			H_UNIT,
+			H_DEDAT,
+			H_DEPT,
+			H_ENAME,
+			H_JOSGU,
+			H_RETIRE,
+			H_MYUNG,
+			H_BOHUM,
+			H_TOTAL,
+			H_GONG,
+ 			H_STANDARD,
+ 			H_STNDYY,       
+			H_TAXYY,        
+			H_SANTAX,       
+			H_GONGTAX,      
+ 			H_FIXTAX,       
+ 			H_FIXNONG,      
+ 			H_FIXJUMIN,     
+ 			H_FIXTOTAL,     
+ 			H_NAPTAX,       
+ 			H_NAPNONG,      
+ 			H_NAPHUMIN,     
+ 			H_NAPTOTAL,     
+ 			H_WONTAX,       
+ 			H_WONNONG,      
+ 			H_WONJUMIN,     
+ 			H_WONTOTAL,     
+ 			RST_VALIDATION,
+ 			H_IDAY,
+ 			H_TDAY,
+ 			H_WOL,
+ 			H_KS_FROM,
+ 			H_KS_TO	,
+ 			H_GUNMU ,    
+ 			H_JUMINID   ,
+ 			H_HORRETAMT ,
+ 			H_DUTYMM    ,
+ 			H_DUTYYY    ,
+ 			H_BRETFRDAY,    /*(종)귀속시작일       */  
+		        H_BRETTODAY,    /*(종)귀속시작일       */  
+		        H_BRETMM		
+	) SELECT
+		DT_CREATE,
+		CD_DATA,
+		NO_CRT_SRL,
+		H_YEAR,
+		H_MONTH,
+		H_SSCODE,
+		H_EMPNO,
+		H_UNIT,
+		H_DEDAT,
+		H_DEPT,
+		H_ENAME,
+		H_JOSGU,
+		H_RETIRE,
+		H_MYUNG,
+		H_BOHUM,
+		H_TOTAL,
+		H_GONG,
+ 		H_STANDARD,
+ 		H_STNDYY,       
+		H_TAXYY,        
+		H_SANTAX,       
+		H_GONGTAX,      
+ 		H_FIXTAX,       
+ 		H_FIXNONG,      
+ 		H_FIXJUMIN,     
+ 		H_FIXTOTAL,     
+ 		H_NAPTAX,       
+ 		H_NAPNONG,      
+ 		H_NAPHUMIN,     
+ 		H_NAPTOTAL,     
+ 		H_WONTAX,       
+ 		H_WONNONG,      
+ 		H_WONJUMIN,     
+ 		H_WONTOTAL,     
+ 		RST_VALIDATION,
+ 		H_IDAY,
+ 		H_TDAY,
+ 		H_WOL,
+ 		H_KS_FROM,
+ 		H_KS_TO,
+ 		H_GUNMU ,    
+ 		H_JUMINID   ,
+ 		H_HORRETAMT ,
+ 		H_DUTYMM    ,
+ 		H_DUTYYY    ,
+ 		H_BRETFRDAY,    /*(종)귀속시작일       */  
+		H_BRETTODAY,    /*(종)귀속시작일       */  
+		H_BRETMM
+	FROM	HTX_V_VAT10
+	WHERE	DT_CREATE  = TO_DATE(:v_dt_create, 'YYYYMMDD')
+	  AND	CD_DATA    = :v_cd_data
+	  AND	NO_CRT_SRL = :v_no_crt_srl;
+
+/*===========================================================================================*/
+/*------------------------------------------------------------------------------------*/ 
+	/*중간정산 받고 명예퇴직금이 있는 사원 따로 분류 저장.*/
+	EXEC SQL INSERT INTO TOPENT.HTX_V_VAT12@HAIS  (
+		 	DT_CREATE,
+			CD_DATA,
+			NO_CRT_SRL,
+			H_YEAR,
+			H_MONTH,
+                        H_SSCODE,                        
+			H_EMPNO,
+			H_UNIT,
+			H_DEDAT,
+			H_DEPT,
+			H_ENAME,
+			H_JOSGU,
+			H_RETIRE,
+			H_MYUNG,
+			H_BOHUM,
+			H_TOTAL,
+			H_TOTAL_A,
+			H_TOTAL_T,			
+			H_JUNA_PAY,
+			H_JUNA_TOTAL,
+			H_GONG,
+			H_GONG_A,
+			H_GONG_T,
+ 			H_STANDARD,
+ 			H_STANDARD_A,
+ 			H_STANDARD_T,
+ 			H_STNDYY,       
+ 			H_STNDYY_A,   
+ 			H_STNDYY_T,   
+			H_TAXYY,        
+			H_TAXYY_A,        
+			H_TAXYY_T,        
+			H_SANTAX,       
+			H_SANTAX_A,
+			H_SANTAX_T,
+			H_GONGTAX,      
+			H_GONGTAX_A,
+			H_GONGTAX_T,
+ 			H_FIXTAX,       
+ 			H_FIXNONG,      
+ 			H_FIXJUMIN,     
+ 			H_FIXTOTAL,     
+ 			H_NAPTAX,       
+ 			H_NAPNONG,      
+ 			H_NAPHUMIN,     
+ 			H_NAPTOTAL,     
+ 			H_WONTAX,       
+ 			H_WONNONG,      
+ 			H_WONJUMIN,     
+ 			H_WONTOTAL,     
+ 			RST_VALIDATION,
+ 			H_IDAY,
+ 			H_IDAY_A,			
+ 			H_TDAY,
+ 			H_TDAY_A,			
+ 			H_WOL,
+ 			H_KS_FROM,
+ 			H_KS_TO,
+                        H_GUNMU ,      /*근무지--널이면 본사로 */           		
+	                H_JUMINID   ,  /*주민번호"            */  
+		        H_HORRETAMT ,  /*명예퇴직수당"        */  
+		        H_DUTYMM    ,  /*(현)근속월수"        */  
+		        H_DUTYMM_A,
+		        H_DUTYYY    ,  /*(현)근속연수"        */
+		        H_DUTYYY_A,
+		        H_BRETFRDAY,    /*(종)귀속시작일       */  
+		        H_BRETTODAY,    /*(종)귀속시작일       */  
+		        H_BRETMM   ,
+		        H_BRETFRDAY_A,    /*(종)귀속시작일       */  
+		        H_BRETTODAY_A,    /*(종)귀속시작일       */  
+		        H_BRETMM_A
+	)   SELECT
+		        DT_CREATE,
+			CD_DATA,
+			NO_CRT_SRL,
+			H_YEAR,
+			H_MONTH,
+                        H_SSCODE,                        
+			H_EMPNO,
+			H_UNIT,
+			H_DEDAT,
+			H_DEPT,
+			H_ENAME,
+			H_JOSGU,
+			H_RETIRE,
+			H_MYUNG,
+			H_BOHUM,
+			H_TOTAL,
+			H_TOTAL_A,
+			H_TOTAL_T,
+			H_JUNA_PAY,
+			H_JUNA_TOTAL,
+			H_GONG,
+			H_GONG_A,
+			H_GONG_T,
+ 			H_STANDARD,
+ 			H_STANDARD_A,
+ 			H_STANDARD_T,
+ 			H_STNDYY,       
+ 			H_STNDYY_A,   
+ 			H_STNDYY_T,   
+			H_TAXYY,        
+			H_TAXYY_A,        
+			H_TAXYY_T,        
+			H_SANTAX,       
+			H_SANTAX_A,
+			H_SANTAX_T,
+			H_GONGTAX,      
+			H_GONGTAX_A,
+			H_GONGTAX_T,
+ 			H_FIXTAX,       
+ 			H_FIXNONG,      
+ 			H_FIXJUMIN,     
+ 			H_FIXTOTAL,     
+ 			H_NAPTAX,       
+ 			H_NAPNONG,      
+ 			H_NAPHUMIN,     
+ 			H_NAPTOTAL,     
+ 			H_WONTAX,       
+ 			H_WONNONG,      
+ 			H_WONJUMIN,     
+ 			H_WONTOTAL,     
+ 			RST_VALIDATION,
+ 			H_IDAY,
+ 			H_IDAY_A,			
+ 			H_TDAY,
+ 			H_TDAY_A,			
+ 			H_WOL,
+ 			H_KS_FROM,
+ 			H_KS_TO,
+                        H_GUNMU ,      /*근무지--널이면 본사로 */           		
+	                H_JUMINID   ,  /*주민번호"            */  
+		        H_HORRETAMT ,  /*명예퇴직수당"        */  
+		        H_DUTYMM    ,  /*(현)근속월수"        */  
+		        H_DUTYMM_A,
+		        H_DUTYYY    ,  /*(현)근속연수"        */
+		        H_DUTYYY_A,
+		        H_BRETFRDAY,    /*(종)귀속시작일       */  
+		        H_BRETTODAY,    /*(종)귀속시작일       */  
+		        H_BRETMM,
+		        H_BRETFRDAY_A,    /*(종)귀속시작일       */  
+		        H_BRETTODAY_A,    /*(종)귀속시작일       */  
+		        H_BRETMM_A
+	FROM	HTX_V_VAT12
+	WHERE	DT_CREATE  = TO_DATE(:v_dt_create, 'YYYYMMDD')
+	  AND	CD_DATA    = :v_cd_data
+	  AND	NO_CRT_SRL = :v_no_crt_srl;
+/*================================================================================================*/	  
+
+	if (sqlca.sqlcode != 0)  	/* 에러이면 */
+	{	v_cnt_line = 0;
+		sprintf(log_buff, "ORA-%05d - Insert ERP HTX_V_VAT10 Error\n", sqlca.sqlcode);
+		WriteLog(log_buff);
+		Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+		return(-1);
+	} else {			/* 에러가 아니면 */
+		if (v_cnt_line != sqlca.sqlerrd[2]) {
+			WriteLog("TEMP/ERP테이블에 Insert된 건수가 다릅니다.\n");
+			Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+			return(-1);
+
+		}
+		WriteLog("Insert ERP HTX_V_VAT10 Success\n");
+		sprintf(log_buff, "Process Count : %d\n", v_cnt_line);
+		WriteLog(log_buff);
+		
+		WriteLog("< WriteEmployee Ending >-------------------------\n");
+		
+	/*------------------------------------------------------------------------------------*/    				        
+                EXEC SQL
+		SELECT  nvl(sum(RETAMTSUM),0), nvl(sum(REALRETINTAX),0), nvl(sum(REALRETJUTAX),0)
+		INTO	:v_amttot, :v_amtin, :v_amtju
+		FROM	PKHRTHIS_2005
+       		WHERE   RETDATE like :v_yyyy||'%';
+		
+		EXEC SQL
+		SELECT  nvl(sum(RETAMT),0), nvl(sum(RETINTAX),0), nvl(sum(RETJUTAX),0)
+		INTO	:v_amttot1, :v_amtin1, :v_amtju1
+		FROM	PKHMRHIS
+       		WHERE   MRTODATE like :v_yyyy||'%';		
+		
+		v_amttot = v_amttot+ v_amttot1;
+		v_amtin  = v_amtin + v_amtin1;
+		v_amtju  = v_amtju + v_amtju1;
+		return(0);
+	}
+}
+
+int Check_date()
+{
+	int cnt =0;
+	
+	EXEC SQL	
+	SELECT  MAX(SUBSTR(SUBDATE, 5, 2)) retmm
+	INTO	:v_mm
+	FROM	PKHRTHIS_2005
+        WHERE   RETDATE like :v_yyyy||'%';
+
+	cnt = sqlca.sqlerrd[2];
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{	
+		return(1);
+	}
+
+      
+        EXEC SQL	
+	SELECT  SUBSTR(subdate, 5, 2) retmm
+	INTO	:v_mm
+	FROM	PKHMRHIS
+        WHERE   MRTODATE like :v_yyyy||'%' ;
+
+	cnt = cnt + sqlca.sqlerrd[2];
+
+	if ( cnt == 0 )
+	{	
+		return(-1); 
+	}
+
+	if (( sqlca.sqlcode != 0 ) && (sqlca.sqlcode !=1403 ))
+	{	
+		return(1);
+	}
+              
+               return(0);
+}
+
+/*=== dsa2000 2005.01. Rexec대체 서비스를 위한 Write_batlog()  ===================*/
+int Write_batlog(int seqno, char *message)
+{
+	
+        EXEC SQL AT log_db 
+        INSERT INTO PYBATLOG
+        VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+        if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+	{	
+		printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);
+		return(-1);
+	}                        
+                        
+        EXEC SQL AT log_db COMMIT WORK ;	
+}

@@ -1,0 +1,3 @@
+cd /hper/insa/HINSA/proc/src/EDIsrc/svccli
+make -f sndmake.mk all
+mv sndd /hper/insa/HINSA/proc/bin/EDIbin

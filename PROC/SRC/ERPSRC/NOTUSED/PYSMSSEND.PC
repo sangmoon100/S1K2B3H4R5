@@ -1,0 +1,174 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : pysmssend
+ SYSTEM-NAME    : 종합인사관리.
+ SUBSYSTEM-NAME : DB에서 전화번호 읽어 SMS 대량전송(SM작업용)
+ Programmer     : 지순미
+ Version        : 1.00
+ Date           : 2014.07. 
+ Help           : 전용컴파일스크립트 사용 hinsacc_sms pysmssend
+                                          pysmssend D025 pysmssend
+ 
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   1.00       2014.07.04         지순미          최초개발본      설계명세서
+============================================================================= */
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <math.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+     char  empno[4+1]      ="" ;   /* 사번       */
+     char  korname[20+1]   ="" ;   /* 성명       */
+     char  vSendTel[24+1];         /* 발신자 번호*/
+     char  vReceiveTel[11+1];      /* 수신자 번호*/
+     char  vSmsTitle[200+1];
+     char  vSmsBody[1024+1];
+EXEC SQL END  DECLARE SECTION;
+
+EXEC SQL INCLUDE sqlca;
+
+FILE *fp = stdout;
+
+char  log_rundate[16] = ""; 
+char  log_progid[16]  = "";
+char  log_writeman[5] = "";
+char  log_buff[100]   = "";
+
+int   vflag = 0;     
+int   seqno = 0; 
+	
+void main(argc,argv)
+int argc;
+char *argv[];
+{       
+     char FL_file[255];
+             
+     if  (argc != 3) 
+     {    
+          printf("[Usage] : pysmssend D025 pysmssend\n");
+          /*fclose(fp);*/
+          exit(1);
+     }
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,   argv[2]);
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     /*========================================================*/     
+     hinsa_log_print(0,"SMS SEND 시작...DB Connect");
+     hinsa_db_connect();  /*DB Connect 실시..*/
+          
+     strcpy(log_writeman, argv[1]);
+     strcpy(log_progid,   argv[2]);
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     
+     sprintf(log_buff, "DB Procedure HPER.SENDSMS ... ");
+     Write_batlog(seqno++, log_buff);
+     /*========================================================*/
+
+
+     /* 전송내역 */
+     EXEC    SQL 
+     Select  SENDTEL,   SMSTITLE,   SMSBODY
+       INTO :vSendTel, :vSmsTitle, :vSmsBody
+       From pysmstext;
+      
+     if( sqlca.sqlcode != 0)
+     {       
+         sprintf(log_buff, "전송내역 read ERROR\n"); 
+         Write_batlog(seqno++, log_buff);
+         exit(1);
+     }
+
+     /* 다중 데이터 전송 */
+     EXEC SQL DECLARE cur1 CURSOR for 
+     Select Empno, Korname, Retcont
+       From pysmslist;
+      
+     EXEC SQL OPEN cur1;     
+     
+     /*
+     printf("vSendTel =%s\n",  vSendTel ); 
+     printf("vSmsTitle=%s\n",  vSmsTitle); 
+     printf("vSmsBody =%s\n",  vSmsBody ); 
+     */
+     
+     hinsa_log_print(0,"SMS SEND FETCH...Start");
+
+     /* Record FETCH *********************************************** */
+     while(1)
+     {       
+          EXEC SQL FETCH cur1                                
+          INTO  :empno,      :korname,   :vReceiveTel;
+    
+          if (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE cur1;
+               hinsa_log_print(0,"SMS SEND FETCH...End...");
+               hinsa_exit(0,"OK ====== [SMS SEND 성공] =====\n"); 
+               return;
+          }
+    
+          if (sqlca.sqlcode != 0 && sqlca.sqlcode != -1405)
+          {
+               printf("[ERRCODE : %d] Record Error, : empno =%s\n",sqlca.sqlcode,empno);
+               EXEC SQL CLOSE cur1;
+               exit(1);
+          } 
+                
+          printf("Empno=%s, Korname=%s, Tel=%s\n", empno, korname, vReceiveTel); 
+                                                  
+          EXEC SQL EXECUTE
+          BEGIN 
+               HPER.SENDSMS( trim(:vReceiveTel), trim(:vSendTel), trim(:vSmsBody), trim(:vSmsTitle) );
+          END;
+          END-EXEC; 
+          
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {
+               sprintf(log_buff, "ERROR ====== [SMS SEND 실패] ORA-%05d - \n",sqlca.sqlcode);
+               Write_batlog(seqno++, log_buff);             
+               vflag = 1;
+          }
+          else  
+          {
+               sprintf(log_buff, "OK ====== [%s %s SMS SEND 성공] =====\n", empno, korname);               
+               Write_batlog(seqno++, log_buff);           
+          }              
+     }    
+}
+
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (To_Char(Sysdate,'YYYYMMDDHH24MISS'), :log_progid, :seqno, :log_writeman, :message);
+     /*VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);*/
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

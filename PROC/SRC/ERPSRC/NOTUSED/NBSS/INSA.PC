@@ -1,0 +1,272 @@
+/*======================== Program Header ==========================================================
+==================================================================================================*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+/*#include <sqlcpr.h>*/
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define   EMPNO       4
+
+/* 겸직자 체크시 사용하는 테이블 변수들 */
+          varchar v_empno [EMPNO    + 1];    /* 사원번호 */
+          int     v_count;
+
+/*EXEC SQL END DECLARE SECTION;*/
+
+int PL_write_erp(void);
+
+void main(void)
+{
+  /*char *FL_date;*/
+  char FL_dir[255];
+  char FL_Line[255];
+  char FL_file[255];
+
+  /*STRINIT(FL_file);
+  STRINIT(FL_Line);
+  strcpy(FL_file,"insa2fin_test"); */
+
+  hinsa_db_connect();
+
+  printf("1");
+  
+  if (PL_write_erp() == FAILURE)
+  {  return;
+  }
+  
+  hinsa_exit(0,"재무인터페이스(insa2fin) 프로그램 정상 처리...");
+  return;
+}
+
+/*============================ ======================================================================
+   ERP_HAP_AP04 Table에 데이타를 기록한다...
+==================================================================================================*/
+int PL_write_erp(void)
+{
+  char FL_Line[255];
+  int  FL_count;
+  int  FL_result;
+  
+  hinsa_log_print(0, "바.PL_write_erp, ERP_HAP_AP04 테이블 -> EMPMASTER_TEMP에 이관...");                               
+  /*
+  EXEC SQL INSERT INTO EAI_PIMPMAS 
+                 ( trandate,
+                   nocrt,
+                   empcode,
+                   empname,
+                   regno,
+                   defaultdept,
+                   empbdate,
+                   empedate,
+                   telno,
+                   rank,
+                   title,
+                   assign,
+                   address,
+                   zipcode,
+                   bankaccount,
+                   bankgubun,
+                   reference1,
+                   reference4,
+                   reference5,
+                   superempcode,
+                   valid,
+                   sitecode )
+           SELECT trandate,
+                  nocrt,
+                  empcode,
+                  empname,
+                  regno,
+                  decode(defaultdept,'IHE40','CCB10',defaultdept),
+                  empbdate,
+                  empedate,
+                  telno,
+                  rank,
+                  title,
+                  assign,
+                  address,
+                  zipcode,
+                  bankaccount,
+                  bankgubun,
+                  DECODE(reference1,'09','비서','') ,
+                  '', 
+                  '',
+                  superempcode,
+                  valid,
+                  sitecode
+             FROM erp_hap_ap04
+            WHERE trandate  = '20050804'
+              and empcode in('0362','0143','M071','M074','M073','0139')  
+              ;  
+              
+  
+  if ((SQLCODE != SQL_OK))
+  {
+    STRINIT(FL_Line);
+    sprintf(FL_Line, "Oracle 에러 : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+   
+  hinsa_log_print(0, "바.PL_write_erp, ERP_HAP_AP04 테이블 -> EMPMASTER_TEMP에 완료...");  
+  */
+  
+  /* ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
+  /* 은아 */
+  /* 사원코드 조회 */
+     
+  EXEC SQL DECLARE cur_03 CURSOR FOR
+     SELECT A.empcode
+       FROM EAI_PIMPMAS A
+       WHERE trandate ='20050804' /* :FGP_inter_ctrl->v_dt_create) */  
+         and nocrt in 
+             (select max(nocrt) from EAI_PIMPMAS where trandate = '20050804'
+                                                                /* :FGP_inter_ctrl->v_dt_create) */  
+             )
+         ;
+          
+  EXEC SQL OPEN cur_03;
+  
+  /*printf("사원번호 : %s \n",  v_empno);*/
+
+  if (SQLCODE != SQL_OK)
+  {
+    sprintf(FL_Line, "Oracle 에러 : %s", SQLERRM);
+    hinsa_log_print(0, FL_Line);
+    return (FAILURE);
+  }
+    
+ /* printf("사원번호 : [%s] \n",  v_empno);
+ */
+  
+  FL_count = 0;
+  while(TRUE)
+  {
+    /* printf("사원번호 : %s \n",  v_empno); */
+    
+    memset(v_empno, 0x00, sizeof(v_empno));      
+    
+    EXEC SQL FETCH cur_03 INTO
+                   :v_empno ;
+    /* 
+    printf("사원번호 : [%s] \n",  v_empno);
+    printf("count : [%d] \n",  v_empno);   
+   */
+    
+    if (SQLCODE == SQL_NO_DATA)
+      break;
+   
+    /* 사원코드에 맞는 count 가져와서 v_count에 담기 */ 
+    exec sql select count(*) into :v_count 
+             from (select distinct m.empno, h.addeptcode deptcode, i.fincode
+                                   from pimpmas m, pihorga g, pihanno h, pycdept i                                         
+                                   where m.pstate < '60'                                     
+                                     and g.orgym  = to_char(sysdate,'yyyymm')                          
+                                     and m.empno  = g.empno                                           
+                                     and m.orgnum = g.orgnum                                          
+                                     and g.gubun  = '0'                                             
+                                     and g.adpayrayn = 'Y'   
+                                     and h.orgnum = m.orgnum
+                                     and h.empno = m.empno
+                                     and h.ancode = '233'
+                                     and h.addeptcode = g.deptcode
+                                     and i.orgnum = m.orgnum
+                                     and i.deptcode = h.addeptcode
+                                    union
+                                    select c.empno, c.jobdept deptcode, d.fincode
+                                    from pimpmas c, pycdept d
+                                    where c.deptcode <> c.jobdept
+                                      and c.orgnum = 'H09'
+                                      and c.orgnum = d.orgnum
+                                      and c.jobdept = d.deptcode) a
+                             where a.empno = :v_empno                                 
+                             ;
+                             
+    printf("count : [%d] \n",  v_count);
+     
+    if(v_count >= 1) 
+   {
+      printf("사원번호 : [%s] \n",  v_empno.arr);	
+      
+      EXEC SQL update EAI_PIMPMAS set reference4 = 
+                           (select a.fincode
+                             from (select distinct m.empno, h.addeptcode deptcode, i.fincode
+                                   from pimpmas m, pihorga g, pihanno h, pycdept i                                         
+                                   where m.pstate < '60'                                     
+                                     and g.orgym  = to_char(sysdate,'yyyymm')                          
+                                     and m.empno  = g.empno                                           
+                                     and m.orgnum = g.orgnum                                          
+                                     and g.gubun  = '0'                                             
+                                     and g.adpayrayn = 'Y'   
+                                     and h.orgnum = m.orgnum
+                                     and h.empno = m.empno
+                                     and h.ancode = '233'
+                                     and h.addeptcode = g.deptcode
+                                     and i.orgnum = m.orgnum
+                                     and i.deptcode = h.addeptcode
+                                    union
+                                    select a.empno, a.jobdept deptcode, b.fincode
+                                    from pimpmas a, pycdept b
+                                    where a.deptcode <> a.jobdept
+                                      and a.orgnum = 'H09'
+                                      and a.orgnum = b.orgnum
+                                      and a.jobdept = b.deptcode) a
+                           where a.empno = :v_empno )
+               	 where empcode = :v_empno              
+                   and trandate = '20050804' /*:FGP_inter_ctrl->v_dt_create */
+                   and nocrt in 
+                       (select max(nocrt) from EAI_PIMPMAS where trandate = '20050804'
+                                             /*:FGP_inter_ctrl->v_dt_create */)                                                                 
+                           
+                             ;   
+   }
+   if( v_count >= 2 )
+   {
+	EXEC SQL update EAI_PIMPMAS set reference5 = 
+			(select a.fincode
+                              from (select distinct m.empno, h.addeptcode deptcode, i.fincode, rownum inum
+                                    from pimpmas m, pihorga g, pihanno h, pycdept i                                         
+                                    where m.pstate < '60'                                     
+                                      and g.orgym  = to_char(sysdate,'yyyymm')                          
+                                      and m.empno  = g.empno                                           
+                                      and m.orgnum = g.orgnum                                          
+                                      and g.gubun  = '0'                                             
+                                      and g.adpayrayn = 'Y'   
+                                      and h.orgnum = m.orgnum
+                                      and h.empno = m.empno
+                                      and h.ancode = '233'
+                                      and h.addeptcode = g.deptcode
+                                      and i.orgnum = m.orgnum
+                                      and i.deptcode = h.addeptcode) a
+                              where a.empno = :v_empno
+                                and a.inum = 2)
+               	 where empcode = :v_empno              
+                   and trandate = '20050804' /*:FGP_inter_ctrl->v_dt_create */
+                   and nocrt in 
+                       (select max(nocrt) from EAI_PIMPMAS where trandate = '20050804'
+                                             /*:FGP_inter_ctrl->v_dt_create */)                                                                 
+                   
+                                ;      
+   }
+    FL_count++;        
+  }
+      
+  EXEC SQL CLOSE cur_03;
+  
+  /* ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
+  
+  
+  
+  return (SUCCESS);
+}
+ 
+                                                   

@@ -1,0 +1,372 @@
+/* ======================= Program Header =====================================
+ PROGRAM-NAME   : pkcal2eai(INSA->EAI Interface Program)
+ PROGRM-Decription : 월급여내역을 계정별로 전표를 생성(EAI_HRPAY)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 월급여
+ Programmer     : 강륜종
+ Version        : 1.00
+ Date           : 2005.07.
+
+급    여(EAI_HRPAY)     : /var/mte/adapter/conf/script/PIM/PIM.PIMFI1010B.SND.sh
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description
+   1.00       2005.07.           dsa2000         SAP도입에 따른 신규개발(pcalc2erp.pc를 토대로)
+============================================================================= */
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+#define   TRUE_RET 25600
+
+void CreateLog(void);
+void InitVariables(void);
+void Initialize(void);
+void WriteLog(char *message);
+
+int WriteControl(int gubun);
+int WritePkmpcalc(void);
+
+EXEC SQL INCLUDE sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+     char  v_dt_create[15];      /* 생성일자 */
+     char  v_cd_data[4] = "C12"; /* 인건비 Data Code */
+     int   v_no_crt_srl = 0;     /* 생성 일련번호 */
+     char  v_ym_acct[7];         /* 회계년월 */
+     int   v_cnt_line = 0;       /* Line건수 */ 
+     char  v_ph_proc[2] = "A";   /* 처리단계 */
+     char  v_st_proc[2] = "P";   /* 처리상태 (P:Processing, N:Normal Termination, A:Abnormal Termination) */
+     char  v_rst_validation[2] = "A";
+     
+     /****************************************************************************** 
+       CONST Variables
+     ******************************************************************************/ 
+     char    v_currency[4]  = "KRW";  /*화폐명*/
+     char    v_corpcode[3]  = "10";   /*회사코드 하나로통신(주)*/
+     char    v_activity[6]  = "00000";/*기능(활동)*/
+     double  v_amt_tot  = 0;          /* 대변total 금액*/
+     double  v_amt_tot_cr  = 0;       /* 차변total 금액*/ 
+EXEC SQL END   DECLARE SECTION;
+
+/****************************************************************************** 
+  Other Variables
+******************************************************************************/ 
+char  *HOMEDIR;
+char  logfile[40];
+char  logfile_fullname[140];
+int   id;
+char  buff[1000];
+char  paydate[9];
+
+char  log_rundate[16]     = ""; 
+char  log_progid[16]      = "";
+char  log_writeman[5]     = "";
+char  log_buff[300]       = "";
+int   seqno = 0; 
+
+/***** Log File Pointer *****/
+FILE *fp;  
+
+void main(int argc, char *argv[])
+{
+     int  ret;
+     
+     if (argc != 6) 
+     {    /* pkcal2eai 200508 20050825 D006 pkcal2eai 2005082500000 */
+          printf("[Usage] : pkcal2eai 1.회계년월(YYYYMM) 2.지급일 3.작업자 4.progid 5.시작시간\n");
+          fclose(fp);
+          exit(1);        
+     }
+     
+     memset(v_ym_acct, NULL, sizeof(v_ym_acct));
+     sprintf(v_ym_acct, "%s", argv[1]);
+     
+     memset(paydate, NULL, sizeof(paydate));
+     sprintf(paydate, "%s", argv[2]);
+     
+     hinsa_log_print(0,"계정/부서별로 전표를 생성 시작...");          
+     hinsa_db_connect();  /*DB Connect 실시..*/
+       
+     InitVariables();   /* 변수 초기화 */
+     
+     Initialize();     /* 초기화 루틴 */
+     
+     strcpy(log_writeman, argv[3]);
+     strcpy(log_progid,   argv[4]);
+     strcpy(log_rundate,  argv[5]);  
+       
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     CreateLog();
+     printf("작업 시작......................................... >\n");
+     
+     sprintf(buff, "프로그램명 : %s\n", argv[0]);
+     WriteLog(buff);
+     sprintf(buff, "회계년월 : %s\n", argv[1]);
+     WriteLog(buff);
+     
+     if  (WriteControl(0) == -1) {   /* 초기값 세팅 */
+          fclose(fp);
+          exit(1);
+     }
+     
+     if  (WritePkmpcalc() == -1)
+     {   
+          WriteControl(2);  /* 비정상종료 */
+          sprintf(log_buff, " ERROR ");
+          Write_batlog(seqno++, log_buff);   
+          error_quit("ERROR ====== [ 작업 실패 ROLLBACK ] =====\n");   /*Dsa2000*/
+     }                
+     else
+     {
+          WriteControl(1);   /* 정상종료 */  
+          sprintf(log_buff, "OK ====== [ 작업 완료 COMMIT ] =====");
+          Write_batlog(seqno++, log_buff);   
+          hinsa_exit(0,"OK ====== [ 작업 완료 COMMIT ] =====\n");   /*Dsa2000*/   
+     }    
+     fclose(fp);               
+}
+
+void CreateLog()
+{
+  HOMEDIR = hinsa_home();
+  strcat(HOMEDIR,"/log/ERPlog/");
+  
+  /* 로그파일명을 세팅 */
+  sprintf(logfile_fullname, "%spkcal2eai%.8s%02d.log", HOMEDIR, v_dt_create, v_no_crt_srl); 
+  
+  /* 로그파일 오픈 */
+  fp = fopen(logfile_fullname, "w+");
+
+  if (fp == NULL) 
+  {
+      printf("로그파일오픈(%s) 에러\n", logfile_fullname);
+      sprintf(log_buff, "로그파일오픈(%s) 에러\n", logfile_fullname);
+      Write_batlog(seqno++, log_buff);   
+      exit(1);
+  }
+}
+
+
+void InitVariables(void)
+{
+  memset(logfile, NULL, sizeof(logfile));
+  memset(logfile_fullname, NULL, sizeof(logfile_fullname));
+  memset(v_dt_create, NULL, sizeof(v_dt_create));
+}
+
+void Initialize(void)
+{
+     EXEC SQL 
+     SELECT TO_CHAR(SYSDATE, 'YYYYMMDDHH24MISS') DT_CREATE
+       INTO :v_dt_create
+       FROM DUAL;
+     
+     if  (sqlca.sqlcode != 0)
+     {   
+          printf("ORA-%05d - 현재날짜 가져오기  Error\n", sqlca.sqlcode);
+          fclose(fp);
+          exit(1);
+     }
+     
+     EXEC SQL 
+     SELECT NVL(MAX(NO_CRT_SRL)+1,1)
+       INTO :v_no_crt_srl  
+       FROM EAI_HRPAY
+      WHERE H_YEAR||LPad(H_MONTH,2,'0') = :v_ym_acct
+        AND CD_DATA = :v_cd_data;
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != -1403) && (sqlca.sqlcode != -1405)) 
+     {
+          printf("ORA-%05d - MAX Serial# 가져오기  Error\n", sqlca.sqlcode);
+          sprintf(log_buff, "ORA-%05d - MAX Serial# 가져오기  Error\n", sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);   
+          fclose(fp);
+          exit(1);
+     }   
+}
+
+void WriteLog(char *message)
+{
+     fprintf(fp, "%s", message);
+}
+ 
+int  WriteControl(int gubun)
+{    
+     sprintf(buff, "< WriteControl Starting (Gubun : %d) >----------------\n", gubun);
+     WriteLog(buff);
+     
+     printf("WriteControl - gubun : %d\n", gubun);
+     
+     if      (gubun == 1)  sprintf(v_st_proc, "N");
+     else if (gubun == 2)  sprintf(v_st_proc, "A");
+     
+     if  (gubun == 1) 
+     {   
+          printf("OK!! < Program ended successfully........................... >\n");
+          printf("\n");
+          printf(" =========================================================== \n");
+          printf("                           작업결과                          \n");
+          printf("  작업일 :[%s] 자료구분[%s] 일련번호[%d]   \n", v_dt_create,v_cd_data,v_no_crt_srl);
+          printf(" =========================================================== \n");
+          printf("      건 수    대변총액   차변총액  \n");
+          printf("        %-4d      %-15.0f    %-15.0f     \n", v_cnt_line,v_amt_tot,v_amt_tot_cr);
+          printf(" =========================================================== \n");
+          WriteLog("OK!! < Program ended successfully.......................... >\n");
+          
+          sprintf(log_buff, "OK!! < Program ended successfully........................... >\n");
+          Write_batlog(seqno++, log_buff);   
+          sprintf(log_buff, " =========================================================== \n");
+          Write_batlog(seqno++, log_buff);   
+          sprintf(log_buff, "                           작업결과                          \n");
+          Write_batlog(seqno++, log_buff);   
+          sprintf(log_buff, "  작업일 :[%s] 자료구분[%s] 일련번호[%d]   \n", v_dt_create,v_cd_data,v_no_crt_srl);
+          Write_batlog(seqno++, log_buff);   
+          sprintf(log_buff, " =========================================================== \n");
+          Write_batlog(seqno++, log_buff);   
+          sprintf(log_buff, "      건 수    대변총액   차변총액  \n");
+          Write_batlog(seqno++, log_buff);   
+          sprintf(log_buff, "        %-4d      %-15.0f    %-15.0f     \n", v_cnt_line,v_amt_tot,v_amt_tot_cr);
+          Write_batlog(seqno++, log_buff);   
+          sprintf(log_buff, " =========================================================== \n");
+          Write_batlog(seqno++, log_buff);   
+          sprintf(log_buff, "OK!! < Program ended successfully.......................... >\n");
+          Write_batlog(seqno++, log_buff);           
+     } 
+     else if (gubun == 2) 
+     {
+          printf("Fail!! < Program failed.4........................................ >\n");
+          sprintf(log_buff, "Fail!! < Program failed......................................... >\n");
+          Write_batlog(seqno++, log_buff);   
+          WriteLog("Fail!! < Program failed......................................... >\n");     
+     }
+     return(0);
+}
+
+int  WritePkmpcalc(void)
+{    
+     WriteLog("< WritePkmpcalc Starting >-------------------------------\n");
+     
+     sprintf(buff, "v_dt_create : (%s)\n", v_dt_create);
+     WriteLog(buff);
+     sprintf(buff, "v_cd_data : (%s)\n", v_cd_data);
+     WriteLog(buff);
+     sprintf(buff, "v_no_crt_srl : (%d)\n", v_no_crt_srl);
+     WriteLog(buff);
+     sprintf(buff, "v_rst_validation : (%s)\n", v_rst_validation);
+     WriteLog(buff);
+     
+     EXEC SQL 
+     INSERT INTO EAI_HRPAY (  /* Write TEMP Pkmpcalc Table */
+            SEGMENT1  ,
+            H_YEAR          ,
+            H_MONTH          ,
+            MODULE_GU  ,
+            CD_DATA         ,
+            NO_CRT_SRL      ,
+            NO_LINE          ,
+            IFSYS          ,
+            DT_CREATE  ,
+            HEADER_NAME     ,
+            DT_ACCOUNTING   ,
+            CURRENCY        ,
+            SEGMENT4        ,
+            SEGMENT2        ,
+            DEPTCODE        ,
+            SEGMENT3        ,
+            ENTERED_DR      ,
+            ENTERED_CR      ,
+            MODE_FLAG       ,
+            EAI_FLAG        ,
+            EAI_DATE        )
+     SELECT                                      
+            :v_corpcode,                                         
+            SUBSTR(:v_ym_acct,1,4),
+            SUBSTR(:v_ym_acct,5,2),
+            'GL' MODULE_GU,
+            :v_cd_data,
+            :v_no_crt_srl,
+            rownum,
+            'HR' IFSYS,
+            :v_dt_create,
+            :v_cd_data||substr(:paydate,1,6)||decode(substr(:paydate,7,2),'10',
+                                                     decode(substr(:paydate,5,2),'07','체단비','11','체단비','명절연봉'),'급여'),
+            TO_DATE(:paydate, 'YYYYMMDD'), 
+            :v_currency,
+            accno,
+            fincode,
+            deptcode, /*dsa2000 2005.10 부서코드 추가.*/
+            :v_activity,
+            decode(debityn,'0',nvl(accnosum,0),0) debit, 
+            decode(debityn,'1',nvl(accnosum,0),0) credit,        
+            'I'      MODE_FLAG  ,  /*EAI추출구분(I,U,D)*/
+            'N'      EAI_FLAG   ,  /*EAI추출여부*/
+            null     EAI_DATE      /*EAI추출시간*/   
+       FROM V_ERP_ACCNO A,                                      
+            (SELECT ACCNO ACCNOB, MAX(DEBITYN) DEBITYN  
+               FROM ERP_ACCNO 
+              GROUP BY ACCNO )
+      WHERE A.ACCNO = ACCNOB
+        AND NVL(ACCNOSUM,0) <> 0 ;  
+     
+       /* printf("\n ssssss ORA-%05d - Insert TEMP 인건비 --------\n", sqlca.sqlcode); */
+     
+     if  (sqlca.sqlcode != 0) 
+     {     /* 에러이면 */
+          sprintf(log_buff, "ORA-%05d - Insert TEMP 인건비 Error--------\n", sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);   
+          WriteLog(log_buff);
+          return(-1);
+     } 
+     else 
+     {     /* 에러가 아니면 */
+          v_cnt_line = sqlca.sqlerrd[2];
+          WriteLog("Insert TEMP 인건비 Success\n");
+          sprintf(log_buff, "Process Count : %d\n", v_cnt_line);
+          Write_batlog(seqno++, log_buff);   
+          WriteLog(log_buff);
+     }
+     
+     /******************************************************************************************/
+     v_amt_tot = 0;
+     v_amt_tot_cr = 0;
+     
+     EXEC SQL 
+     SELECT SUM(ENTERED_DR), SUM(ENTERED_CR)
+       INTO :v_amt_tot  ,:v_amt_tot_cr
+       FROM EAI_HRPAY
+      WHERE H_YEAR||LPad(H_MONTH,2,'0') = :v_ym_acct
+        AND CD_DATA    = :v_cd_data
+        AND NO_CRT_SRL = :v_no_crt_srl;
+     
+     sprintf(log_buff, "< Write 인건비 Ending >-------------------------\n");
+     return(0);
+}
+
+/*=== dsa2000 2004.10. Rexec대체 서비스를 위한 Write_batlog()  ===================*/
+int  Write_batlog(int seqno, char *message)
+{ 
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     { 
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);
+          return(-1);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ; 
+}

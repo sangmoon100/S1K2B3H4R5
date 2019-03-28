@@ -1,0 +1,1109 @@
+/* ======================= Program Header =====================================
+ PROGRAM-NAME      : pkdiskerp1 (INSA->ERP Interface Program)
+ PROGRM-Decription : 전산매체 작성을 위한 디스켓 작성을 위해 ERP쪽 Interface 테이블에 Insert
+ SYSTEM-NAME       : 재/퇴직자 연말정산결과 NBSS로 인터페이스 
+ SUBSYSTEM-NAME    : SUBDATE가 아닌 RETDATE 기준으로 전송
+ Programmer        : 강륜종
+ Version           : 10.00
+ Date              : 2004.04.13.
+
+Update Contents
+   Version    date(yy.mm.dd)  programmer   description
+    10.0       2004.04.        강륜종      연말정산 결과를 1년에 한번 인터페이스 하기위해 
+                                           pkmpyserp.pc 프로그램에 전근무지 관련 칼럼을 추가하여 이 프로그램을 만듬.
+    11.00      2004.04.26      강륜종      MIS2 장비에 맞게 경로 및 환경 설정...
+    12.00      2005.01.17      dsa2000     Rexec대체 서비스를 위한 수정작업. 
+    13.00      2005.02.04.     dsa2000     2004년 귀속 연말정산 칼럼 반영.     
+=============================================================================== */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+void CreateLog(void);
+void InitVariables(void);
+void Initialize(void);
+void WriteLog(char *message);
+int  WriteEmployee(void);
+
+EXEC SQL INCLUDE sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+/****************************************************************************** 
+  Interface Control Table Variables
+******************************************************************************/ 
+char	v_dt_create[9];			/* 생성일자 */
+char	v_cd_data[5]    = "TX09";	/* Employee Data Code */
+int	v_no_crt_srl    = 0;		/* 생성 일련번호 */
+char	v_sscode[3+1]   = "A10";	/* 일반/계약직구분 */
+char	v_sscodeys[3+1] = "A20";	/* 연말정산,퇴직정산 */
+char	v_sscodeil[3+1] = "A40";	/* 사원급여/계약직급여구분:3개월미만 */
+char	v_ym_acct[7];			/* 회계년월 */
+int	v_cnt_line = 0;			/* Line건수 */ 
+char	v_ph_proc[2] = "A";		/* 처리단계 */
+char	v_st_proc[2] = "P";		/* 처리상태 (P:Processing, N:Normal Termination, A:Abnormal Termination) */
+char	v_cl_data_use[2] = "A";		/* Data 활용구분 */
+char	v_id_crt_user[5];		/* 생성 UserID */
+char	v_paydate[7];                   /* 지급년월 */
+char    v_yyyy[5]; 			/* 지급년 */
+char    v_mm[3];			/* 지급월 */
+double  v_amttot = 0;                   /* 과세표준금액총액   */
+double  v_amtin  = 0;			/* 결정소득세총액   */
+double  v_amtju  = 0;			/* 결정주민세총액   */
+double  v_amtnong  = 0;  		/* 결정주민세총액   */
+char	v_orgnum[4];                    /* 휴직조직차수 dsa2000 */  
+char	v_deptcode[6];                  /* 휴직부서코드 dsa2000 */
+
+/****************************************************************************** 
+  Interface Employee Table Variables
+******************************************************************************/ 
+char	v_rst_validation[2] = "A";
+
+EXEC SQL END   DECLARE SECTION;
+
+/****************************************************************************** 
+  Other Variables
+******************************************************************************/ 
+/*char	logdir[100] = "/hper/insa/ERP/log/";*/
+char    *HOMEDIR;
+char	logfile[40];
+char	logfile_fullname[140];
+int	id;
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[200]       = "";
+int     seqno = 0; 
+
+/***** Log File Pointer *****/
+FILE *fp;	
+
+void main(int argc, char *argv[])
+{
+        if (argc != 7) {  /* pkdiskerp1 2005 H11 GNGG0 1821 pkdiskerp1 20060227110000 */ 
+		printf("사용법 : diskdata1 1.지급년(YYYY) 2.휴직자orgnum 3.휴직자deptcode \n");
+		printf("사용법 :                 4.작업자 5.progid 6.시작시간\n");
+		fclose(fp);
+		exit(1);
+	}
+        
+	/* DB 접속 */
+	hinsa_log_print(0,"ERP 인터페이스 시작...");        
+        hinsa_db_connect();  /*DB Connect 실시..*/
+	
+	/*=== dsa2000 2005.01. Rexec대체 서비스를 위한 =============*/
+	strcpy(log_writeman, argv[4]);
+	strcpy(log_progid,   argv[5]);
+	strcpy(log_rundate,  argv[6]);	
+		
+	EXEC SQL DECLARE log_db DATABASE;    
+	hinsa_log_db_connect();
+	/*========================================================*/
+	
+	InitVariables();		/* 변수 초기화 */
+	
+	Initialize();			/* 초기화 루틴 */
+		
+	CreateLog();
+	
+	sprintf(v_yyyy,         argv[1]);        /* 지급년   */     
+        sprintf(v_mm  ,"%2s",   "12"   );	 /* 지급월   */     
+        sprintf(v_orgnum,       argv[2]);        /* 휴직자 조직차수  dsa2000  2004.01.29 추가*/     
+	sprintf(v_deptcode,     argv[3]);        /* 휴직자 부서코드  dsa2000  2004.01.29 추가*/     
+	sprintf(v_id_crt_user,  argv[4]);	 /* 작업자사번 */
+       	
+	if (WriteEmployee() == -1)
+            error_quit("ERROR ===== [작업 실패] ===== \n");    
+	else
+	{
+	    WriteLog("< Program End..................................... >\n");
+	    fclose(fp);
+            printf("총  건  수    : %d\n", v_cnt_line);
+            printf("차감소득세    : %0.0f\n", v_amttot);
+	    printf("소득세합계    : %0.0f\n", v_amtin);
+	    printf("주민세합계    : %0.0f\n", v_amtju);
+	    printf("농특세합계    : %0.0f\n", v_amtnong);
+	    		
+	    sprintf(log_buff, "총  건  수    : %d\n", v_cnt_line);
+	    Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+	    sprintf(log_buff, "차감소득세    : %0.0f\n", v_amttot);
+	    Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+	    sprintf(log_buff, "소득세합계    : %0.0f\n", v_amtin);
+	    Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+	    sprintf(log_buff, "주민세합계    : %0.0f\n", v_amtju);
+	    Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+	    sprintf(log_buff, "농특세합계    : %0.0f\n", v_amtnong);
+	    Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+	    
+	    Write_batlog(seqno++, "OK  ===== [작업 완료] ===== \n");   /*dsa2000 Rexec 대체*/	
+	    hinsa_exit(0,"OK  ===== [작업 완료] ===== \n");	    
+	}	
+}
+
+void InitVariables(void)
+{
+	memset(logfile, NULL, sizeof(logfile));
+	memset(logfile_fullname, NULL, sizeof(logfile_fullname));
+	memset(v_dt_create, NULL, sizeof(v_dt_create));
+	memset(v_ym_acct, NULL, sizeof(v_ym_acct));
+}
+
+void Initialize(void)
+{
+	EXEC SQL 
+	SELECT	TO_CHAR(SYSDATE, 'YYYYMMDD') DT_CREATE,  
+		TO_CHAR(SYSDATE, 'YYYYMM')   YM_ACCT	
+	INTO   	:v_dt_create, :v_ym_acct
+	FROM	DUAL;
+
+	if (sqlca.sqlcode != 0)
+	{
+		printf("ORA-%05d - 현재날짜 가져오기  Error\n", sqlca.sqlcode);
+		fclose(fp);
+		exit(1);
+	}
+
+	EXEC SQL 
+	SELECT	NVL(MAX(NO_CRT_SRL),900)
+	INTO	:v_no_crt_srl	
+	FROM	HTX_V_VAT09
+	WHERE	DT_CREATE = TO_DATE(:v_dt_create, 'YYYYMMDD')
+	  AND	CD_DATA   = :v_cd_data;
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != -1403) && (sqlca.sqlcode != -1405)) 
+	{
+		printf("ORA-%05d - MAX Seril# 가져오기  Error\n", sqlca.sqlcode);
+		Write_batlog(seqno++, "MAX Seril# 가져오기  Error\n");   /*dsa2000 Rexec 대체*/	
+		fclose(fp);
+		exit(1);
+	} 
+	
+	v_no_crt_srl++;	   /* 생성일련번호 + 1 */
+}
+
+void CreateLog()
+{	/*2004.04.26 logdir => HOMEDIR*/
+	HOMEDIR = hinsa_home();
+	strcat(HOMEDIR,"/log/ERPlog/");
+
+	/* 로그파일명을 세팅 */
+	sprintf(logfile_fullname, "%sdisk_interface1_%s%02d.log", HOMEDIR, v_dt_create, v_no_crt_srl); 
+	
+	/* 로그파일 오픈 */
+	fp = fopen(logfile_fullname, "w+");
+
+	if (fp == NULL) {
+		printf("로그파일오픈(%s) 에러\n", logfile_fullname);
+		Write_batlog(seqno++, "로그파일오픈 에러\n");   /*dsa2000 Rexec 대체*/	
+		exit(1);
+	}
+}
+
+void WriteLog(char *message)
+{
+	fprintf(fp, "%s", message);
+}
+
+
+int WriteEmployee(void)
+{
+	WriteLog("< WriteHTX_V_VAT09 Starting >-------------------------------\n");
+
+	sprintf(log_buff, "v_dt_create : (%s)\n", v_dt_create);
+	WriteLog(log_buff);
+	sprintf(log_buff, "v_cd_data : (%s)\n", v_cd_data);
+	WriteLog(log_buff);
+	sprintf(log_buff, "v_no_crt_srl : (%d)\n", v_no_crt_srl);
+	WriteLog(log_buff);
+	sprintf(log_buff, "v_rst_validation : (%s)\n", v_rst_validation);
+	WriteLog(log_buff);
+	
+	printf("생성일   v_dt_create  : %s\n",    v_dt_create);
+	printf("자료구분 v_cd_data    : %s\n",    v_cd_data);
+	printf("순서     v_no_crt_srl : %d\n",    v_no_crt_srl);
+	printf("신고년월 v_yyyy       : %s %s\n", v_yyyy, v_mm);
+	printf("생성일   v_orgnum     : %s %s\n", v_orgnum, v_deptcode);
+
+	EXEC SQL INSERT INTO HTX_V_VAT09 (
+	     DT_CREATE           ,
+	     CD_DATA             ,
+	     NO_CRT_SRL          ,
+	     H_YEAR              ,
+	     H_MONTH             ,
+	     H_SSCODE	         ,
+	     H_JIGUB_YMD	 ,
+	     H_UNIT	         ,
+	     H_DEPT	         ,
+	     H_EMPNO	         ,
+	     H_JUMIN	         ,
+	     H_ALIEN	         ,
+	     H_JOSEO             ,
+	     H_REGISTER          ,
+	     H_BUNRI             ,
+	     H_NAME              ,
+	     H_POSTNO            ,
+	     H_ADDRESS           ,
+	     H_KSYMD_FROM        ,
+	     H_KSYMD_TO          ,
+	     H_KMYMD_FROM        ,
+	     H_KMYMD_TO          ,
+	     H_JOO_PAY           ,
+	     H_JOO_BONUS         ,
+	     H_JOO_INJUNG        ,
+	     H_JOO_TEMP1         ,
+	     H_JOO_TEMP2         ,
+	     H_JOO_TOTAL         ,
+	     H_FREE_OVERSEA      ,
+	     H_FREE_NIGHT        ,
+	     H_FREE_TECH         ,
+	     H_FREE_TEMP1        ,
+	     H_FREE_TEMP2        ,
+	     H_FREE_TEMP3        ,
+	     H_FREE_TOTAL        ,
+	     H_WOLJUNG           ,
+	     H_BASE_PAY          ,
+	     H_LABOR_GONG        ,
+	     H_LABOR_PAY         ,
+	     H_BASE_ME           ,
+	     H_BASE_MATE         ,
+	     H_BASE_SUPPORT_SU   ,
+	     H_BASE_SUPPORT_MONEY,
+	     H_BASE_TEMP1        ,
+	     H_BASE_TEMP2        ,
+	     H_BASE_TEMP3        ,
+	     H_BASE_TEMP4        ,
+	     H_BASE_TEMP5        ,
+	     H_BASE_TEMP6        ,
+	     H_ADD_OLD_SU        ,
+	     H_ADD_OLD_MONEY     ,
+	     H_ADD_JANG_SU       ,
+	     H_ADD_JANG_MONEY    ,
+	     H_ADD_SON_SU        ,
+	     H_ADD_SON_MONEY     ,
+	     H_ADD_LADY          ,
+	     H_ADD_TEMP1         ,
+	     H_ADD_TEMP2         ,
+	     H_ADD_TEMP3         ,
+	     H_ADD_TEMP4         ,
+	     H_ADD_TEMP5         ,
+	     H_ADD_TEMP6         ,
+	     H_SOSUGONG          ,
+	     H_SPECIAL_INSURANCE ,
+	     H_SPECIAL_MEDICAL   ,
+	     H_SPECIAL_EDUCATE   ,
+	     H_SPECIAL_HOUSE     ,
+	     H_SPECIAL_DONATE    ,
+	     H_SPECIAL_SIN       ,
+	     H_SPECIAL_TEMP1     ,
+	     H_SPECIAL_TEMP2     ,
+	     H_SPECIAL_TEMP3     ,
+	     H_SPECIAL_TEMP4     ,
+	     H_SPECIAL_TEMP5     ,
+	     H_SPECIAL_TEMP6     ,
+	     H_SPECIAL_TOTAL     ,
+	     H_CHAGAM            ,
+	     H_PERSON_GONG       ,
+	     H_WORKING_GONG      ,
+	     H_JOHAB_GONG        ,
+	     H_GONG_TEMP1        ,
+	     H_GONG_TEMP2        ,
+	     H_GONG_TEMP3        ,
+	     H_GONG_TEMP4        ,
+	     H_GONG_TEMP5        ,
+	     H_GONG_TEMP6        ,
+	     H_STANDARD          ,
+	     H_SANCHUL           ,
+	     H_SGONG_LABOR       ,
+	     H_SGONG_ASSETS      ,
+	     H_SGONG_HOUSE       ,
+	     H_SGONG_OVERSEA     ,
+	     H_SGONG_STOCK       ,
+	     H_SGONG_TEMP1       ,
+	     H_SGONG_TEMP2       ,
+	     H_SGONG_TEMP3       ,
+	     H_SGONG_TEMP4       ,
+	     H_SGONG_TEMP5       ,
+	     H_SGONG_TEMP6       ,
+	     H_SGONG_TOTAL       ,
+	     H_SGM_PAY           ,
+	     H_SGM_JOGAM         ,
+	     H_SGM_TEMP1         ,
+	     H_SGM_TEMP2         ,
+	     H_SGM_TEMP3         ,
+	     H_SGM_TEMP4         ,
+	     H_SGM_TEMP5         ,
+	     H_SGM_TEMP6         ,
+	     H_SGM_TOTAL         ,
+	     H_DECIDE_SO         ,
+	     H_DECIDE_NONG       ,
+	     H_DECIDE_JOO        ,
+	     H_DECIDE_TOTAL      ,
+	     H_NAP_JONG_SO       ,
+	     H_NAP_JONG_NONG     ,
+	     H_NAP_JONG_JOO      ,
+	     H_NAP_JONG_TOTAL    ,
+	     H_NAP_HYUN_SO       ,
+	     H_NAP_HYUN_NONG     ,
+	     H_NAP_HYUN_JOO      ,
+	     H_NAP_HYUN_TOTAL    ,
+	     H_SIL_SO            ,
+	     H_SIL_NONG          ,
+	     H_SIL_JOO           ,
+	     H_SIL_TOTAL         ,
+	     RST_VALIDATION      ,	
+             H_SPECIAL_STANDARD  ,
+             H_SPECIAL_YK_BO     ,
+             H_PERSON_SAVE       ,
+             H_SGONG_JOHAP       ,
+             H_SGONG_JUNGKEN     ,
+             H_GUNMU             ,
+             H_SGONG_FOREIGNER   ,
+             H_BCORPNAME         ,
+  	     H_BCORPNAME1        ,
+    	     H_BCORPNO           ,
+    	     H_BCORPNO1          ,
+    	     H_BPAYSUM           ,  
+    	     H_BPAYSUM1          , 
+    	     H_BBONSUM           ,
+    	     H_BBONSUM1          ,  
+    	     H_BCOGBONSUM        ,    /*종 인정상여총액  DSA2000  2005 ADD*/  
+    	     H_BMEDAMT           ,  
+    	     H_BMEDAMT1          ,  
+    	     H_BHIREAMT          ,  
+    	     H_BHIREAMT1         ,  
+    	     H_BANUAMT           ,  
+    	     H_BANUAMT1          ,
+    	     H_FAMI70NO          , /*2004년 귀속  dsa2000  2005.02. add*/         
+             H_SPECADDNO         , /*2004년 귀속  dsa2000  2005.02. add*/         
+             H_SPECADDDED        , /*2004년 귀속  dsa2000  2005.02. add*/         
+             H_SHOSAMT           , /*2004년 귀속  dsa2000  2005.02. add*/         
+             H_HOUSEINTAMT2      , /*2004년 귀속  dsa2000  2005.02. add*/
+             H_CASHAMT             /*2005년 귀속  Add 현금영수증 */
+        )	
+	SELECT 	
+	     TO_DATE(:v_dt_create, 'YYYYMMDD') DT_CREATE,   /*생성일*/
+	     :v_cd_data 	   CD_DATA,                 /*자료구분*/	
+	     :v_no_crt_srl	   NO_CRT_SRL,              /*순서*/		
+	     :v_yyyy    	   H_YEAR,                  /*신고년*/     		
+	     :v_mm      	   H_MONTH,                 /*신고월*/		
+	     'A20'                 H_SSCODE,	            /*소득관리코드*/
+	     A.subdate             H_JIGUB_YMD,	            /*지급일*/	
+	     '000'                 H_UNIT,	            /*사업장*/
+	     decode(a.orgnum , :v_orgnum, C.FINCODE, :v_deptcode)   H_DEPT,     /*휴직자 부서: 인력개발팀*/   
+	     A.empno               H_EMPNO,	            /*사번*/		
+	     replace(B.juminid,'-','')  H_JUMIN,	    /*주민등록번호*/
+	     '1'                   H_ALIEN,	            /*내외국인 구분*/	
+	     '2'                   H_JOSEO,                 /*지급조서제출구분*/	
+	     '1'                   H_REGISTER,              /*거주자 구분*/		
+	     '1'                   H_BUNRI,                 /*분리과세구분*/	
+	     A.korname             H_NAME,                  /*성 명*/		
+	     A.zipno               H_POSTNO,                /*우편번호*/		
+	     SUBSTRB(A.ADDR,1,70)  H_ADDRESS,               /*주소*/		
+	     A.YSFRDATE            H_KSYMD_FROM,            /*귀속일_from*/		
+	     A.YSTODATE            H_KSYMD_TO,              /*귀속일_to*/		
+	     '00000000'            H_KMYMD_FROM,            /*감면일_from A.YSFRDATE */             
+	     '00000000'            H_KMYMD_TO,              /*감면일_to   A.YSTODATE*/          		
+	     NVL(MPAYSUM, 0)       H_JOO_PAY,               /*주사업장-급여*/	
+	     NVL(MBONSUM, 0)       H_JOO_BONUS,             /*주사업장-상여*/	
+	     NVL(MCOGBONSUM, 0)    H_JOO_INJUNG,            /*주사업장-인정상여*/ 	
+	     NVL(MGITASODK, 0)     H_JOO_TEMP1,             /*주사업장-temp1*/	
+	     0                     H_JOO_TEMP2,             /*주사업장-temp2*/	
+	     NVL(MPAYSUM,0) + NVL(MBONSUM,0)+ NVL(MCOGBONSUM,0)+ NVL(MGITASODK,0)  H_JOO_TOTAL,          /*주사업장-total*/	
+	     0		           H_FREE_OVERSEA,
+	     0                     H_FREE_NIGHT,            /*비과세 야간근로*/	
+	     0                     H_FREE_TECH,             /*비과세 기술*/		
+	     NVL(MNOTAX+BNOTAX,0)  H_FREE_TEMP1,            /*비과세 temp1*/		
+	     0                     H_FREE_TEMP2,            /*비과세 temp2*/		
+	     0                     H_FREE_TEMP3,            /*비과세 temp3*/		
+	     NVL(NOTAX,0)          H_FREE_TOTAL,            /*비과세 계*/		
+	     NVL(LASTMONPAY,0)     H_WOLJUNG,               /*월정급여액*/		
+	     NVL(TAXGROSS,0)       H_BASE_PAY,              /*과세대상급여*/	
+	     NVL(LABORDED,0)       H_LABOR_GONG,            /*근로소득공제*/	
+	     NVL(LABORAMT,0)       H_LABOR_PAY,             /*근로소득급여*/	
+	     NVL(SELFDED,0)        H_BASE_ME,               /*기본 본인*/		
+	     NVL(MATEDED,0)        H_BASE_MATE,             /*기본 배우자*/		
+	     NVL(FAMIDED,0)/1000000 H_BASE_SUPPORT_SU,      /*기본 부양가족 수*/	
+	     NVL(FAMIDED,0)        H_BASE_SUPPORT_MONEY,    /*기본 부양가족 액*/	
+	     0                     H_BASE_TEMP1,            /*기본 TEMP1*/		
+	     0                     H_BASE_TEMP2,            /*기본 TEMP2*/		
+	     0                     H_BASE_TEMP3,            /*기본 TEMP3*/		
+	     0                     H_BASE_TEMP4,            /*기본 TEMP4*/		
+	     0                     H_BASE_TEMP5,            /*기본 TEMP5*/		
+	     0                     H_BASE_TEMP6,            /*기본 TEMP6*/		
+	     (FAMI65NO+FAMI70NO)   H_ADD_OLD_SU,            /*추가 경로우대 수*/  	
+	     NVL(OLDDED,0)         H_ADD_OLD_MONEY,         /*추가 경로우대 금액*/	
+	     NVL(OBSDED,0)/1000000 H_ADD_JANG_SU,           /*추가 장애자 수*/	
+	     NVL(OBSDED,0)         H_ADD_JANG_MONEY,        /*추가 장애자 금액*/	
+	     NVL(CHILDNO,0)        H_ADD_SON_SU,            /*추가 자녀 수*/       	
+	     NVL(CHILDDED,0)       H_ADD_SON_MONEY,         /*추가 자녀 금액*/	
+	     NVL(WOMANDED,0)       H_ADD_LADY,              /*추가 부녀자공제*/	
+	     0              	   H_ADD_TEMP1,             /*추가 TEMP1*/		
+	     0                     H_ADD_TEMP2,             /*추가 TEMP2*/		
+	     0                     H_ADD_TEMP3,             /*추가 TEMP3*/		
+	     0                     H_ADD_TEMP4,             /*추가 TEMP4*/		
+	     0                     H_ADD_TEMP5,             /*추가 TEMP5*/		
+	     0                     H_ADD_TEMP6,             /*추가 TEMP6*/		
+             NVL(FEWDED, 0)        H_SOSUGONG,              /*소수공제액*/		
+	     NVL(INSDED ,0)        H_SPECIAL_INSURANCE,     /*특별 보험료*/		
+	     NVL(HOSDED, 0)        H_SPECIAL_MEDICAL,       /*특별 의료비*/		
+	     NVL(EDUDED, 0)        H_SPECIAL_EDUCATE,       /*특별 교육비*/		
+	     NVL(HOUSEDED,0)       H_SPECIAL_HOUSE,         /*특별 주택자금*/	
+	     NVL(GIVEDED,0)        H_SPECIAL_DONATE,        /*특별 기부금*/		
+	     NVL(CREDITDED, 0)     H_SPECIAL_SIN,           /*특별 신용카드*/	
+	     0                     H_SPECIAL_TEMP1,         /*특별 TEMP1*/		
+	     0                     H_SPECIAL_TEMP2,         /*특별 TEMP2*/		
+	     0                     H_SPECIAL_TEMP3,         /*특별 TEMP3*/		
+	     0                     H_SPECIAL_TEMP4,         /*특별 TEMP4*/		
+	     0                     H_SPECIAL_TEMP5,         /*특별 TEMP5*/		
+	     0                     H_SPECIAL_TEMP6,         /*특별 TEMP6*/		
+	     NVL(SPECIALDED,0)     H_SPECIAL_TOTAL,         /*특별 계*/		
+	     0                     H_CHAGAM,                /*차감소득*/		
+	     NVL(PENDED, 0)        H_PERSON_GONG,           /*개인연금 소득*/	
+	     0                     H_WORKING_GONG,          /*현장공제*/		
+	     NVL(TINVESTDED,0)     H_JOHAB_GONG,            /*조합출자공제 parksh 20030129 INVESTDED->TINVESTDED */	
+	     0                     H_GONG_TEMP1,            /*공제 TEMP1*/		
+	     0                     H_GONG_TEMP2,            /*공제 TEMP2*/		
+	     0                     H_GONG_TEMP3,            /*공제 TEMP3*/		
+	     0                     H_GONG_TEMP4,            /*공제 TEMP4*/		
+	     0                     H_GONG_TEMP5,            /*공제 TEMP5*/		
+	     0                     H_GONG_TEMP6,            /*공제 TEMP6*/		
+	     NVL(TAXLEVEL ,0)      H_STANDARD,              /*과세표준*/		
+	     NVL(CALCTAX ,0)       H_SANCHUL,               /*산출세액*/		
+	     NVL(INCOMTDED,0)      H_SGONG_LABOR,           /*세액공제 근로소득*/	
+	     NVL(PROPDED, 0)       H_SGONG_ASSETS,          /*세액공제 재형저축*/	
+	     NVL(HLOANDED, 0)      H_SGONG_HOUSE,           /*세액공제 주택차입*/	
+	     NVL(FORIDED, 0)       H_SGONG_OVERSEA,         /*세액공제 외국납부*/	
+	     NVL(STKDED , 0)       H_SGONG_STOCK,           /*세액공제 주식저축*/	
+	     nvl(polided,0)        H_SGONG_TEMP1,           /*세액공제 정치자금 dsa2000  2004 add */	
+	     0                     H_SGONG_TEMP2,           /*세액공제 TEMP2*/	
+	     0                     H_SGONG_TEMP3,           /*세액공제 TEMP3*/	
+	     0                     H_SGONG_TEMP4,           /*세액공제 TEMP4*/	
+	     0                     H_SGONG_TEMP5,           /*세액공제 TEMP5*/	
+	     0                     H_SGONG_TEMP6,           /*세액공제 TEMP6*/	
+	     NVL(TDEDSUM,0)        H_SGONG_TOTAL,           /*세액공제 TOTAL*/	
+	     0                     H_SGM_PAY,               /*세액감면 소득세법*/	
+	     0                     H_SGM_JOGAM,             /*세액감면 조감법*/	
+	     0                     H_SGM_TEMP1,             /*세액감면 TEMP1*/	
+	     0                     H_SGM_TEMP2,             /*세액감면 TEMP2*/	
+	     0                     H_SGM_TEMP3,             /*세액감면 TEMP3*/	
+	     0                     H_SGM_TEMP4,             /*세액감면 TEMP4*/	
+	     0                     H_SGM_TEMP5,             /*세액감면 TEMP5*/	
+	     0                     H_SGM_TEMP6,             /*세액감면 TEMP6*/	
+	     0                     H_SGM_TOTAL,             /*세액감면 TOTAL*/	
+	     NVL(DINTAX,0)         H_DECIDE_SO,             /*결정 소득액*/		
+	     NVL(DNONGTAX,0)       H_DECIDE_NONG,           /*결정 농특세*/		
+	     NVL(DJUTAX,0)         H_DECIDE_JOO,            /*결정 주민세*/		
+	     NVL(DINTAX,0)   + NVL(DJUTAX,0)   + NVL(DNONGTAX, 0)   H_DECIDE_TOTAL,      /*TOTAL*/		
+	     NVL(BINTAX,0)   + NVL(BINTAX1,0)                       H_NAP_JONG_SO,       /*기납부 종 소득세*/	
+	     NVL(BNONGTAX,0) + NVL(BNONGTAX1,0)                     H_NAP_JONG_NONG,     /*기납부 종 농특세*/	
+	     NVL(BJUTAX,0)   + NVL(BJUTAX1,0)                       H_NAP_JONG_JOO,      /*기납부 종 주민세*/	
+	     NVL(BINTAX,0)   + NVL(BJUTAX, 0)  + NVL(BNONGTAX, 0) +
+	     NVL(BINTAX1,0)  + NVL(BJUTAX1, 0) + NVL(BNONGTAX1, 0)  H_NAP_JONG_TOTAL,    /*기납부 종 TOTAL*/
+	     NVL(MINTAX,0)         H_NAP_HYUN_SO,           /*기납부 현 소득세*/	
+	     NVL(MNONGTAX,0)       H_NAP_HYUN_NONG,         /*기납부 현 농특세*/	
+	     NVL(MJUTAX ,0)        H_NAP_HYUN_JOO,          /*기납부 현 주민세*/	
+	     NVL(MINTAX,0)   + NVL(MJUTAX, 0)  + NVL(MNONGTAX, 0)   H_NAP_HYUN_TOTAL,     /*기납부 현 TOTAL*/	
+	     NVL(YINTAX ,0)        H_SIL_SO,                /*차감징수 소득세   control sum */	
+	     NVL(YNONGTAX, 0)      H_SIL_NONG,              /*차감징수 농특세*/   	
+	     NVL(YJUTAX ,0)        H_SIL_JOO,               /*차감징수 주민세*/   	
+	     NVL(YINTAX, 0)  + NVL(YJUTAX,0)   + NVL(YNONGTAX,0)    H_SIL_TOTAL,          /*차감징수 TOTAL*/     
+	     :v_rst_validation     RST_VALIDATION      ,
+             NVL(STANDDED,0)       H_SPECIAL_STANDARD  ,    /*표준공제*/
+             NVL(ANUDED,0)         H_SPECIAL_YK_BO     ,    /*연금보험*/
+             NVL(NPENDED,0)        H_PERSON_SAVE       ,    /*연금저축*/
+             0                     H_SGONG_JOHAP       ,    /*납세조합*/
+             NVL(TLSTKDED,0)       H_SGONG_JUNGKEN     ,    /*증권저축 parksh 20030129 LSTKDED->TLSTKDED*/	
+             NVL(JOBPLACE, 'A1')   H_GUNMU             ,    /*근무지--널이면 본사로 */
+             NVL(FOREIGNDED,0)     H_SGONG_FOREIGNER   ,    /*Dsa2000 2004.01.29. 세법변경에 따른 칼럼 추가.(외국인 추가공제)*/
+  	     BCORPNAME             H_BCORPNAME         ,    /*종1근무처명  */  
+       	     BCORPNAME1            H_BCORPNAME1        ,    /*종2근무지명  */
+             BCORPNO               H_BCORPNO           ,    /*종1사업자번호 */
+             BCORPNO1              H_BCORPNO1          ,    /*종2사업자번호 */ 
+             BPAYSUM               H_BPAYSUM           ,    /*종1급여총액  */  
+             BPAYSUM1              H_BPAYSUM1          ,    /*종2급여총액  */
+             BBONSUM               H_BBONSUM           ,    /*종1상여총액  */  
+             BBONSUM1              H_BBONSUM1          ,    /*종2상여총액  */  
+             NVL(BCOGBONSUM,0)     H_BCOGBONSUM        ,    /*종 인정상여총액  DSA2000  2005 ADD*/  
+             BMEDAMT               H_BMEDAMT           ,    /* */
+    	     BMEDAMT1              H_BMEDAMT1          ,    /* */  
+    	     BHIREAMT              H_BHIREAMT          ,    /* */  
+    	     BHIREAMT1             H_BHIREAMT1         ,    /* */  
+    	     BANUAMT               H_BANUAMT           ,    /* */  
+    	     BANUAMT1              H_BANUAMT1          ,    /* */
+    	     FAMI70NO              H_FAMI70NO          , /*2004년 귀속  dsa2000  2005.02. add*/         
+             SPECADDNO             H_SPECADDNO         , /*2004년 귀속  dsa2000  2005.02. add*/         
+             SPECADDDED            H_SPECADDDED        , /*2004년 귀속  dsa2000  2005.02. add*/         
+             SHOSAMT               H_SHOSAMT           , /*2004년 귀속  dsa2000  2005.02. add*/         
+             HOUSEINTAMT2          H_HOUSEINTAMT2      , /*2004년 귀속  dsa2000  2005.02. add*/
+             CASHAMT               H_CASHAMT
+	FROM    PYCDEPT C, pkmysmas A ,PKMPMAS B, PIMPMAS M 
+	WHERE   A.EMPNO    = B.EMPNO	
+	AND     A.EMPNO    = M.EMPNO(+) 
+	AND	A.ORGNUM   = C.ORGNUM
+	AND	A.DEPTCODE = C.DEPTCODE
+	AND     A.Empno    not like 'M%'
+	Union All    /*=============================재직근로소득과 퇴직근로소득 같이 dsa2000  */
+	SELECT 	
+	TO_DATE(:v_dt_create, 'YYYYMMDD') DT_CREATE,   /*생성일*/
+	:v_cd_data 	   CD_DATA,                    /*자료구분*/	
+	:v_no_crt_srl	   NO_CRT_SRL,                 /*순서*/		
+	:v_yyyy    	   H_YEAR,                     /*신고년*/     		
+	:v_mm      	   H_MONTH,                    /*신고월*/		
+	'A15'              H_SSCODE,	               /*소득관리코드*/
+	A.SUBDATE          H_JIGUB_YMD,	               /*지급일	*/
+	'000'              H_UNIT,	               /*사업장*/
+	C.FINCODE   	   H_DEPT,	               /*부서*/		
+	A.empno            H_EMPNO,	               /*사번*/		
+	replace(B.juminid,'-','') H_JUMIN,             /*주민등록번호*/
+	'1'                      H_ALIEN,	       /*내외국인 구분*/	
+	'2'                      H_JOSEO,              /*지급조서제출구분*/	
+	'1'                      H_REGISTER,           /*거주자 구분*/		
+	'1'                      H_BUNRI,              /*분리과세구분*/	
+	A.korname                H_NAME,               /*성 명*/		
+	Y.zipno                  H_POSTNO,             /*우편번호*/		
+	SUBSTRB(Y.ADDR,1,70)     H_ADDRESS,            /*주소*/		
+	NVL(Y.YSFRDATE, :v_yyyy||'0101') H_KSYMD_FROM, /*귀속일_from*/		
+	NVL(Y.YSTODATE, A.RETDATE)       H_KSYMD_TO,   /*귀속일_to*/		
+	'00000000'               H_KMYMD_FROM,         /*감면일_from NVL(Y.YSFRDATE, :v_yyyy||'0101') dsa2000  2006.02.*/             
+	'00000000'               H_KMYMD_TO,           /*감면일_to NVL(Y.YSTODATE, A.RETDATE) dsa2000  2006.02.*/          		
+	NVL(MPAYSUM, 0)          H_JOO_PAY,            /*주사업장-급여*/	
+	NVL(MBONSUM, 0)          H_JOO_BONUS,          /*주사업장-상여*/	
+	NVL(MCOGBONSUM, 0)       H_JOO_INJUNG,         /*주사업장-인정상여*/ 	
+	0                        H_JOO_TEMP1,          /*주사업장-temp1*/	
+	0                        H_JOO_TEMP2,          /*주사업장-temp2*/	
+	NVL(MPAYSUM,0) + NVL(MBONSUM,0) + NVL(MCOGBONSUM,0)     H_JOO_TOTAL,  /*주사업장-total*/	
+	0		         H_FREE_OVERSEA,
+	0                        H_FREE_NIGHT,         /*비과세 야간근로*/	
+	0                        H_FREE_TECH,          /*비과세 기술*/		
+	NVL(MNOTAX+BNOTAX,0)     H_FREE_TEMP1,         /*비과세 temp1*/		
+	0                        H_FREE_TEMP2,         /*비과세 temp2*/		
+	0                        H_FREE_TEMP3,         /*비과세 temp3*/		
+        NVL(NOTAX,0)             H_FREE_TOTAL,         /*비과세 계*/		
+	NVL(LASTMONPAY,0)        H_WOLJUNG,            /*월정급여액*/		
+	NVL(TAXGROSS,0)          H_BASE_PAY,           /*과세대상급여*/	
+	NVL(LABORDED,0)          H_LABOR_GONG,         /*근로소득공제*/	
+	NVL(LABORAMT,0)          H_LABOR_PAY,          /*근로소득급여*/	
+	NVL(SELFDED,0)           H_BASE_ME,            /*기본 본인*/		
+	NVL(MATEDED,0)           H_BASE_MATE,          /*기본 배우자*/		
+	NVL(FAMIDED,0)/1000000   H_BASE_SUPPORT_SU,    /*기본 부양가족 수*/	
+	NVL(FAMIDED,0)           H_BASE_SUPPORT_MONEY, /*기본 부양가족 액*/	
+	0                        H_BASE_TEMP1,         /*기본 TEMP1*/		
+	0                        H_BASE_TEMP2,         /*기본 TEMP2*/		
+	0                        H_BASE_TEMP3,         /*기본 TEMP3*/		
+	0                        H_BASE_TEMP4,         /*기본 TEMP4*/		
+	0                        H_BASE_TEMP5,         /*기본 TEMP5*/		
+	0                        H_BASE_TEMP6,         /*기본 TEMP6*/		
+	(FAMI65NO+FAMI70NO)      H_ADD_OLD_SU,         /*추가 경로우대 수*/  	
+	NVL(OLDDED,0)            H_ADD_OLD_MONEY,      /*추가 경로우대 금액*/	
+	NVL(OBSDED,0)/1000000    H_ADD_JANG_SU,        /*추가 장애자 수*/	
+	NVL(OBSDED,0)            H_ADD_JANG_MONEY,     /*추가 장애자 금액*/	
+	NVL(CHILDNO,0)           H_ADD_SON_SU,         /*추가 자녀 수*/       	
+	NVL(CHILDDED,0)          H_ADD_SON_MONEY,      /*추가 자녀 금액*/	
+	NVL(WOMANDED,0)          H_ADD_LADY,           /*추가 부녀자공제*/	
+	0              		 H_ADD_TEMP1,          /*추가 TEMP1*/		
+	0                        H_ADD_TEMP2,          /*추가 TEMP2*/		
+	0                        H_ADD_TEMP3,          /*추가 TEMP3*/		
+	0                        H_ADD_TEMP4,          /*추가 TEMP4*/		
+	0                        H_ADD_TEMP5,          /*추가 TEMP5*/		
+	0                        H_ADD_TEMP6,          /*추가 TEMP6*/		
+        NVL(FEWDED, 0)           H_SOSUGONG,           /*소수공제액*/		
+	NVL(INSDED ,0)           H_SPECIAL_INSURANCE,  /*특별 보험료*/		
+	NVL(HOSDED, 0)           H_SPECIAL_MEDICAL,    /*특별 의료비*/		
+	NVL(Y.EDUDED, 0)         H_SPECIAL_EDUCATE,    /*특별 교육비*/		
+	NVL(HOUSEDED,0)          H_SPECIAL_HOUSE,      /*특별 주택자금*/	
+	NVL(GIVEDED,0)           H_SPECIAL_DONATE,     /*특별 기부금*/		
+	NVL(CREDITDED, 0)        H_SPECIAL_SIN,        /*특별 신용카드*/	
+	0                        H_SPECIAL_TEMP1,      /*특별 TEMP1*/		
+	0                        H_SPECIAL_TEMP2,      /*특별 TEMP2*/		
+	0                        H_SPECIAL_TEMP3,      /*특별 TEMP3*/		
+	0                        H_SPECIAL_TEMP4,      /*특별 TEMP4*/		
+	0                        H_SPECIAL_TEMP5,      /*특별 TEMP5*/		
+	0                        H_SPECIAL_TEMP6,      /*특별 TEMP6*/		
+	NVL(SPECIALDED,0)        H_SPECIAL_TOTAL,      /*특별 계*/		
+	0                        H_CHAGAM,             /*차감소득*/		
+	NVL(PENDED, 0)           H_PERSON_GONG,        /*개인연금 소득*/	
+	0                        H_WORKING_GONG,       /*현장공제*/		
+	nvl(investded,0)         H_JOHAB_GONG,         /*조합출자공제*/	
+	0                        H_GONG_TEMP1,         /*공제 TEMP1*/		
+	0                        H_GONG_TEMP2,         /*공제 TEMP2*/		
+	0                        H_GONG_TEMP3,         /*공제 TEMP3*/		
+	0                        H_GONG_TEMP4,         /*공제 TEMP4*/		
+	0                        H_GONG_TEMP5,         /*공제 TEMP5*/		
+	0                        H_GONG_TEMP6,         /*공제 TEMP6*/		
+	NVL(TAXLEVEL ,0)         H_STANDARD,           /*과세표준*/		
+	NVL(CALCTAX ,0)          H_SANCHUL,            /*산출세액*/		
+	NVL(INCOMTDED,0)         H_SGONG_LABOR,        /*세액공제 근로소득*/	
+	NVL(PROPDED, 0)          H_SGONG_ASSETS,       /*세액공제 재형저축*/	
+	NVL(HLOANDED, 0)         H_SGONG_HOUSE,        /*세액공제 주택차입*/	
+	NVL(FORIDED, 0)          H_SGONG_OVERSEA,      /*세액공제 외국납부*/	
+	NVL(STKDED , 0)          H_SGONG_STOCK,        /*세액공제 주식저축*/	
+	nvl(Y.polided,0)         H_SGONG_TEMP1,        /*세액공제 정치자금 dsa2000  2004 add */	
+	0                        H_SGONG_TEMP2,        /*세액공제 TEMP2*/	
+	0                        H_SGONG_TEMP3,        /*세액공제 TEMP3*/	
+	0                        H_SGONG_TEMP4,        /*세액공제 TEMP4*/	
+	0                        H_SGONG_TEMP5,        /*세액공제 TEMP5*/	
+	0                        H_SGONG_TEMP6,        /*세액공제 TEMP6*/	
+	NVL(TDEDSUM,0)           H_SGONG_TOTAL,        /*세액공제 TOTAL*/	
+	0                        H_SGM_PAY,            /*세액감면 소득세법*/	
+	0                        H_SGM_JOGAM,          /*세액감면 조감법*/	
+	0                        H_SGM_TEMP1,          /*세액감면 TEMP1*/	
+	0                        H_SGM_TEMP2,          /*세액감면 TEMP2*/	
+	0                        H_SGM_TEMP3,          /*세액감면 TEMP3*/	
+	0                        H_SGM_TEMP4,          /*세액감면 TEMP4*/	
+	0                        H_SGM_TEMP5,          /*세액감면 TEMP5*/	
+	0                        H_SGM_TEMP6,          /*세액감면 TEMP6*/	
+	0                        H_SGM_TOTAL,          /*세액감면 TOTAL*/	
+	NVL(DINTAX,0)            H_DECIDE_SO,          /*결정 소득액*/		
+	NVL(DNONGTAX, 0)         H_DECIDE_NONG,        /*결정 농특세*/		
+	NVL(DJUTAX,0)            H_DECIDE_JOO,         /*결정 주민세*/		
+	NVL(DINTAX,0) + NVL(DJUTAX,0) + nvl(DNONGTAX,0)      H_DECIDE_TOTAL,       /*TOTAL*/		
+	NVL(BINTAX,0)                                        H_NAP_JONG_SO,           /*기납부 종 소득세*/	
+	NVL(BNONGTAX,0)                                      H_NAP_JONG_NONG,         /*기납부 종 농특세*/	
+	NVL(BJUTAX,0)                                        H_NAP_JONG_JOO,          /*기납부 종 주민세*/	
+	NVL(BINTAX,0) + NVL(BJUTAX, 0) + NVL(BNONGTAX, 0)    H_NAP_JONG_TOTAL,     /*기납부 종 TOTAL*/	
+	NVL(MINTAX,0)            H_NAP_HYUN_SO,        /*기납부 현 소득세*/	
+	NVL(MNONGTAX,0)          H_NAP_HYUN_NONG,      /*기납부 현 농특세*/	
+	NVL(MJUTAX ,0)           H_NAP_HYUN_JOO,       /*기납부 현 주민세*/	
+	NVL(MINTAX,0) + NVL(MJUTAX, 0) + NVL(MNONGTAX, 0)                  H_NAP_HYUN_TOTAL,     /*기납부 현 TOTAL*/	
+	NVL(YINTAX ,0)           H_SIL_SO,             /*차감징수 소득세   control sum */	
+	NVL(YNONGTAX, 0)         H_SIL_NONG,           /*차감징수 농특세*/   	
+	NVL(YJUTAX ,0)           H_SIL_JOO,            /*차감징수 주민세*/   	
+	NVL(YINTAX, 0)+ NVL(YJUTAX,0) + NVL(YNONGTAX,0)      H_SIL_TOTAL,          /*차감징수 TOTAL*/     
+	:v_rst_validation        RST_VALIDATION	,
+        NVL(STANDDED,0)          H_SPECIAL_STANDARD  ,  /*표준공제*/
+        NVL(ANUDED,0)            H_SPECIAL_YK_BO     ,  /*연금보험*/
+        NVL(NPENDED,0)           H_PERSON_SAVE       ,  /*연금저축*/
+        0                        H_SGONG_JOHAP       ,  /*납세조합*/
+        NVL(LSTKDED,0)           H_SGONG_JUNGKEN     ,  /*증권저축*/	
+        NVL(JOBPLACE, 'A1')      H_GUNMU             , /*근무지--널이면 본사로 */
+        NVL(FOREIGNDED,0)        H_SGONG_FOREIGNER   , /*Dsa2000 2004.01.29. 세법변경에 따른 칼럼 추가.(외국인 추가공제)*/
+  	BCORPNAME                H_BCORPNAME         , /*종1근무처명  */  
+       	' '                      H_BCORPNAME1        , /*종2근무지명  */
+        BCORPNO                  H_BCORPNO           , /*종1사업자번호 */
+        ' '                      H_BCORPNO1          , /*종2사업자번호 */ 
+        BPAYSUM                  H_BPAYSUM           , /*종1급여총액  */  
+        0                        H_BPAYSUM1          , /*종2급여총액  */
+        BBONSUM                  H_BBONSUM           , /*종1상여총액  */  
+        0                        H_BBONSUM1          , /*종2상여총액  */  
+        NVL(BCOGBONSUM,0)        H_BCOGBONSUM        , /*종 인정상여총액  DSA2000  2005 ADD*/  
+        BMEDAMT                  H_BMEDAMT           , /* */
+    	0                        H_BMEDAMT1          , /* */  
+    	BHIREAMT                 H_BHIREAMT          , /* */  
+    	0                        H_BHIREAMT1         , /* */  
+    	BANUAMT                  H_BANUAMT           , /* */  
+    	0                        H_BANUAMT1          , /* */
+    	FAMI70NO                 H_FAMI70NO          , /*2004년 귀속  dsa2000  2005.02. add*/         
+        SPECADDNO                H_SPECADDNO         , /*2004년 귀속  dsa2000  2005.02. add*/         
+        SPECADDDED               H_SPECADDDED        , /*2004년 귀속  dsa2000  2005.02. add*/         
+        SHOSAMT                  H_SHOSAMT           , /*2004년 귀속  dsa2000  2005.02. add*/         
+        HOUSEINTAMT2             H_HOUSEINTAMT2      , /*2004년 귀속  dsa2000  2005.02. add*/
+        CASHAMT                  H_CASHAMT
+	FROM    PYCDEPT C, pkhrthis A , pkhryhis Y, PKMPMAS B, PIMPMAS M  
+	WHERE   A.EMPNO    = B.EMPNO
+	and     A.empno    = Y.empno
+	and     A.EMPNO    = M.EMPNO(+)
+	AND	A.ORGNUM   = C.ORGNUM
+	AND	A.DEPTCODE = C.DEPTCODE
+	AND     A.RETDATE  like :v_yyyy||'%'
+	AND     Y.Empno    not like 'M%'   
+	AND     Y.Empno    not in ('0076','0653','0998','1045','1704','P450');  /*임원제외(강기선0076) / 휴직중 퇴직자 제외 */
+	
+	if (sqlca.sqlcode != 0) {	/* 에러이면 */
+		sprintf(log_buff, "ORA-%05d - Insert TEMP HTX_V_VAT09 Error--------\n", sqlca.sqlcode);		
+		printf(log_buff, "ORA-%05d - Insert TEMP HTX_V_VAT09 Error--------\n", sqlca.sqlcode);
+		WriteLog(log_buff);
+		Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/	
+		return(-1);
+		
+	} 
+	else {			/* 에러가 아니면 */
+		v_cnt_line = sqlca.sqlerrd[2];
+		WriteLog("Insert TEMP HTX_V_VAT09 Success\n");
+		sprintf(log_buff, "Process Count VAT09 : %d\n", v_cnt_line);
+		WriteLog(log_buff);		
+	}
+	
+	/*EXEC SQL INSERT INTO HTX_V_VAT09_TEST ( 	/* 테스트시에 사용 */
+	EXEC SQL INSERT INTO HTX_V_VAT09@HAIS (	/*  */
+	    DT_CREATE           ,
+	    CD_DATA             ,
+	    NO_CRT_SRL          ,
+	    H_YEAR              ,
+	    H_MONTH             ,
+	    H_SSCODE	        ,
+	    H_JIGUB_YMD	        ,
+	    H_UNIT	        ,
+	    H_DEPT	        ,
+	    H_EMPNO	        ,
+	    H_JUMIN	        ,
+	    H_ALIEN	        ,
+	    H_JOSEO             ,
+	    H_REGISTER          ,
+	    H_BUNRI             ,
+	    H_NAME              ,
+	    H_POSTNO            ,
+	    H_ADDRESS           ,
+	    H_KSYMD_FROM        ,
+	    H_KSYMD_TO          ,
+	    H_KMYMD_FROM        ,
+	    H_KMYMD_TO          ,
+	    H_JOO_PAY           ,
+	    H_JOO_BONUS         ,
+	    H_JOO_INJUNG        ,
+	    H_JOO_TEMP1         ,
+	    H_JOO_TEMP2         ,
+	    H_JOO_TOTAL         ,
+	    H_FREE_OVERSEA      ,
+	    H_FREE_NIGHT        ,
+	    H_FREE_TECH         ,
+	    H_FREE_TEMP1        ,
+	    H_FREE_TEMP2        ,
+	    H_FREE_TEMP3        ,
+	    H_FREE_TOTAL        ,
+	    H_WOLJUNG           ,
+	    H_BASE_PAY          ,
+	    H_LABOR_GONG        ,
+	    H_LABOR_PAY         ,
+	    H_BASE_ME           ,
+	    H_BASE_MATE         ,
+	    H_BASE_SUPPORT_SU   ,
+	    H_BASE_SUPPORT_MONEY,
+	    H_BASE_TEMP1        ,
+	    H_BASE_TEMP2        ,
+	    H_BASE_TEMP3        ,
+	    H_BASE_TEMP4        ,
+	    H_BASE_TEMP5        ,
+	    H_BASE_TEMP6        ,
+	    H_ADD_OLD_SU        ,
+	    H_ADD_OLD_MONEY     ,
+	    H_ADD_JANG_SU       ,
+	    H_ADD_JANG_MONEY    ,
+	    H_ADD_SON_SU        ,
+	    H_ADD_SON_MONEY     ,
+	    H_ADD_LADY          ,
+	    H_ADD_TEMP1         ,
+	    H_ADD_TEMP2         ,
+	    H_ADD_TEMP3         ,
+	    H_ADD_TEMP4         ,
+	    H_ADD_TEMP5         ,
+	    H_ADD_TEMP6         ,
+	    H_SOSUGONG          ,
+	    H_SPECIAL_INSURANCE ,
+	    H_SPECIAL_MEDICAL   ,
+	    H_SPECIAL_EDUCATE   ,
+	    H_SPECIAL_HOUSE     ,
+	    H_SPECIAL_DONATE    ,
+	    H_SPECIAL_SIN       ,
+	    H_SPECIAL_TEMP1     ,
+	    H_SPECIAL_TEMP2     ,
+	    H_SPECIAL_TEMP3     ,
+	    H_SPECIAL_TEMP4     ,
+	    H_SPECIAL_TEMP5     ,
+	    H_SPECIAL_TEMP6     ,
+	    H_SPECIAL_TOTAL     ,
+	    H_CHAGAM            ,
+	    H_PERSON_GONG       ,
+	    H_WORKING_GONG      ,
+	    H_JOHAB_GONG        ,
+	    H_GONG_TEMP1        ,
+	    H_GONG_TEMP2        ,
+	    H_GONG_TEMP3        ,
+	    H_GONG_TEMP4        ,
+	    H_GONG_TEMP5        ,
+	    H_GONG_TEMP6        ,
+	    H_STANDARD          ,
+	    H_SANCHUL           ,
+	    H_SGONG_LABOR       ,
+	    H_SGONG_ASSETS      ,
+	    H_SGONG_HOUSE       ,
+	    H_SGONG_OVERSEA     ,
+	    H_SGONG_STOCK       ,
+	    H_SGONG_TEMP1       ,
+	    H_SGONG_TEMP2       ,
+	    H_SGONG_TEMP3       ,
+	    H_SGONG_TEMP4       ,
+	    H_SGONG_TEMP5       ,
+	    H_SGONG_TEMP6       ,
+	    H_SGONG_TOTAL       ,
+	    H_SGM_PAY           ,
+	    H_SGM_JOGAM         ,
+	    H_SGM_TEMP1         ,
+	    H_SGM_TEMP2         ,
+	    H_SGM_TEMP3         ,
+	    H_SGM_TEMP4         ,
+	    H_SGM_TEMP5         ,
+	    H_SGM_TEMP6         ,
+	    H_SGM_TOTAL         ,
+	    H_DECIDE_SO         ,
+	    H_DECIDE_NONG       ,
+	    H_DECIDE_JOO        ,
+	    H_DECIDE_TOTAL      ,
+	    H_NAP_JONG_SO       ,
+	    H_NAP_JONG_NONG     ,
+	    H_NAP_JONG_JOO      ,
+	    H_NAP_JONG_TOTAL    ,
+	    H_NAP_HYUN_SO       ,
+	    H_NAP_HYUN_NONG     ,
+	    H_NAP_HYUN_JOO      ,
+	    H_NAP_HYUN_TOTAL    ,
+	    H_SIL_SO            ,
+	    H_SIL_NONG          ,
+	    H_SIL_JOO           ,
+	    H_SIL_TOTAL         ,
+	    RST_VALIDATION      ,
+            H_SPECIAL_STANDARD  ,  
+            H_SPECIAL_YK_BO     ,  
+            H_PERSON_SAVE       ,  
+            H_SGONG_JOHAP       ,  
+            H_SGONG_JUNGKEN     ,  	
+            H_GUNMU             ,  
+            H_SGONG_FOREIGNER   ,  
+            H_BCORPNAME ,
+  	    H_BCORPNAME1,
+    	    H_BCORPNO   ,
+    	    H_BCORPNO1  ,
+    	    H_BPAYSUM   ,  
+    	    H_BPAYSUM1  , 
+    	    H_BBONSUM   ,
+    	    H_BBONSUM1  ,  
+    	    H_BCOGBONSUM,
+    	    H_BMEDAMT   ,  
+    	    H_BMEDAMT1  ,  
+    	    H_BHIREAMT  ,  
+    	    H_BHIREAMT1 ,  
+    	    H_BANUAMT   ,  
+    	    H_BANUAMT1     ,
+    	    H_FAMI70NO     , /*2004년 귀속  dsa2000  2005.02. add*/         
+            H_SPECADDNO    , /*2004년 귀속  dsa2000  2005.02. add*/         
+            H_SPECADDDED   , /*2004년 귀속  dsa2000  2005.02. add*/         
+            H_SHOSAMT      , /*2004년 귀속  dsa2000  2005.02. add*/         
+            H_HOUSEINTAMT2 , /*2004년 귀속  dsa2000  2005.02. add*/
+            H_CASHAMT
+	)
+	SELECT
+		DT_CREATE           ,
+		CD_DATA             ,
+		NO_CRT_SRL          ,
+		H_YEAR              ,
+		H_MONTH             ,
+		H_SSCODE	    ,
+		H_JIGUB_YMD	    ,
+		H_UNIT	            ,
+		H_DEPT	            ,
+		H_EMPNO	            ,
+		H_JUMIN	            ,
+		H_ALIEN	            ,
+		H_JOSEO             ,
+		H_REGISTER          ,
+		H_BUNRI             ,
+		H_NAME              ,
+		H_POSTNO            ,
+		H_ADDRESS           ,
+		H_KSYMD_FROM        ,
+		H_KSYMD_TO          ,
+		H_KMYMD_FROM        ,
+		H_KMYMD_TO          ,
+		H_JOO_PAY           ,
+		H_JOO_BONUS         ,
+		H_JOO_INJUNG        ,
+		H_JOO_TEMP1         ,
+		H_JOO_TEMP2         ,
+		H_JOO_TOTAL         ,
+		H_FREE_OVERSEA      ,
+		H_FREE_NIGHT        ,
+		H_FREE_TECH         ,
+		H_FREE_TEMP1        ,
+		H_FREE_TEMP2        ,
+		H_FREE_TEMP3        ,
+		H_FREE_TOTAL        ,
+		H_WOLJUNG           ,
+		H_BASE_PAY          ,
+		H_LABOR_GONG        ,
+		H_LABOR_PAY         ,
+		H_BASE_ME           ,
+		H_BASE_MATE         ,
+		H_BASE_SUPPORT_SU   ,
+		H_BASE_SUPPORT_MONEY,
+		H_BASE_TEMP1        ,
+		H_BASE_TEMP2        ,
+		H_BASE_TEMP3        ,
+		H_BASE_TEMP4        ,
+		H_BASE_TEMP5        ,
+		H_BASE_TEMP6        ,
+		H_ADD_OLD_SU        ,
+		H_ADD_OLD_MONEY     ,
+		H_ADD_JANG_SU       ,
+		H_ADD_JANG_MONEY    ,
+		H_ADD_SON_SU        ,
+		H_ADD_SON_MONEY     ,
+		H_ADD_LADY          ,
+		H_ADD_TEMP1         ,
+		H_ADD_TEMP2         ,
+		H_ADD_TEMP3         ,
+		H_ADD_TEMP4         ,
+		H_ADD_TEMP5         ,
+		H_ADD_TEMP6         ,
+		H_SOSUGONG          ,
+		H_SPECIAL_INSURANCE ,
+		H_SPECIAL_MEDICAL   ,
+		H_SPECIAL_EDUCATE   ,
+		H_SPECIAL_HOUSE     ,
+		H_SPECIAL_DONATE    ,
+		H_SPECIAL_SIN       ,
+		H_SPECIAL_TEMP1     ,
+		H_SPECIAL_TEMP2     ,
+		H_SPECIAL_TEMP3     ,
+		H_SPECIAL_TEMP4     ,
+		H_SPECIAL_TEMP5     ,
+		H_SPECIAL_TEMP6     ,
+		H_SPECIAL_TOTAL     ,
+		H_CHAGAM            ,
+		H_PERSON_GONG       ,
+		H_WORKING_GONG      ,
+		H_JOHAB_GONG        ,
+		H_GONG_TEMP1        ,
+		H_GONG_TEMP2        ,
+		H_GONG_TEMP3        ,
+		H_GONG_TEMP4        ,
+		H_GONG_TEMP5        ,
+		H_GONG_TEMP6        ,
+		H_STANDARD          ,
+		H_SANCHUL           ,
+		H_SGONG_LABOR       ,
+		H_SGONG_ASSETS      ,
+		H_SGONG_HOUSE       ,
+		H_SGONG_OVERSEA     ,
+		H_SGONG_STOCK       ,
+		H_SGONG_TEMP1       ,
+		H_SGONG_TEMP2       ,
+		H_SGONG_TEMP3       ,
+		H_SGONG_TEMP4       ,
+		H_SGONG_TEMP5       ,
+		H_SGONG_TEMP6       ,
+		H_SGONG_TOTAL       ,
+		H_SGM_PAY           ,
+		H_SGM_JOGAM         ,
+		H_SGM_TEMP1         ,
+		H_SGM_TEMP2         ,
+		H_SGM_TEMP3         ,
+		H_SGM_TEMP4         ,
+		H_SGM_TEMP5         ,
+		H_SGM_TEMP6         ,
+		H_SGM_TOTAL         ,
+		H_DECIDE_SO         ,
+		H_DECIDE_NONG       ,
+		H_DECIDE_JOO        ,
+		H_DECIDE_TOTAL      ,
+		H_NAP_JONG_SO       ,
+		H_NAP_JONG_NONG     ,
+		H_NAP_JONG_JOO      ,
+		H_NAP_JONG_TOTAL    ,
+		H_NAP_HYUN_SO       ,
+		H_NAP_HYUN_NONG     ,
+		H_NAP_HYUN_JOO      ,
+		H_NAP_HYUN_TOTAL    ,
+		H_SIL_SO            ,
+		H_SIL_NONG          ,
+		H_SIL_JOO           ,
+		H_SIL_TOTAL         ,
+		RST_VALIDATION      ,
+                H_SPECIAL_STANDARD  ,  /*표준공제  */
+                H_SPECIAL_YK_BO     ,  /*연금보험*/
+                H_PERSON_SAVE       ,  /*연금저축*/
+                H_SGONG_JOHAP       ,  /*납세조합*/
+                H_SGONG_JUNGKEN     ,  /*증권저축*/	
+                H_GUNMU             ,  /*근무지*/
+                H_SGONG_FOREIGNER   ,   /*Dsa2000 2004.01.29. 세법변경에 따른 칼럼 추가.(외국인 추가공제)*/
+                H_BCORPNAME ,
+  	        H_BCORPNAME1,
+    	        H_BCORPNO   ,
+    	        H_BCORPNO1  ,
+    	        H_BPAYSUM   ,  
+    	        H_BPAYSUM1  , 
+    	        H_BBONSUM   ,
+    	        H_BBONSUM1  , 
+    	        H_BCOGBONSUM, 
+    	        H_BMEDAMT   ,  
+    	        H_BMEDAMT1  ,  
+    	        H_BHIREAMT  ,  
+    	        H_BHIREAMT1 ,  
+    	        H_BANUAMT   ,  
+    	        H_BANUAMT1  ,
+    	    	H_FAMI70NO     , /*2004년 귀속  dsa2000  2005.02. add*/         
+                H_SPECADDNO    , /*2004년 귀속  dsa2000  2005.02. add*/         
+                H_SPECADDDED   , /*2004년 귀속  dsa2000  2005.02. add*/         
+                H_SHOSAMT      , /*2004년 귀속  dsa2000  2005.02. add*/         
+                H_HOUSEINTAMT2 , /*2004년 귀속  dsa2000  2005.02. add*/
+                H_CASHAMT
+	FROM	HTX_V_VAT09
+	WHERE	DT_CREATE  = TO_DATE(:v_dt_create, 'YYYYMMDD')
+	  AND	CD_DATA    = :v_cd_data
+	  AND	NO_CRT_SRL = :v_no_crt_srl;
+
+	if (sqlca.sqlcode != 0) {	/* 에러이면*/
+		v_cnt_line = 0;
+		sprintf(log_buff, "ORA-%05d - Insert HAIS HTX_V_VAT09 Error\n", sqlca.sqlcode);
+		printf(log_buff, "ORA-%05d - Insert HAIS HTX_V_VAT09 Error\n", sqlca.sqlcode);
+		WriteLog(log_buff);
+		Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/	
+		return(-1);
+	} else {			/* 에러가 아니면*/
+		if (v_cnt_line != sqlca.sqlerrd[2]) {
+			printf("TEMP/ERP테이블에 Insert된 건수가 다릅니다.cnt%d err%d\n",
+			        v_cnt_line , sqlca.sqlerrd[2]);	
+			WriteLog("TEMP/ERP테이블에 Insert된 건수가 다릅니다.\n");
+			Write_batlog(seqno++, "TEMP/ERP테이블에 Insert된 건수가 다릅니다.\n");   /*dsa2000 Rexec 대체*/	
+			return(-1);
+		}
+
+                EXEC SQL                
+		SELECT  SUM(NVL(YINTAX,0)), SUM(NVL(YJUTAX,0)),SUM(NVL(YNONGTAX,0)), SUM(NVL(yintax,0))
+		INTO	:v_amtin, :v_amtju, :v_amtnong, :v_amttot
+		FROM 	PKMYSMAS A ,PKMPMAS B
+		WHERE   A.WORKYY = :v_yyyy
+		AND	A.EMPNO  = B.EMPNO;
+	
+       		
+	     if (sqlca.sqlcode != 0) {	/* 에러이면 */
+		v_cnt_line = 0;
+		sprintf(log_buff, "ORA-%05d - Fetch 통계_Error\n", sqlca.sqlcode);
+		printf(log_buff, "ORA-%05d - Fetch 통계_Error\n", sqlca.sqlcode);
+		WriteLog(log_buff);
+		Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/	
+		return(-1);
+	     }       		
+		WriteLog("Insert HAIS HTX_V_VAT09 Success\n");
+		sprintf(log_buff, "Process Count VAT09 : %d\n", v_cnt_line);
+		WriteLog(log_buff);
+		
+		WriteLog("< WriteHTX_V_VAT09 Ending >-------------------------\n");
+               
+		return(0);
+	}
+}
+
+/*=== dsa2000 2005.01. Rexec대체 서비스를 위한 Write_batlog()  ===================*/
+int Write_batlog(int seqno, char *message)
+{
+	
+        EXEC SQL AT log_db 
+        INSERT INTO PYBATLOG
+        VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+        if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+	{	
+		printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);
+		return(-1);
+	}                        
+                        
+        EXEC SQL AT log_db COMMIT WORK ;	
+}

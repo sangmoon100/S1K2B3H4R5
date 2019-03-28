@@ -1,0 +1,43 @@
+#HOME	= /SRC/src/edi/hostif/client/tcpip 
+
+## MIS2장비로 이전하면서 경로변경   2011.07.06 KTH
+##HOME	= /hper/insa/edi/new
+HOME	= /hper/insa/HINSA/proc/src/EDIsrc
+
+INC	= $(HOME)/include
+HLIB = $(HOME)/lib
+
+LIBOBJ = $(HLIB)/comm.o $(HLIB)/lock.o $(HLIB)/tm.o\
+		 $(HLIB)/atoilib.o $(HLIB)/upper.o 
+#
+#   DVLP    :   DVLP장비에서 실행해야할때
+#   TST     :   LOG가 필요할때, TEST 할때
+#
+
+## MIS2장비에서 컴파일 옵션 추가 (+DA2.0W)  2011.07.06 KTH
+CC	= cc -Ae +DA2.0W
+CFLAG = -c -g -Ae
+DFLAG = 
+
+PROGRAM = rcvd
+
+all: $(PROGRAM) 
+
+SOURCE = rcv.c sigset.c makedir.c lib.c
+
+OBJECT = $(SOURCE:.c=.o)
+
+
+$(PROGRAM): $(OBJECT) $(LIBOBJ) 
+	$(CC) -o $@ $(OBJECT) $(LIBOBJ) 
+
+$(OBJECT): $(SOURCE)
+	$(CC) $(CFLAG) $< -I$(INC) $(DFLAG)
+
+install:
+	strip $(PROGRAM)
+	chmod 0777 $(PROGRAM)
+## cp $(PROGRAM) $(HOME)/bin/.
+
+clear:
+	rm -f *.o
