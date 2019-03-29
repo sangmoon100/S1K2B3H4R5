@@ -1,0 +1,1208 @@
+/* ===================== Program Header ======================================
+ PROGRAM-NAME   : pkq2071g(퇴직 월차 계산)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 퇴직정산
+ Programmer     : 민정숙
+ Version        : 30.00
+ Date           : 1999.02.28
+
+Update Contents
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  1.00     1997.02.16      김승회     최초개발본             설계명세서
+  1.00     1998.09.02      이랑교     최초개발본             설계명세서
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+  30.01    2004.02.24      강륜종     Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드. 		
+  31.00    2004.06.18  강륜종(dsa2000)직급코드값 변동에 따른 수정.  
+	                              코드 10이 사외이사에서 부장으로 변경.   사외이사는 0Z로 코드 변경.
+  31.10    2004.11.    강륜종(dsa2000) Rexec대체 서비스를 위한 수정작업.
+  	                              	                              
+get_rtpaysum(empno, n_retdate, &paysum):3개월급여합
+get_ybonamt(empno,n_retdate,&ybonamt):12개월연차수당
+============================================================================= */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define  SUCCESS   	-1*/
+#define  FAIL      	-2
+
+/* 함수의 Proto type 선언 */
+
+void 	get_lastday(char*, char*);
+void 	get_addmonths(char *,int, char*);
+double	get_term(char *,char *);
+double	get_avggross(char *);
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char	workyymm[7]  = "";		/* 기준년월		*/
+	char	empno[5]     = "";		/* 사번			*/
+	char	korname[13]  = "";		/* 성명			*/
+	char	paycl[3]     = "";		/* 직급			*/
+	double	paygr;				/* 호봉			*/
+	char	empdate[9]   = "";		/* 입사일		*/
+	char	retdate[9]   = "";		/* 퇴사일		*/
+	char	n_retdate[9]   = "";		/* 중도퇴사일 경우	*/
+	char	paynum[3]    = "";		/* 급호차수		*/
+	char	orgnum[4]    = "";		/* 조직차수		*/
+	char	deptcode[7]  = "";		/* 부서코드		*/
+	char	pstate[3]    = "";		/* 인사상태(I114)	*/
+	char	payyn[2]     = "";		/* 급여지급여부		*/
+	char	monthkind[2] = "";		/* 월차계산구분		*/
+						/* [전전월 근태사항]	*/
+	char	fullyn[2]    = "";      	/* 만근여부		*/
+	double	rest;				/* 휴직			*/
+	double	absence;			/* 결근			*/
+	double	sick;				/* 병가			*/
+	double	moncredd;			/* 월차발생일수		*/
+						/* [전월 근태사황]	*/
+	double	monthdd;			/* 월차일수		*/
+	double	halfdd;				/* 반월차일수		*/
+	double	monusedd;			/* 월차사용일수		*/
+						/* [누계현황]		*/
+	double	moncresum;			/* 월차발생일수 누계	*/
+	double	monusesum;			/* 월차사용일수	누계	*/
+	double	mondpsdd;			/* 월차적치일수		*/
+	double	mongivedd;			/* 월차지급일수		*/
+	double	mongivesum;			/* 월차지급일수 누계	*/
+						/* [전월 평균임금]	*/
+/* ==========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      3개월급여합필드초기화
+============================================================================= */
+	double	pay3sum=0;			/* 3개월 급여합		*/
+	double	paysum=0;			/* 3개월 급여합		*/
+
+	double	termdd=0;			/* 3개월근속일수	*/
+	double	bon12sum=0;			/* 12개월 상여합	*/
+	double	ybonamt=0;			/* 연차수당 급여합	*/
+	double	avggross=0;			/* 평균임금		*/
+	double	basicamt;			/* 기본급		*/
+	double	infoamt;			/* 정보통신수당		*/
+	double	dutyamt;			/* 직무수당		*/
+	double	commonpay;			/* 통상임금		*/
+	double	basepay;			/* 수당기준임금		*/
+						/* [지급사항]		*/
+	double	monthamt;			/* 월차수당		*/
+						/*			*/
+	char	bldcode[3] = "";		/* 근무지코드		*/
+	double	trafdays;			/* 교통비지급일수	*/
+	char	writetime[16]  = "";		/* 최종작업일시		*/
+	char	writeman[5]    = "";		/* 최종작업자		*/
+
+	char	jobstep[2]     = "";		/* 작업단계범위		*/
+	char	frempno[5]     = "";		/* 사번FROM		*/
+	char	toempno[5]     = "";		/* 사번TO		*/
+
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+int	s_count;
+int	f_count;
+int	db;
+int	id;
+char	dir[80];
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno = 0; 
+
+void main(int argc,char *argv[])
+{
+	char FL_file[255];
+			
+	if (argc != 6) {  /* /hper8/HINSA/proc/bin/Kbin/pkq2071g 200411 1 D006 pkq2071g 2004110100000 */
+           printf("[Usage] : pkq2071g  1.작업년월 2.작업구분 3.작업자 4.프로그램ID 5.시작시간 \n");	
+           exit(1);
+	}	
+
+	strcpy(workyymm,argv[1]);
+	strcpy(monthkind,argv[2]);
+	strcpy(writeman,argv[3]);
+	
+	/*로그 디렉토리 생성 및 로그작업 */
+	STRINIT(FL_file);
+    	strcpy(FL_file,"pkq2071g");
+
+    	hinsa_get_filename(1, FL_file);
+    	if (hinsa_log_open(FL_file) == FAILURE)
+    	{
+      		hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+      		return;
+    	}
+
+	/* Dsa2000  2004.02.24.	**********************************/
+	/* DB_connect(id,0); */
+	hinsa_log_print(0,"퇴직자 월차 계산 시작...");          
+        hinsa_db_connect();  /*DB Connect 실시..*/
+	/*dsa2000  수정..End......................................*/
+	
+	/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+	strcpy(log_writeman, argv[3]);
+	strcpy(log_progid,   argv[4]);
+	strcpy(log_rundate,  argv[5]);	
+		
+	EXEC SQL DECLARE log_db DATABASE;    
+	hinsa_log_db_connect();
+	/*========================================================*/
+	
+/*debug *************** 
+printf("\n workyymm[%s]",workyymm);
+*************** */
+	if ( process_gen() == SUCCESS)
+	{
+		if (calc_monamt() == SUCCESS)
+		{
+			sprintf(log_buff, "OK === [월차수당 작업완료] ===\n");
+           		Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+			hinsa_exit(0,"OK === [월차수당 작업완료] === ");
+		}
+	}
+	else
+	{	
+		sprintf(log_buff, "ERROR ====== [작업 실패] =====\n");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		error_quit("작업이 실패했습니다.\n");
+	}
+
+}
+
+process_gen()
+{
+	if (delete_records() != SUCCESS)
+		return(FAIL);
+
+	if (gen_records() != SUCCESS)
+		return(FAIL);
+
+	if (add_items() != SUCCESS)
+		return(FAIL);
+	else
+	{
+		return(SUCCESS);
+	}
+}
+
+/*****************************************************************************
+	기존의 자료를 삭제하는 함수.
+ *****************************************************************************/
+delete_records()
+{
+	EXEC SQL
+	DELETE FROM T_PKMRTMO;
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		printf(" Module Name : delete_records() \n");
+		printf(" TABLE ID :  T_PKMRTMO \n");
+		printf(" SQL STATEMENT : DELETE \n");
+		printf(" SQL error %d  \n",sqlca.sqlcode );
+		sprintf(log_buff, "ERROR Module Name : delete_records() \n");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+
+	return(SUCCESS);
+}
+
+/*****************************************************************************
+	당월월차수당 대상자를 생성하는 함수.
+ *****************************************************************************/
+gen_records()
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		char	t_date[9] = "";
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL
+	SELECT	CPAYNUM
+	INTO	:paynum
+	FROM	PKCPBAS;
+	if (sqlca.sqlcode != 0)
+	{
+		printf(" Module Name : gen_records()1 \n");
+		printf(" TABLE ID : PKCPBAS \n");
+		printf(" SQL STATEMENT : SELECT \n");
+		sprintf(log_buff, "ERROR Module Name : gen_records()1 \n");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+
+	get_addmonths(workyymm,-1,t_date);
+	strncpy(t_date+6,"01",2);
+
+	/* 퇴직마스터에서 직급이 10~99사이에 있는 사람이고
+	   입사일이 2달 전1일 이전인 사람 */
+/* ==========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      직급범위(정규직)
+============================================================================= */
+	EXEC SQL
+	INSERT INTO T_PKMRTMO
+	(	WORKYYMM,  EMPNO,  KORNAME, PAYCL,  PAYGR, EMPDATE, RETDATE,
+		PAYNUM,    ORGNUM,   DEPTCODE,PSTATE, MONTHKIND)
+	SELECT 	:workyymm, EMPNO, KORNAME, PAYCL, PAYGR, ORGEMPDATE, RETDATE,
+		:paynum,   ORGNUM, DEPTCODE, PSTATE,  :monthkind
+	FROM	PKMRTMAS
+	WHERE	PAYCL BETWEEN '0Z' AND '99' ;	/*2004.06.18 강륜종(dsa2000) 직급코드값 변동에 따른 수정.  */
+	
+	/*WHERE	PAYCL BETWEEN '10' AND '99' ;
+	/* AND	ORGEMPDATE <= :t_date;  leerk 99.03.30*/
+
+	if (sqlca.sqlcode != 0)
+	{
+		printf(" Module Name : gen_records()2 \n");
+		printf(" TABLE ID : PKMPMAS AND T_PKMRTMO \n");
+		printf(" SQL STATEMENT : INSERT \n");
+		sprintf(log_buff, "ERROR Module Name : gen_records()2 \n");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+
+	return(SUCCESS);
+}
+
+/*****************************************************************************
+	급여특이자를 삭제하는 함수.
+ *****************************************************************************/
+delete_paysing()
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		char	basedate[9] = "";
+		double  count;
+	EXEC SQL END DECLARE SECTION;
+
+	get_lastday(workyymm,basedate);
+
+	EXEC 	SQL
+	SELECT	COUNT(*)
+	INTO	:count
+	FROM	PKMPSMAS
+	WHERE	UPPER(NVL(YM_YN,'*')) = 'Y' AND NVL(SPTODATE,'0') >= :basedate;
+	if (sqlca.sqlcode != 0)
+	{
+		printf(" Module Name : delete_paysing()1 \n");
+		printf(" TABLE ID : PKMPSMAS \n");
+		printf(" SQL STATEMENT : SELECT \n");
+		sprintf(log_buff, "ERROR Module Name : delete_paysing()1 \n");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+
+	if (count == 0)
+		return(SUCCESS);
+
+	EXEC SQL
+	DELETE	FROM T_PKMRTMO
+	WHERE	WORKYYMM = :workyymm AND
+		EMPNO IN (
+		SELECT	EMPNO
+		FROM	PKMPSMAS
+		WHERE	UPPER(NVL(YM_YN,'*')) = 'Y' AND
+			NVL(SPTODATE,'0') >= :basedate
+			);
+	if (sqlca.sqlcode != 0)
+	{
+		printf(" Module Name : delete_paysing2 \n");
+		printf(" TABLE ID : T_PKMRTMO \n");
+		printf(" SQL STATEMENT : DELETE \n");
+		sprintf(log_buff, "ERROR Module Name : delete_paysing()2 \n");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+	else
+		return(SUCCESS);
+}
+/*****************************************************************************
+	기준월의 마지막일을 구하는 함수.
+ *****************************************************************************/
+void get_lastday(char* yymm, char* result)
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		char	basedate[9] = "";
+	EXEC SQL END DECLARE SECTION;
+
+	sprintf(basedate,"%-6s01",yymm);
+
+	EXEC SQL
+	SELECT TO_CHAR(LAST_DAY(TO_DATE(:basedate,'YYYYMMDD')),'YYYYMMDD')
+	INTO	:basedate
+	FROM	DUAL;
+
+	basedate[8] = '\0';
+	sprintf(result,"%s",basedate);
+}
+
+/*****************************************************************************
+	월차수당테이블에 근태관련사항을 추가시키는 함수.
+ *****************************************************************************/
+add_items()
+{
+	EXEC SQL DECLARE cursor1 CURSOR FOR
+	SELECT	EMPNO, NVL(EMPDATE,'00000000')
+	FROM	T_PKMRTMO
+	WHERE	WORKYYMM = :workyymm
+	ORDER BY EMPNO;
+
+	EXEC SQL OPEN cursor1;
+
+	if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+	    (sqlca.sqlcode != -1405))
+	{
+		EXEC SQL CLOSE cursor1;
+		printf(" Module Name : add_items() \n");
+		printf(" TABLE ID : T_PKMRTMO \n");
+		printf(" SQL STATEMENT : SELECT \n");
+		sprintf(log_buff, "ERROR Module Name : add_items() \n");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+
+	s_count = f_count = 0;
+
+	while(1)
+	{
+
+		EXEC SQL FETCH cursor1
+			 INTO  :empno,:empdate;
+
+		if (sqlca.sqlcode == 1403)
+		{
+			EXEC SQL CLOSE cursor1;
+			return(SUCCESS);
+		}
+
+		if ( (process_knte1() == SUCCESS) &&
+		     (process_knte2() == SUCCESS) &&
+		     (sumup() == SUCCESS) )
+		{
+			s_count++;
+		}
+		else
+		{
+			EXEC SQL CLOSE cursor1;
+			printf("생성에 실패한  EMPNO : %s \n",empno);
+			sprintf(log_buff, "생성에 실패한  EMPNO : %s \n",empno);
+           		Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+			return(FAIL);
+		}
+	}
+}
+/*****************************************************************************
+	전전월 근태사항을 처리하는 함수.
+ *****************************************************************************/
+process_knte1()
+{
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		char	t_date[7];
+		char	bb_date[9];
+		double	count;
+		char	sqlstr[1000];
+	EXEC SQL END DECLARE SECTION;
+	int i;
+
+	get_addmonths(workyymm,-2,t_date);
+	strncpy(bb_date,t_date,6);
+	strncpy(bb_date+6,"01",2);
+
+	i = check_history(-2);
+
+	if ( i == 1 )
+	{
+		EXEC	SQL
+		SELECT 	UPPER(NVL(FULLYN,'0')), YMDEDCNT
+		INTO	:fullyn, :count
+		FROM	PKHDUTY
+		WHERE	EMPNO = :empno AND DUYYMM = :t_date
+		and (duyymm <= '200209'or (conyn ='Y' and duyymm > '200209')) ;/*parksh 20030204*/
+		if (sqlca.sqlcode != 0)
+		{
+			printf(" Module Name : process_knte1() \n");
+			printf(" TABLE ID : PKHDUTY \n");
+			printf(" SQL STATEMENT : SELECT \n");
+			sprintf(log_buff, "Error Module Name : process_knte1()");
+           		Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+			return(FAIL);
+		}
+	}
+	else if ( i == 2 )
+	{
+		EXEC	SQL
+		SELECT 	UPPER(NVL(FULLYN,'0')), YMDEDCNT
+		INTO	:fullyn, :count
+		FROM	PKHDUHIS
+		WHERE	EMPNO = :empno AND DUYYMM = :t_date
+		and (duyymm <= '200209'or (conyn ='Y' and duyymm > '200209')) ;/*parksh 20030204*/
+		if (sqlca.sqlcode != 0)
+		{
+			printf(" Module Name : process_knte1() \n");
+			printf(" TABLE ID : PKHDUHIS \n");
+			printf(" SQL STATEMENT : SELECT \n");
+			sprintf(log_buff, "Error Module Name : process_knte1()");
+           		Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+			return(FAIL);
+		}
+	}
+	else
+	{
+		strcpy(fullyn,"N");/* 미입력시 만근여부를 N으로 함.parksh 20030204 Y->N 수정 */
+		count = 0;
+	}
+
+/*
+	else if ( i == 0 )
+	{
+		printf(" 전전월근태 자료가 존재하지 않습니다.\n");
+		return(FAIL);
+	}
+	else
+		return(FAIL);
+*/
+
+/* printf("empno %s,empdate %s",empno,empdate);	 */
+
+	if ( (strcmp(fullyn,"Y") == 0) &&
+	     (count == 0) && (strcmp(empdate,bb_date) <= 0) )
+		moncredd = 1;
+	else
+		moncredd = 0;
+
+	if (i == 1)
+	{
+		EXEC SQL
+		UPDATE	T_PKMRTMO
+		SET	( FULLYN, ABSENCE, SICK, REST ) =
+			(
+			    SELECT FULLYN, ABSENCE, SICK, ( SICK+ABSENCE+
+				   SICKREST+BABYREST+MILREST+STAYREST+
+				   STUDYREST+GENREST+ETCREST)
+			    FROM   PKHDUTY
+			    WHERE  duyymm = :t_date AND EMPNO = :empno
+			      AND (duyymm <= '200209' or (conyn ='Y' and duyymm > '200209'))  /*parksh 20030210*/
+		  	),
+			MONCREDD = :moncredd
+		WHERE	EMPNO = :empno AND WORKYYMM = :workyymm;
+
+		if (sqlca.sqlcode != 0)
+		{
+			printf(" Module Name : process_knte1() 3 \n");
+			printf(" TABLE ID : T_PKMRTMO AND PKHDUTY \n");
+			printf(" SQL STATEMENT : UPDATE \n");
+			sprintf(log_buff, "Error Module Name : process_knte1() 3");
+           		Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+			return(FAIL);
+		}
+	}
+	else if (i == 2)
+	{
+		EXEC SQL
+		UPDATE	T_PKMRTMO
+		SET	( FULLYN, ABSENCE, SICK, REST ) =
+			(
+			    SELECT FULLYN, ABSENCE, SICK, ( SICK+ABSENCE+
+				   SICKREST+BABYREST+MILREST+STAYREST+
+				   STUDYREST+GENREST+ETCREST)
+			    FROM   PKHDUHIS
+			    WHERE  duyymm = :t_date AND EMPNO = :empno
+			      AND (duyymm <= '200209' or (conyn ='Y' and duyymm > '200209'))  /*parksh 20030210*/
+		  	),
+			MONCREDD = :moncredd
+		WHERE	EMPNO = :empno AND WORKYYMM = :workyymm;
+
+		if (sqlca.sqlcode != 0)
+		{
+			printf("Module Name : process_knte1() 4 \n");
+			printf("TABLE ID : T_PKMRTMO AND PKHDUHIS \n");
+			printf(" SQL STATEMENT : UPDATE \n");
+			sprintf(log_buff, "Error Module Name : process_knte1() 4");
+           		Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+			return(FAIL);
+		}
+	}
+	else
+	{
+		EXEC SQL
+		UPDATE	T_PKMRTMO
+		SET	FULLYN 		= :fullyn,
+			ABSENCE		= 0,
+			SICK		= 0,
+			REST 		= 0,
+			MONCREDD 	= :moncredd
+		WHERE	EMPNO = :empno AND WORKYYMM = :workyymm;
+	}
+
+	return(SUCCESS);
+}
+
+/*****************************************************************************
+	전월 근태사항을 처리하는 함수.
+ *****************************************************************************/
+process_knte2()
+{
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		char	t_date[7];
+	EXEC SQL END DECLARE SECTION;
+	int i;
+
+	i = check_history(-1);
+
+	get_addmonths(workyymm,-1,t_date);
+
+	if (i == 1)
+	{
+		EXEC SQL
+		UPDATE	T_PKMRTMO
+		SET	( MONTHDD, HALFDD, MONUSEDD ) =
+			(
+			    SELECT MONTH, HALF, (MONTH + (HALF*0.5))
+			    FROM   PKHDUTY
+			    WHERE  duyymm = :t_date AND EMPNO = :empno
+			    and (duyymm <= '200209'or (conyn ='Y' and duyymm > '200209')) /*parksh 20030204수정*/
+		  	)
+		WHERE	EMPNO = :empno AND WORKYYMM = :workyymm;
+
+		if (sqlca.sqlcode != 0)
+		{
+			printf(" Module Name : process_knte2() \n");
+			printf(" TABLE ID : T_PKMRTMO AND PKHDUTY \n");
+			printf(" SQL STATEMENT : UPDATE \n");
+			sprintf(log_buff, "Error Module Name : process_knte2() ");
+           		Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+			return(FAIL);
+		}
+	}
+	else if (i == 2)
+	{
+		EXEC SQL
+		UPDATE	T_PKMRTMO
+		SET	( MONTHDD, HALFDD, MONUSEDD ) =
+			(
+			    SELECT MONTH, HALF, (MONTH + (HALF*0.5))
+			    FROM   PKHDUHIS
+			    WHERE  duyymm = :t_date AND EMPNO = :empno
+			    and (duyymm <= '200209'or (conyn ='Y' and duyymm > '200209')) /*parksh 20030204수정*/
+		  	)
+		WHERE	EMPNO = :empno AND WORKYYMM = :workyymm;
+
+		if (sqlca.sqlcode != 0)
+		{
+			printf("Module Name : process_knte2() 2\n");
+			printf("TABLE ID : T_PKMRTMO AND PKHDUHIS \n");
+			printf(" SQL STATEMENT : UPDATE \n");
+			sprintf(log_buff, "Error Module Name : process_knte2() 2");
+           		Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+			return(FAIL);
+		}
+	}
+/*
+	else if ( i == 0 )
+	{
+		printf(" 전월근태 자료가 존재하지 않습니다.\n");
+		return(FAIL);
+	}
+	*/
+	return(SUCCESS);
+}
+/*****************************************************************************
+	기준월 + m 개월한 날짜를 구하는 함수.
+ *****************************************************************************/
+void get_addmonths(char *p_date,int i,char *result)
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		char	t_date[7]  = "";
+		char	t_date2[7] = "";
+		int 	n;
+	EXEC SQL END DECLARE SECTION;
+
+	strcpy(t_date,p_date);
+
+	n = i;
+	EXEC SQL
+	SELECT	TO_CHAR( ADD_MONTHS( TO_DATE(:t_date,'YYYYMM'), :n ),'YYYYMM' )
+	INTO :t_date2
+	FROM DUAL;
+
+	retdate[6] = '\0';
+
+	sprintf(result,"%s",t_date2);
+}
+/*****************************************************************************
+	근태내역을 근태내역화일에서 읽어야 할 지 아니면,
+	근태이력화일에서 읽어야 할 지를 결정하는 함수.
+	0 - > 어느 쪽에도 존재하지 않는 경우.
+	1 - > 근태내역화일
+	2 - > 근태이력화일
+ *****************************************************************************/
+check_history(int i)
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		char	t_date[7] = "";
+		double	count;
+	EXEC SQL END DECLARE SECTION;
+
+	get_addmonths(workyymm,i,t_date);
+	count = 0;
+
+	EXEC SQL
+	SELECT	COUNT(*)
+	INTO	:count
+	FROM	PKHDUTY
+	WHERE	DUYYMM = :t_date AND EMPNO = :empno
+	  AND   (duyymm <= '200209' or (conyn ='Y' and duyymm > '200209')) ; /*parksh20030210수정*/
+
+	if (sqlca.sqlcode != 0)
+	{
+		printf(" Module Name : check_history() \n");
+		printf(" TABLE ID : PKHDUTY \n");
+		printf(" SQL STATEMENT : SELECT \n");
+		sprintf(log_buff, "Error Module Name : check_history() ");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+
+	if (count > 0)
+		return(1);
+
+	count = 0;
+
+	EXEC SQL
+	SELECT	COUNT(*)
+	INTO	:count
+	FROM	PKHDUHIS
+	WHERE	DUYYMM = :t_date AND EMPNO = :empno
+	  AND   (duyymm <= '200209' or (conyn ='Y' and duyymm > '200209')) ; /*parksh20030210수정*/
+
+	if (sqlca.sqlcode != 0)
+	{
+		printf(" Module Name : check_history() 2\n");
+		printf(" TABLE ID : PKHDUHIS \n");
+		printf(" SQL STATEMENT : SELECT \n");
+		sprintf(log_buff, "Error Module Name : check_history() 2");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+
+	if (count > 0)
+		return(2);
+	else
+		return(0);
+}
+
+/*****************************************************************************
+	누계항목을 처리하는 함수.
+ *****************************************************************************/
+sumup()
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		char	t_date[7] = "";
+		double	count;
+		double	tmp1;
+		double	tmp2;
+		double	tmp3;
+		double	tmp4;
+	EXEC SQL END DECLARE SECTION;
+
+	get_addmonths(workyymm,-1,t_date);
+
+
+
+	EXEC SQL
+	SELECT 	COUNT(*)
+	INTO	:count
+	FROM	PKHMOHIS
+	WHERE	EMPNO = :empno AND WORKYYMM = :t_date;
+
+	if (sqlca.sqlcode != 0)
+	{
+		printf(" Module Name : sumup() \n");
+		printf(" TABLE ID : PKHMOHIS \n");
+		printf(" SQL STATEMENT : SELECT \n");
+		sprintf(log_buff, "Error Module Name : sumup() \n");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+
+	if (count > 0)
+	{
+		EXEC SQL
+		SELECT	MONCRESUM, MONUSESUM, MONGIVESUM, MONGIVEDD
+		INTO	:tmp1, :tmp2, :tmp3, :tmp4
+		FROM	PKHMOHIS
+		WHERE	EMPNO = :empno AND WORKYYMM = :t_date;
+
+		if (sqlca.sqlcode != 0)
+		{
+			printf(" Module Name : sumup() 2\n");
+			printf(" TABLE ID : PKHMOHIS \n");
+			printf(" SQL STATEMENT : SELECT \n");
+			sprintf(log_buff, "Error Module Name : sumup() 2\n");
+           		Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+			return(FAIL);
+		}
+	}
+	else
+	{
+		tmp1 = 0;
+		tmp2 = 0;
+		tmp3 = 0;
+		tmp4 = 0;
+	}
+
+	EXEC SQL
+	SELECT 	NVL(MONCREDD,0), NVL( MONUSEDD,0)
+	INTO	:moncredd, :monusedd
+	FROM	t_pkmrtmo
+	WHERE	EMPNO = :empno AND WORKYYMM = :workyymm;
+
+	if (sqlca.sqlcode != 0)
+	{
+		printf(" Module Name : sumup() 3\n");
+		printf(" TABLE ID : PKMMOMAS \n");
+		printf(" SQL STATEMENT : SELECT \n");
+		sprintf(log_buff, "Error Module Name : sumup() 3\n");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+
+/*debug *************** 
+printf(" workyymm %s",workyymm);
+*debug *************** */
+	if (strncmp(workyymm+4,"01",2) == 0)
+	{
+		tmp1 = tmp2 = tmp3 = tmp4 = 0;
+	}
+/*2002.3.6.유효성 주석처리 -->지급월차가 2개로 계산됨.
+        else if (strncmp(workyymm+4,"02",2) == 0) /* 2월이면 발생1개 이력인 한나도 없슴 it's my opinion
+	{
+		tmp1 = 1;
+		tmp2 = tmp3 = tmp4 = 0;
+	}
+*/	
+
+	moncresum 	= tmp1 + moncredd;  /*발생*/
+	monusesum  	= tmp2 + monusedd;  /*사용*/ 
+	mongivesum 	= tmp3 + tmp4;      /*지급*/ 
+	mondpsdd	= moncresum - monusesum - mongivesum;
+
+	if (mondpsdd > 0)
+		mongivedd = mondpsdd;
+	else
+		mongivedd = 0;
+/*	mondpsdd  = moncredd - monusedd - tmp4;
+	if ( mondpsdd > 0 )
+		mongivedd = mondpsdd;
+	else
+		mongivedd = 0;
+	mongivesum = tmp3 + mongivedd;  Modified By PIS at 1997.01.03 */
+
+	DPsys_date(writetime,0);
+
+	EXEC SQL
+	UPDATE	t_pkmrtmo
+	SET	MONCRESUM = :moncresum, MONUSESUM = :monusesum,
+		MONDPSDD  = :mondpsdd,	MONGIVEDD = :mongivedd,
+		MONGIVESUM = :mongivesum,
+		WRITEMAN  = :writeman, WRITETIME = :writetime
+	WHERE	EMPNO = :empno AND WORKYYMM = :workyymm;
+
+	if (sqlca.sqlcode != 0)
+	{
+
+		printf(" Module Name : sumup() \n");
+		printf(" TABLE ID : t_pkmrtmo \n");
+		printf(" SQL STATEMENT : UPDATE \n");
+		sprintf(log_buff, "Error Module Name : sumup() 4\n");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+
+	return(SUCCESS);
+}
+
+calc_monamt()
+{
+	EXEC SQL DECLARE cursor2 CURSOR FOR
+	SELECT	A.EMPNO, NVL(A.EMPDATE,'00000000'),
+		A.RETDATE,MONGIVEDD,
+		NVL(BLDCODE,'  ')
+	FROM	T_PKMRTMO A, PKMPMAS B
+	WHERE	WORKYYMM = :workyymm AND
+		A.EMPNO = B.EMPNO
+	ORDER BY EMPNO;
+
+	EXEC SQL OPEN cursor2;
+	if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+	    (sqlca.sqlcode != -1405))
+	{
+		EXEC SQL CLOSE cursor2;
+		printf("ERROR_CODE : %d, Cursor2 Open Error \n",  sqlca.sqlcode);
+		sprintf(log_buff, "ERROR_CODE : %d, Cursor2 Open Error \n",  sqlca.sqlcode);
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+
+
+	EXEC SQL
+	SELECT	TRAFDAYS
+	INTO	:trafdays
+	FROM	PKCMCBAS;
+	if (sqlca.sqlcode != 0)
+	{
+		EXEC SQL CLOSE cursor2;
+		printf("ERROR_CODE : %d, 식교비지급기준 읽기오류! \n", sqlca.sqlcode);
+		sprintf(log_buff, "ERROR_CODE : %d, 식교비지급기준 읽기오류! \n", sqlca.sqlcode);
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+	s_count = 0;
+
+	while(1)
+	{
+
+		EXEC SQL FETCH cursor2
+			 INTO  :empno, :empdate, :retdate,:mongivedd, :bldcode;
+
+		if (sqlca.sqlcode == 1403)
+		{
+			EXEC SQL CLOSE cursor2;
+			return(SUCCESS);
+		}
+
+
+		/* ******************************************************************
+			만근을 했을 경우에는 퇴직일 기준으로
+			그렇지 않을 경우엔 전월말일 기준으로 평균임금을 산정한다.
+		******************************************************************  */
+		EXEC SQL
+		SELECT DECODE(	TO_CHAR(LAST_DAY(TO_DATE(:retdate,'YYYYMMDD')),'YYYYMMDD'),
+				:retdate,:retdate,
+				TO_CHAR(ADD_MONTHS(LAST_DAY(TO_DATE(:retdate,
+					'YYYYMMDD')),-1),'YYYYMMDD')
+			)
+		INTO    :n_retdate
+		FROM	DUAL;
+
+
+		/* get_pay3sum(empno,n_retdate,&pay3sum,&termdd); */
+		/* 중3도퇴사자의 경우에는
+		   전월말일지급분기준으로 평균임금을 산정한다. */
+/* ==========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      3개월급여합함수수정
+============================================================================= */
+		get_rtpaysum(empno, n_retdate, &paysum);
+
+		pay3sum = paysum;
+
+		/*debug ****
+		   printf("\n empno[%s],n_retdate[%s],pay3sum[%7f.0] ",
+				empno,n_retdate,pay3sum);
+		* ****/
+
+		if (paysum == FAIL)
+		{
+			EXEC SQL CLOSE cursor2;
+			return(FAIL);
+		}
+
+		get_ybonamt(empno,n_retdate,&ybonamt);
+		bon12sum = ybonamt;
+		/* ****
+		   printf("\n empno[%s],n_retdate[%s],bon12sum[%7f.0] ",
+				empno,n_retdate,bon12sum);
+		* *** */
+		if (ybonamt == FAIL)
+		{
+			EXEC SQL CLOSE cursor2;
+			return(FAIL);
+		}
+
+		avggross = get_avggross(n_retdate);
+		if (avggross == FAIL)
+		{
+			EXEC SQL CLOSE cursor2;
+			return(FAIL);
+		}
+
+		commonpay = get_commonpay();
+		if (commonpay == FAIL)
+		{
+			EXEC SQL CLOSE cursor2;
+			return(FAIL);
+		}
+
+		if (avggross > commonpay)
+		   	basepay = avggross;
+		else
+		 	basepay = commonpay;
+
+		monthamt = basepay * 8 / 184 * mongivedd;
+
+/*debug *************** 
+printf("\n  monthamt %10f ",monthamt);
+*debug *************** */
+		
+/* ==========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      3개월급여합,연차수당항목추가
+============================================================================= */
+/*mjs pay3sum -> paysum  */
+		EXEC SQL UPDATE T_PKMRTMO
+		SET	 PAY3SUM  = :paysum,   BON12SUM  = :ybonamt,
+			 AVGGROSS = :avggross, COMMONPAY = :commonpay,
+			 BASEPAY  = :basepay,  MONTHAMT  = CEIL(:monthamt),
+			 WRITEMAN = :writeman, WRITETIME = TO_CHAR(SYSDATE,'YYYYMMDDHH24MISSD')
+		WHERE	 EMPNO = :empno AND WORKYYMM = :workyymm;
+		/* *******************
+printf("\n empno %s,pay3sum %10.0f bon12sum %10.0f ,avggross %10.0f",
+pay3sum,bon12sum,avggross);
+		* ****************** */
+		if (sqlca.sqlcode != 0)
+		{
+			EXEC SQL CLOSE cursor2;
+			EXEC SQL CLOSE cursor2;
+			printf("ERROR_CODE : %d, T_PKMRTMO Update Error... \n", sqlca.sqlcode);
+			printf(" 계산에 실패한 EMPNO : %.4s\n",empno);
+			/*sprintf(log_buff, "T_PKMRTMO Update Error  계산에 실패한 EMPNO : %.4s\n",empno);
+           		Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+			return(FAIL);
+		}
+		else
+		{
+			s_count++;
+		}
+	}
+}
+
+/*****************************************************************************
+	 평균임금 산정
+*****************************************************************************/
+double	get_avggross(retdate)
+char	retdate[8+1];
+{
+/* ==========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      상여구하는루틴삭제
+============================================================================= */
+/*mjs delete ======================================================== *
+*	double  bonday =0;
+*	double  bonmm  =0;
+*	double  payday =0;
+*
+*
+*	EXEC  SQL
+*	SELECT  TO_DATE(:retdate,'YYYYMMDD')
+*	         -  GREATEST(TO_DATE(A.EMPDATE,'YYYYMMDD'),
+*	                     ADD_MONTHS(TO_DATE(SUBSTR(:retdate,1,6),'YYYYMM'),
+*					-11)
+*	  		)
+*		+ 1 calbonday,
+*		TRUNC(MONTHS_BETWEEN(TO_DATE(:retdate,'YYYYMMDD') +1 ,
+*				GREATEST(TO_DATE(A.EMPDATE,'YYYYMMDD'),
+*			  	       ADD_MONTHS(TO_DATE(SUBSTR(:retdate,1,6),
+*						'YYYYMM'),
+*					-11)
+*			     		)
+*				    )
+*		) calbonmm,
+*		TO_DATE(:retdate,'YYYYMMDD')
+*		-  GREATEST(TO_DATE(A.EMPDATE,'YYYYMMDD'),
+*			ADD_MONTHS(TO_DATE(SUBSTR(:retdate,1,6),'YYYYMM'),
+*				-2)
+*			)
+*		+1 calpayday
+*	INTO    :bonday,:bonmm,:payday
+*	FROM    PIMPMAS A, PKMPMAS B
+*	WHERE	A.EMPNO = B.EMPNO
+*	AND    	A.EMPNO =:empno;
+* ======================================================== 
+ 3개월 미만자 월차계산 ============================
+	퇴사일과 입사일 차를 구하여 3개월보다 작으면 차로 그렇지 않으면 3개월로	  */
+	double  paymm  =0;
+
+	EXEC  SQL
+	SELECT	LEAST(FLOOR(MONTHS_BETWEEN(TO_DATE(RETDATE,'YYYYMMDD')+1, 
+	              TO_DATE(A.EMPDATE,'YYYYMMDD'))),3)	
+	INTO    :paymm
+	FROM    PKMRTMAS A
+	WHERE	A.EMPNO =:empno;
+
+	EXEC SQL
+	SELECT  CEIL(:paysum/:paymm)+CEIL(:ybonamt /12)
+	INTO    :avggross
+	FROM    DUAL;
+
+	/* DEBUG *************************** *
+	  printf(" pay3sum %10.1f,payday %10.1f,bon12sum %10.1f,bonday %10.1f,paymm %4.0f avggross %10f ",
+                 pay3sum ,payday ,bon12sum ,bonday ,paymm,avggross);
+		 * ********************************** */
+
+	return(avggross);
+}
+
+/*****************************************************************************
+	3개월 급여합에서의 자가가운전지원금을 처리하는 함수.
+ *****************************************************************************/
+double	get_ocaramt()
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		char	t_date[7] = "";
+		double	trafamt;
+		double	tmp[3];
+		double	count;
+	EXEC SQL END DECLARE SECTION;
+	int i;
+
+	for ( i = 0; i < 3 ; i++)
+	{
+		get_addmonths(workyymm,-(i+1),t_date);
+
+		EXEC SQL
+		SELECT	COUNT(*)
+		INTO	:count
+		FROM	PKHPHIS
+		WHERE	EMPNO = :empno AND PAYDATE = :t_date;
+		if (sqlca.sqlcode != 0)
+		{
+			printf(" Module Name : get_ocaramt() \n");
+			printf(" TABLE ID : PKHPHIS \n");
+			printf(" SQL STATEMENT : SELECT \n");
+			/*sprintf(log_buff, "Error  Module Name : get_ocaramt");
+           		Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+			return(FAIL);
+		}
+
+		if (count > 0)
+		{
+			EXEC SQL
+			SELECT 	ODAMT
+			INTO	:tmp[i]
+			FROM	PKHPHIS
+			WHERE	EMPNO = :empno AND PAYDATE = :t_date;
+			if (sqlca.sqlcode != 0)
+			{
+				printf(" Module Name : get_ocaramt() \n");
+				printf(" TABLE ID : PKHPHIS \n");
+				printf(" SQL STATEMENT : SELECT \n");
+				/*sprintf(log_buff, "Error Module Name : get_ocaramt");
+           			Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+				return(FAIL);
+			}
+
+			EXEC SQL
+			SELECT	NVL(TRAFAMT,0)
+			INTO	:trafamt
+			FROM	PKCPBLD
+			WHERE	BLDCODE = :bldcode;
+			if (sqlca.sqlcode != 0)
+			{
+				printf(" Module Name : get_ocaramt() \n");
+				printf(" TABLE ID : PKCPBLD \n");
+				printf(" SQL STATEMENT : SELECT \n");
+				/*sprintf(log_buff, "Error Module Name : get_ocaramt");
+           			Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+				return(FAIL);
+			}
+
+			if (tmp[i] > 0)
+				tmp[i] = trafdays * trafamt;
+			else
+				tmp[i] = 0;
+		}
+		else
+			tmp[i] = 0;
+	}
+
+	return(tmp[0]+tmp[1]+tmp[2]);
+}
+
+
+/*****************************************************************************
+	입사일과 지급기준전월말일까지의 기간을 일단위로 구하는 함수.
+ *****************************************************************************/
+double	get_term(char *frdate,char *todate)
+{
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		char	t1_date[9] = "";
+		char	t2_date[9] = "";
+		char	t3_date[7] = "";
+		double	result;
+	EXEC SQL END DECLARE SECTION;
+
+	strcpy(t1_date,frdate);
+	get_addmonths(todate,-1,t3_date);
+	get_lastday(t3_date,t2_date);
+
+	EXEC SQL
+	SELECT	TO_DATE(:t2_date,'YYYYMMDD') - TO_DATE(:t1_date,'YYYYMMDD')
+	INTO	:result
+	FROM	DUAL;
+
+	return(result);
+}
+/*****************************************************************************
+	통상임금을 구하는 함수.
+ *****************************************************************************/
+/* ==========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      통상임금로직변경
+============================================================================= */
+get_commonpay()
+{
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	         double	result;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL
+	SELECT	CEIL(nvl(TOTPAY,0)/23)
+	INTO	:result
+	FROM	PKCPBAS A, PKHYPHIS B
+        WHERE   A.YEARPAYNUM = B.YEARPAYNUM
+        AND 	B.EMPNO = :empno;
+	if (sqlca.sqlcode != 0)
+	{
+		printf(" Module Name : get_commonpay() \n");
+		printf(" TABLE ID : PKMPMAS \n");
+		printf(" SQL STATEMENT : SELECT \n");
+		/*sprintf(log_buff, "Error Module Name : get_commonpay");
+           	Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+		return(FAIL);
+	}
+	return(result);
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{	
+        EXEC SQL AT log_db 
+        INSERT INTO PYBATLOG
+        VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+        if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+	{	
+		printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);		
+		return(FAILURE);
+	}                        
+                        
+        EXEC SQL AT log_db COMMIT WORK ;	
+}

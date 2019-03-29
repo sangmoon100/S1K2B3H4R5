@@ -1,0 +1,79 @@
+/* =================== Program Header ==========================================
+ PROGRAM-NAME   : killproc(근태집계를 수행하는중에 작업취소)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 급여공통기준
+ Programmer     : 이인환
+ Version        : 1.00
+ Date           : 1997.02.16
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   1.00       1997.02.16         이인환          최초개발본      설계명세서
+   2.00       2004.03.18         강륜종          Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.                              
+============================================================================= */
+#include <stdio.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char	pname[20];
+	char	sttime[15];
+	char	empno[5];
+	int	pid;
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+int	id;
+
+main(argc,argv)
+int argc;
+char *argv[];
+{
+	char	tmpstr[80];
+	
+	if (argc != 5)  /*killproc pka4060g '+ StartTime + ' ' + GSempno + ' 0' */
+	{	
+		printf("사용법 : killproc 1.취소할파일명 2.시작시간 3.작업자사번 4.무의미  \n");
+		exit(0);
+	}
+
+	/* Dsa2000  2004.03.18.	**********************************/
+	hinsa_log_print(0,"근태집계를 수행하는중에 작업취소...");
+        hinsa_db_connect();
+	/*dsa2000  수정..End......................................*/
+		
+	memset(tmpstr,'\0',sizeof(tmpstr));
+	sprintf(pname,"%s",argv[1]);
+	sprintf(sttime,"%s",argv[2]);
+	sprintf(empno,"%s",argv[3]);
+
+	/*  kill 할 process 의 pid를 구한다 */
+	EXEC SQL 
+		SELECT 	pid 
+		INTO	:pid
+		FROM   	pkcproc
+		WHERE 	pname=:pname AND stime=:sttime AND empno=:empno;
+
+	if (sqlca.sqlcode == 0)
+	{
+		sprintf(tmpstr,"kill -9 %d",pid);
+		system(tmpstr);
+		EXEC SQL
+		DELETE FROM pkcproc
+		WHERE 	pname=:pname AND stime=:sttime AND empno=:empno;
+		
+		sprintf(tmpstr,"%s 작업취소 완료",pname);
+		/*process_exit(tmpstr);*/
+		hinsa_exit(0,"OK ====== [작업취소 성공] =====\n");	
+	}
+	else
+	{
+		sprintf(tmpstr,"%s 작업취소 실패",pname);
+		error_quit(tmpstr);
+	}	
+	
+}

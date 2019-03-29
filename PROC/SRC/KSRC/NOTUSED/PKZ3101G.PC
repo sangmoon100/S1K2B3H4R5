@@ -1,0 +1,1063 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : pkz3101g(임원 연말정산 Diskette 자료 생성)
+ SYSTEM-NAME    : 정산
+ SUBSYSTEM-NAME : 연말정산
+ Programmer     : 강륜종
+ Version        : 1.0
+ Date           : 2009.01.
+
+Update Contents
+Version  date(yy.mm.dd) programmer       description     relevant doc.no
+  1.00    2009.01.      강 륜 종
+============================================================================= */
+#include <stdio.h>
+#include <math.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+#define FAIL     -2
+
+EXEC SQL BEGIN DECLARE SECTION;
+  char  workyy[4+1]    ="" ;
+  int gubun ;  
+  char  givedate[8+1]   ="" ;    /* 제출년월일          */
+  char  repmanno[6+1]   ="" ;    /* 세무대리인관리번호  */
+  char  corpno[10+1]    ="" ;    /* 사업자등록번호      */
+  char  corpname[40+1]  ="" ;    /* 법인명              */
+  char  corpregno[13+1] ="" ;    /* 회사법인등록번호    */
+  char  presname[30+1]  ="" ;    /* 사장명(대표자성명)  */
+  char  presjuno[13+1]  ="" ;    /* 사장주민번호        */
+  char  corpzip[6+1]    ="" ;    /* 회사우편번호        */
+  char  corpaddr[70+1]  ="" ;    /* 회사주소(소재지)    */
+  char  corptel[15+1]   ="" ;    /* 전화번호            */
+  char  presempno[4+1]  ="" ;    /* 사장사번            */
+  char  semusu[3+1]     ="" ;    /* 세무서코드          */
+
+  /* ***** 제출내역 ***** */
+  int     dutycnt ;              /* 신고(제출)의무자 수   */
+  double  paysum;                /* 소득금액 총계         */
+  double  dintaxsum;             /* 소득세결정세액총계    */
+  double  djutaxsum;             /* 주민세결정세액총계    */
+  double  dnongtaxsum;           /* 농특세결정세액총계    */
+  double  brec_dtaxsum;          /* 결정세액총계          */
+  
+  int     cdutycnt_rt  ;         /* 신고(제출)의무자수 : 퇴직자  */  
+  double  paysum_rt    ;         /* 소득금액 총계 : 퇴직자       */  
+  double  dintaxsum_rt ;         /* 소득세결정세액총계 :퇴직자   */  
+  double  djutaxsum_rt ;         /* 주민세결정세액총계 :퇴직자   */  
+  double  brec_dtaxsum_rt ;      /* 결정세액총계 : 퇴직자       */   
+
+
+  /* ***** 자료관리번호  ***** */
+  double  seqno ;                /* 일련번호    */
+
+  /* **** 원천징수의무자 **** */
+
+  /* **** 소득자(근로자) **** */
+  int   cdutycnt ;               /* 현    근무처수 */
+  int   ddutycnt ;               /* 종(전)근무처수 */
+  int   ddutycnt_rt;
+  int   ddutycnt1 ;              /* 종2(전)근무처수 */
+  char  empno[4+1]    ="" ;
+  char  korname[30+1] ="" ;      /* 소득자성명  */
+  char  juminid[13+1] ="" ;      /* 소득자주민번호  */
+  char  zipno[10+1]   ="" ;      /* 우편번호    */
+  char  addr[80+1]    ="" ;      /* 주소        */
+  char  ysfrdate[8+1] ="" ;      /* 귀속년도 fr */
+  char  ystodate[8+1] ="" ;      /* 귀속년도 to */
+  char  subdate[8+1]  ="" ;      /* 제출일      */
+  double  mgitasodk ;            /* 기타소득      */
+
+  /* **** 근무처별 소득명세 **** */
+  double  mpaysum   ;            /*(주) 급여총액  */
+  double  mbonsum   ;            /*(주) 상여총액  */
+  double  mcogbonsum   ;         /*(주) 인정상여     */
+  double  minsum    ;            /*(주) (급여+상여)총액 */
+  
+  /* **** 비과세 소득 **** */
+  double  mnotax  ;              /*(주) 비과세    */
+  double  bnotax  ;              /*(종) 비과세    */
+  double  notax   ;              /*비과세급여총액*/
+
+  /* **** 과세 소득 **** */
+  double  taxgross  ;            /*과세급여총액 (근로소득금액) */
+  double  laborded  ;            /*근로소득공제   */
+  double  laboramt  ;            /*근로소득금액   */
+
+  /* **** 기본공제 **** */
+  double  selfded ;              /*  본인공제     */
+  double  mateded ;              /*  배우자 공제  */
+  double  familyno;              /*  부양가족공제인원*/
+  double  famided ;              /*  부양가족공제금액*/  
+  double  basicded;              /*  기본공제     */
+
+  /* **** 추가공제 **** */
+  double  fami65no;              /*65세 이상 가족수 (경노우대 공제인원)*/
+  double  fami70no;              /*70세 이상 가족수 (경노우대 공제인원)*/
+  double  oldded;                /*  경로우대공제 */
+  double  obstacleno;            /*  장애자수     */
+  double  obsded;                /*  장애자 공제  */
+  double  womanded;              /*  부녀자 공제  */
+  double  childno;               /*  자녀 양육수  */
+  double  childded;              /*  자녀양육공제 */
+  double  babyno;                /*  출산.입양자 수 */
+  double  babyded;               /*  출산.입양자 공제 */
+  double  appendded;             /*  추가공제     */
+  double  fewded;                /*  다자녀 추가공제 */
+  
+  double  anuded;                /*  연금보험료공제*/
+  
+  /* **** 특별공제 **** */  
+  double  insded  ;              /*  보험료 공제   */
+  double  hosded  ;              /*  의료비공제    */
+  double  eduded  ;              /*  교육비공제    */
+  double  houseded;              /*  임차차입금원리금 상환공제 */
+  double  houseintded;           /*  장기저당차입금이자 상환공제 */
+  double  giveded ;              /*  기부금공제    */
+  double  specaddded;            /*  혼인.이사.장례비 공제 */
+  double  specialded;            /*  특별공제      */
+  double  standded;              /*  표준공제      */
+  
+  /* **** 그 밖의 소득공제 **** */
+  double  pended;                /*  개인연금저축소득공제  */
+  double  npended;               /*  연금저축공제  */
+  double  houseded2;             /*  주택자금공제  */  
+  double  tinvestded ;           /*  투자조합공제합 investded->tinvestded */
+  double  creditded ;            /*  신용카드공제  */
+  double  costockded;            /*  우리사주조합소득공제 */ 
+  double  fundded;               /*  장기주식형저축 소득공제 */
+  double  incomeded;             /*  그 밖의 소득공제계  */
+  
+  double  taxlevel ;             /*  종합소득과세표준*/
+  double  calctax ;              /*  산출세액        */
+
+  /* **** 세액 감면 **** */
+  
+  
+  /* **** 세액 공제 **** */
+  double  incomtded;             /*  근로소득세액공제*/
+  double  hloanded;              /*  주택차입금 공제 */
+  double  polided;               /*  정치기부금 세액공제 */ 
+  double  forided ;              /*  외국납부공제    */
+  double  tdedsum ;              /*  세액공제        */
+
+
+  /* **** 결정 세액 **** */
+  double  dintax  ;              /*  결정소득세       */
+  double  djutax  ;              /*  결정주민세       */
+  double  dnongtax;              /*  결정농특세       */
+  double  dtaxsum;               /*  결정세액계       */
+
+  /* **** 기납부세액 **** */  /* 전근무지*/
+  double  bintax  ;              /*  (종) 소득세      */
+  double  bjutax  ;              /*  (종) 주민세      */
+  double  bnongtax;              /*  (종) 농특세      */
+  double  btaxsum;               /*  (종) 계          */  
+  double  bintax1  ;              /*  (종1) 소득세      */
+  double  bjutax1  ;              /*  (종1) 주민세      */
+  double  bnongtax1;              /*  (종1) 농특세      */  
+  
+  /* 현근무지*/
+  double  mintax  ;              /*  (주) 소득세      */
+  double  mjutax  ;              /*  (주) 주민세      */
+  double  mnongtax;              /*  (주) 농특세      */
+  double  mtaxsum;               /*  (주) 계          */
+
+  /* 차감소득세 */
+  double  yinamt  ;              /*  차감소득금액  */
+  double  yintax  ;              /*  차감소득세    */
+  double  yjutax  ;              /*  차감주민세    */
+  double  ynongtax;              /*  차감농특세    */
+  
+  char    acptdate[8+1] ="" ;     /*  영수(지급)년월일 */
+
+  /* **** 자료관리번호****
+     레코드    'D'
+     자료      '20'
+     세무서    'b의 세무서'
+     일련번호  'c의 일련번호'    **** */
+
+  /* **** 원천징수의무자 ****
+     사업자등록번호 'b의 사업자등록번호'  */
+
+  /* **** 소득자(근로자) ****
+     juminid[14];     c의 소득자주민번호
+     **************** */
+
+  /* **** (종)근무처 *** */
+  char    bcorpname[30+1] ="" ;    /* 종근무처명         */
+  char    bcorpno[10+1]   ="" ;    /* 종근무처사업자번호 */
+  double  bpaysum   ;              /*(종) 급여총액       */
+  double  bbonsum   ;              /*(종) 상여총액       */
+  
+   /* **** (종1)근무처 *** */
+  char    bcorpname1[30+1] ="" ;   /* 종근무처명         */
+  char    bcorpno1[10+1]   ="" ;   /* 종근무처사업자번호 */  
+  double  bpaysum1   ;             /*(종) 급여총액       */
+  double  bbonsum1   ;             /*(종) 상여총액       */
+  
+  double  bcogbonsum   ;           /*(종) 인정상여        */
+  double  bsum      ;              /*(종) 계             */
+  double  bsum1     ;              /*(종) 계             */
+
+  /**** 차감세액 누계 ****/
+  double  s_yintax;                /* 계산-소득세결정세액총계 */
+  double  s_yjutax;                /* 계산-주민세결정세액총계 */
+  double  s_ynongtax;              /* 계산-농특세결정세액총계 */
+  double  s_taxgross ;             /* 계산 -근로소득금액 */
+  double  s_dintax ;               /* 계산 -결정소득세 */
+  char    path_corpno[11+1]   ="" ;    /* 화일명사업자번호 */
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE SQLCA;
+
+FILE *fp = stdout;
+
+char    cmdline[256];
+char    buffer[730+1+1] ="";
+char    tmpjuminid[1+1] ="";
+
+int     cseqno = 0;
+int     dseqno = 0;
+int     id;
+
+/* main fuction */
+void main(argc,argv)
+int argc;
+char *argv[];
+{
+    	char path[100]="";
+    	char *dir;
+	char FL_file[255];
+	        
+    if (argc != 5)  /* pkz3101g 2008 20090310 20090310 1 */
+    {
+        printf(" 연말정산 디스켓 작성(갑근 지급조서)\n");
+        printf(" 1. 작업년도(yyyy)  \n");
+        printf(" 2. 제출일자(yyyymmdd)  \n");
+        printf(" 3. 영수일자(yyyymmdd)  \n");
+        printf(" 4. 작업구분(0:전체; 1:재직자; 2:퇴직자) (1자리) \n");
+        exit(1);
+    }
+
+	  /*로그 디렉토리 생성 및 로그작업 */
+	  STRINIT(FL_file);
+    strcpy(FL_file,"pkz3101g");
+
+    hinsa_get_filename(1, FL_file);
+    if (hinsa_log_open(FL_file) == FAILURE)
+    {
+     		hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+     		return;
+    }
+    	
+	  hinsa_log_print(0,"연말정산 Diskette 자료 생성 프로그램 시작...");
+    hinsa_db_connect();  /*DB Connect 실시..*/
+	
+    strcpy(workyy,argv[1]);
+    strcpy(givedate,argv[2]);   /* 제출일*/
+    strcpy(acptdate,argv[3]);   /* 영수일*/
+    gubun = atoi(argv[4]);      /* 작업구분 */
+
+    EXEC SQL
+    SELECT SUBSTR(REPLACE(CORPNO,'-',''),1,7)||'.'||
+           SUBSTR(REPLACE(CORPNO,'-',''),8,3)
+      INTO :path_corpno
+      FROM PKCPBAS;
+
+    /* 파일생성 경로  dir = getenv("HINSA");*/
+    dir = hinsa_home();
+    sprintf(path,"%s/data/Kdata/C%s",dir,path_corpno);
+
+    if ((fp=fopen(path,"wt")) == NULL)
+    {
+            fclose(fp);
+            printf("화일 열기 Error. \n");
+            exit(1);
+    }
+
+    if (( MakeHeader()== FAIL) ||(MakeRecord()==FAIL))
+    {
+            fclose(fp);
+            printf(" 화일 생성 Error. \n");
+            exit(1);
+    }
+
+    fclose(fp);
+
+    printf(" 연말정산 디스켓을 작성하였습니다. \n");
+    printf("  화일명         [%s]     \n",path);
+    printf("  연말정산대상자 [%d]     \n",cdutycnt);
+    printf("  차감소득세     [%13.0f] \n",s_yintax);
+    printf("  차감농특세     [%13.0f] \n",s_ynongtax);
+    printf("  차감주민세     [%13.0f] \n",s_yjutax);
+    printf("  근로소득금액   [%13.0f] \n",s_taxgross);
+    printf("  결정소득세     [%13.0f] \n",s_dintax);
+    printf("  전근무지있는 정산대상자 [%d] \n\n",dseqno);
+    
+       
+	  /* hinsa_exit()에서 DB Commit & DB접속종료함.*/
+	  if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {
+	       Write_batlog(seqno++, "ERROR ====== [작업 실패] =====\n");  
+	       error_quit("ERROR ====== [작업 실패] =====\n");
+	  }
+	  else	
+    {
+         Write_batlog(seqno++, "OK ====== [연말정산 작업성공] =====\n");  
+         hinsa_exit(0,"OK ====== [연말정산 작업성공] =====\n");        
+    }        
+}
+
+/* A record 변수를 초기화*/
+Set_InitValA()
+{
+    /*  회사 */
+    memset(repmanno,  '\0',sizeof(repmanno) );
+    memset(corpno,    '\0',sizeof(corpno    ));
+    memset(corpname,  '\0',sizeof(corpname  ));
+    memset(corpregno, '\0',sizeof(corpregno ));
+    memset(presname,  '\0',sizeof(presname  ));
+    memset(presjuno,  '\0',sizeof(presjuno  ));
+    memset(corpzip,   '\0',sizeof(corpzip   ));
+    memset(corpaddr,  '\0',sizeof(corpaddr  ));
+    memset(corptel,   '\0',sizeof(corptel   ));
+    memset(semusu,    '\0',sizeof(semusu    ));
+
+    /****** 제출내역 ******/
+    dutycnt      = 0;         /* 신고(제출)의무자 수   */
+    paysum       = 0;         /* 소득금액 총계         */
+    dintaxsum    = 0;         /* 소득세결정세액총계    */
+    djutaxsum    = 0;         /* 주민세결정세액총계    */
+    dnongtaxsum  = 0;         /* 농특세결정세액총계    */
+    brec_dtaxsum = 0;         /* 결정세액총계          */
+    
+    cdutycnt_rt  = 0;         /* 신고(제출)의무자수 : 퇴직자  */
+    paysum_rt    = 0;         /* 소득금액 총계 : 퇴직자       */
+    dintaxsum_rt = 0;         /* 소득세결정세액총계 :퇴직자   */ 
+    djutaxsum_rt = 0;         /* 주민세결정세액총계 :퇴직자   */
+    brec_dtaxsum_rt = 0;      /* 결정세액총계 : 퇴직자       */
+    
+
+    /****** 차감세액 누계 ******/
+    s_yintax    = 0;          /* 소득세결정세액총계    */
+    s_yjutax    = 0;          /* 주민세결정세액총계    */
+    s_ynongtax  = 0;          /* 농특세결정세액총계    */
+    s_taxgross  = 0;          /* 근로소득금액          */
+    s_dintax    = 0;          /*  결정소득액           */    
+    cseqno      = 0;     
+    dseqno      = 0;              
+    
+}   
+    
+/* C,D record 변수를 초기화*/
+Set_InitValC()
+{   
+    /* **** 소득자(근로자) **** */
+    memset(empno,    '\0',sizeof(empno    ));
+    memset(korname,  '\0',sizeof(korname  ));
+    memset(juminid,  '\0',sizeof(juminid  ));
+    memset(zipno,    '\0',sizeof(zipno    ));
+    memset(addr,     '\0',sizeof(addr     ));
+    memset(ysfrdate, '\0',sizeof(ysfrdate ));
+    memset(ystodate, '\0',sizeof(ystodate ));
+    memset(subdate,  '\0',sizeof(subdate  ));
+    mgitasodk  = 0 ;      /* 기타소득     */
+
+    /* **** 근무처별 소득명세 **** */
+    mpaysum    = 0;       /*(주) 급여총액       */
+    mbonsum    = 0;       /*(주) 상여총액       */
+    mcogbonsum = 0;       /*(주) 인정상여        */
+    minsum     = 0;       /*(주) (급여+상여)총액 */
+
+    /* **** 비과세 소득 **** */
+    mnotax    = 0 ;       /*(주) 비과세        */
+    bnotax    = 0 ;       /*(종) 비과세        */
+    notax     = 0 ;       /*비과세급여총액*/
+
+    taxgross  = 0;       /*과세급여총액 (근로소득금액) */
+    laborded  = 0;       /*근로소득공제        */
+    laboramt  = 0;       /*근로소득금액        */
+
+    /* **** 기본공제 **** */
+    selfded   = 0;     /*  본인공제        */
+    mateded   = 0;     /*  배우자 공제     */
+    famided   = 0;     /*  부양가족공제금액*/
+    familyno  = 0;     /*  부양가족공제인원*/
+    basicded  = 0;     /*  기본공제        */
+
+    /* **** 추가공제 **** */
+    fami65no    = 0 ;  /*65세 이상 가족수 (경노우대 공제인원)*/
+    oldded      = 0 ;  /*  경로우대공제*/
+    obstacleno  = 0 ;  /*  장애자수    */
+    obsded      = 0 ;  /*  장애자 공제 */
+    womanded    = 0 ;  /*  부녀자 공제 */
+    childno     = 0 ;  /*  자녀 양육수 */
+    childded    = 0 ;  /*  자녀양육공제*/
+    appendded   = 0 ;  /*  추가공제    */
+    fewded      = 0 ;  /*  소수추가공제*/
+    
+    /* **** 특별공제 **** */
+    insded      = 0 ;  /*  보험료 공제     */
+    hosded      = 0 ;  /*  의료비공제      */
+    eduded      = 0 ;  /*  학자금공제      */
+    houseded    = 0 ;  /*  주택자금공제    */
+    giveded     = 0 ;  /*  기부금공제      */
+    specialded  = 0 ;  /*  특별공제        */
+    standded    = 0 ;
+    anuded      = 0 ;   /*  연금보험료 공제     */
+    npended     = 0 ;
+    tlstkded     = 0 ;  /*  장기증권저축 공제합 parksh 20021218 수정 tlstkded->tlstkded  */
+    creditded   = 0 ;  /*  신용카드공제        */
+    tinvestded   = 0 ;  /*  투자조합 공제합 parksh 20021218 수정 investded->tinvestded  */
+    foreignded  = 0 ;  /*  외국인 추가소득공제금액 dsa2000 20040120 추가.*/
+    
+    yintax      = 0 ;  /*  차감소득세      */
+    yinamt      = 0 ;  /*  차감소득금액    */
+    pended      = 0 ;  /*  개인연금공제(연금소득공제) */
+
+    taxlevel    = 0 ;  /*  종합소득과세표준*/
+    calctax     = 0 ;  /*  산출세액        */
+
+    /* **** 세액 공제 **** */
+    incomtded   = 0 ;         /*  근로소득세액공제*/
+    propded     = 0 ;         /*  재형저축공제    */
+    hloanded    = 0 ;         /*  주택차입금 공제 */
+ /*   stkded      = 0 ;         /*  근로자주식저축공제 */
+    forided     = 0 ;         /*  외국납부공제    */
+    tdedsum     = 0 ;         /*  세액공제        */
+
+    /* **** 세액 감면 **** */
+    /* ******************* */
+
+    /* **** 결정 세액 **** */
+    dintax      = 0;
+    djutax      = 0;
+    dnongtax    = 0;
+    dtaxsum     = 0;
+
+    /* **** 기납부세액 **** */
+    /* 전근무지*/
+    bintax      = 0 ;
+    bjutax      = 0 ;
+    bnongtax    = 0 ;
+    btaxsum     = 0 ;
+
+    /* 현근무지*/
+    mintax      = 0;
+    mjutax      = 0;
+    mnongtax    = 0;
+    mtaxsum     = 0;
+
+    /* 종근무지 */
+    memset(bcorpname,'\0',sizeof(bcorpname));
+    memset(bcorpno  ,'\0',sizeof(bcorpno  ));
+    memset(bcorpname1,'\0',sizeof(bcorpname1));
+    memset(bcorpno1  ,'\0',sizeof(bcorpno1  ));
+    bpaysum = 0;
+    bbonsum = 0;
+    bpaysum1= 0;
+    bbonsum1= 0;
+    bcogbonsum = 0;
+    bsum    = 0;
+    bsum1   = 0;
+}
+
+
+/* header자료를 Setting*/
+MakeHeader()
+{
+    int     i = 0;
+
+    Set_InitValA();
+
+    EXEC SQL
+    SELECT CORPNAME,
+           REPLACE(CORPNO,   '-',''),
+           REPLACE(CORPREGNO,'-',''),
+           REPLACE(CORPZIP,  '-',''),
+           CORPADDR, PRESNAME,
+           REPLACE(PRESJUNO,'-',''),
+           CORPTEL, SEMUSU
+    INTO   :corpname, :corpno,   :corpregno, :corpzip, :corpaddr,
+           :presname, :presjuno, :corptel,    :semusu
+    FROM   PKCPBAS;
+
+
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != -1405)
+    {
+        printf("[ERRCODE : %d] Record A 생성1 Error\n",sqlca.sqlcode);
+        fclose(fp);
+        return(FAIL);
+    }
+
+    /* 제출 의무자 수*/
+    
+    EXEC SQL
+    SELECT COUNT(EMPNO),
+           SUM(NVL(TAXGROSS,0)), SUM(NVL(DINTAX,0)),
+           SUM(NVL(DNONGTAX,0)), SUM(NVL(DJUTAX,0)),
+           SUM(NVL(DINTAX,0) + NVL(DNONGTAX,0)+ NVL(DJUTAX,0) )
+    INTO   :cdutycnt,
+           :paysum ,             :dintaxsum,
+           :dnongtaxsum,         :djutaxsum,
+           :brec_dtaxsum
+    FROM   PKMYSMAS       
+    WHERE  WORKYY  = :workyy  /* NVL(taxgross,0) > 0  and*/
+    GROUP BY WORKYY;
+
+    printf(" 제출의무자수====================================== \n");
+
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != -1405)
+    {
+        printf("[ERRCODE : %d] Record A 생성2(Get Bdata) Error\n",sqlca.sqlcode);
+        fclose(fp);
+        return(FAIL);
+    }
+
+    /* 제출 의무자 수(전직장) */
+    EXEC SQL
+    SELECT COUNT(EMPNO)
+    INTO   :ddutycnt
+    FROM   PKMYSMAS
+    WHERE  ( NVL(BPAYSUM,0) > 0 OR NVL(BBONSUM,0) > 0 )
+    AND    WORKYY  = :workyy;
+
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != -1405)
+    {
+        printf("[ERRCODE : %d] Record A 제출의무자(Get Bdata) Error\n",sqlca.sqlcode);
+        fclose(fp);
+        return(FAIL);
+    }
+
+    /* 제출 의무자 수(전전직장) */
+    EXEC SQL
+    SELECT COUNT(EMPNO)
+    INTO   :ddutycnt1
+    FROM   PKMYSMAS
+    WHERE  ( NVL(BPAYSUM1,0) > 0 OR NVL(BBONSUM1,0) > 0 )
+    AND    WORKYY  = :workyy;
+
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != -1405)
+    {
+        printf("[ERRCODE : %d] Record A 제출의무자(Get Bdata) Error\n",sqlca.sqlcode);
+        fclose(fp);
+        return(FAIL);
+    }
+
+
+   cdutycnt      = cdutycnt + cdutycnt_rt ;
+   ddutycnt      = ddutycnt + ddutycnt1 + ddutycnt_rt ;
+   paysum        = paysum + paysum_rt    ;
+   dintaxsum     = dintaxsum + dintaxsum_rt  ;
+   djutaxsum     = djutaxsum + djutaxsum_rt  ; 
+   brec_dtaxsum  = brec_dtaxsum + brec_dtaxsum_rt  ;
+   
+    memset(buffer,'\0',sizeof(buffer));
+
+    i = 0;
+    i +=  sprintf(buffer + i,  "%1s"   ,"A");             /* 레코드구분 A  */
+    i +=  sprintf(buffer + i,  "%2s"   ,"20");            /* 자료  구분 20 */
+    i +=  sprintf(buffer + i,  "%3s"   ,semusu);          /* 세무서코드 */
+    i +=  sprintf(buffer + i,  "%8s"   ,givedate);        /* 제출년월일 */
+    i +=  sprintf(buffer + i,  "%1s"   ,"2");             /* 제출자 구분*/
+    i +=  sprintf(buffer + i,  "%6s"   ," ");             /* 세무대리인관리번호*/
+    i +=  sprintf(buffer + i,  "%-10s" ,corpno);          /* 사업자등록번호      */
+    i +=  sprintf(buffer + i,  "%-40s" ,corpname);        /* 법인명              */
+    i +=  sprintf(buffer + i,  "%-13s" ,corpregno);       /* 회사법인등록번호    */
+    i +=  sprintf(buffer + i,  "%-30s" ,presname);        /* 사장명(대표자성명)  */
+
+/* 2000년부터 삭제
+ *    i +=  sprintf(buffer + i,  "%-10s" ,corpzip);          회사우편번호        */
+/*    i +=  sprintf(buffer + i,  "%-70s" ,corpaddr);         회사주소(소재지)    */
+
+    i +=  sprintf(buffer + i,  "%-15s" ,corptel);         /* 전화번호            */
+
+    i +=  sprintf(buffer + i,  "%05d"  , 1 );             /* 제출의무자수        */
+    i +=  sprintf(buffer + i,  "%3s"   ,"101");           /* 한글코드 101        */
+    i +=  sprintf(buffer + i,  "%1s"   ,"1");             /* 제출대상기간코드    */
+    i +=  sprintf(buffer + i,  "%1s"   ," ");             /* 자료수정코드        */
+    i +=  sprintf(buffer + i,  "%531s" ," ");             /* 공란                */
+    sprintf(buffer+670,"\n");
+    fprintf(fp,"%s",buffer);
+    /* end of Record - A*/
+
+    /* start Record - B */
+    i = 0;
+    memset(buffer,'\0',sizeof(buffer));
+
+    /*  회사 */
+    i +=  sprintf(buffer + i,  "%1s"   ,"B");             /* 레코드구분 B  */
+    i +=  sprintf(buffer + i,  "%2s"   ,"20");            /* 자료  구분 20 */
+    i +=  sprintf(buffer + i,  "%3s"   ,semusu);          /* 세무서코드    */
+    i +=  sprintf(buffer + i,  "%06d"  ,1);               /* 일련번호      */
+
+    /* 원천징수의무자*/
+    i +=  sprintf(buffer + i,  "%-10s" ,corpno);          /* 사업자등록번호      */
+    i +=  sprintf(buffer + i,  "%-40s" ,corpname);        /* 법인명              */
+    i +=  sprintf(buffer + i,  "%-30s" ,presname);        /* 사장명(대표자성명)  */
+    i +=  sprintf(buffer + i,  "%-13s" ,corpregno);       /* 회사법인등록번호    */
+    
+    /*i +=  sprintf(buffer + i,  "%-10s" ,corpzip);          회사우편번호        */
+    /*i +=  sprintf(buffer + i,  "%-70s" ,corpaddr);         회사주소(소재지)    */
+
+    i +=  sprintf(buffer + i,  "%07d"  ,cdutycnt);        /* 제출건수(C - Record)*/
+    /* by yhs */
+    i +=  sprintf(buffer + i,  "%07d"  ,ddutycnt);        /* 제출건수(D - Record)*/
+    i +=  sprintf(buffer + i,  "%014.0f" ,paysum);        /* 소득금액총계        */
+    i +=  sprintf(buffer + i,  "%013.0f" ,dintaxsum);     /* 소득세결정세액총계  */
+    i +=  sprintf(buffer + i,  "%013.0f" ,0.0       );    /* 법인세결정세액총계  */    
+    i +=  sprintf(buffer + i,  "%013.0f" ,djutaxsum);     /* 주민세결정세액총계  */
+    i +=  sprintf(buffer + i,  "%013.0f" ,dnongtaxsum);   /* 농특세결정세액총계  */
+    i +=  sprintf(buffer + i,  "%013.0f" ,brec_dtaxsum);  /* 결정세액총계        */
+    i +=  sprintf(buffer + i,  "%1s"   ," ");             /* 자료수정코드        */
+    i +=  sprintf(buffer + i,  "%471s" ," ");             /* 공란                */
+    sprintf(buffer+670,"\n");
+    fprintf(fp,"%s",buffer);
+
+    return (SUCCESS);
+    /* end of Record - B*/
+}
+
+/* 개별자료를 Setting Record - C*/
+MakeRecord()
+{
+ 
+    EXEC SQL DECLARE cur1 CURSOR FOR
+    SELECT  NVL(YSFRDATE,'0'),  NVL(YSTODATE,'0'),
+            EMPNO,      KORNAME,     REPLACE(NVL(JUMINID,''),'-',''),
+            NVL(SUBDATE, '0'),
+            (NVL(MPAYSUM, 0) +  NVL(MBONSUM, 0 )+NVL(MGITASODK,0) +nvl(mcogbonsum,0))  MINSUM,
+            NVL(MGITASODK,0),  NVL(MPAYSUM,   0),
+            NVL(MBONSUM,  0)+  NVL(MGITASODK,0) ,
+            NVL(MNOTAX,   0) ,
+            NVL(TAXGROSS, 0),  NVL(NOTAX,     0),
+            NVL(LABORDED, 0),  NVL(LABORAMT,  0),
+            NVL(SELFDED,  0),  NVL(MATEDED,   0),
+            NVL(FAMIDED,  0),  NVL(FAMILYNO,  0),
+            NVL(BASICDED, 0),  NVL(FAMI65NO,  0),
+            NVL(OLDDED,   0),  NVL(OBSTACLENO,0),
+            NVL(OBSDED,   0),  NVL(WOMANDED,  0),
+            NVL(CHILDNO,  0),  NVL(CHILDDED,  0),
+            NVL(APPENDDED,0),  NVL(FEWDED ,   0),
+            NVL(INSDED,   0),  NVL(HOSDED,    0),
+            NVL(EDUDED,   0),  NVL(HOUSEDED,  0),
+            NVL(GIVEDED,  0),  NVL(SPECIALDED,0),
+/*2001.12.27 표준공제,연금보험료,연금저축,장기증권저축 추가 */ 
+            NVL(STANDDED, 0),  NVL(ANUDED,  0),
+            NVL(NPENDED,  0),  NVL(TLSTKDED, 0),  /* parskh 20021218 */         
+/*************************************************************/
+            NVL(YINTAX, 0),
+            /* =========02/15/2000 9:22오전======  */
+            /* NVL(LABORAMT,0)-NVL(basicded,0)-Nvl(appendded,0)-nvl(fewded,0)-NVL(specialded,0) ,*/
+            greatest(NVL(LABORAMT,0)-NVL(basicded,0)-Nvl(appendded,0)-nvl(fewded,0)-NVL(specialded,0)
+                     -NVL(standded,0)-NVL(anuded,0), 0) ,
+                                 
+            NVL(PENDED,    0),
+            NVL(TAXLEVEL, 0),  NVL(CALCTAX ,  0),    NVL(INCOMEDED,0),
+            NVL(INCOMTDED,0),  NVL(PROPDED,   0),
+            NVL(HLOANDED, 0),
+            NVL(FORIDED,  0),  NVL(TDEDSUM,   0),
+            NVL(DINTAX,   0),  NVL(DJUTAX,    0),    NVL(DNONGTAX, 0),
+            (NVL(DINTAX,  0) + NVL(DJUTAX,    0)  +  NVL(DNONGTAX, 0) )  DTAXSUM ,
+            NVL(BINTAX,   0),  NVL(BJUTAX,    0),    NVL(BNONGTAX, 0),
+            NVL(BINTAX1,  0),  NVL(BJUTAX1,   0),    NVL(BNONGTAX1,0),
+            (NVL(BINTAX,  0) + NVL(BJUTAX,    0)  +  NVL(BNONGTAX, 0) +    
+             NVL(BINTAX1,  0) + NVL(BJUTAX1,    0)  +  NVL(BNONGTAX1, 0))  BTAXSUM,     
+            NVL(BPAYSUM,  0),  NVL(BBONSUM,   0),
+            NVL(BPAYSUM1, 0),  NVL(BBONSUM1,  0),
+            NVL(BCOGBONSUM, 0),
+            (NVL(BPAYSUM, 0) + NVL(BBONSUM,   0) + NVL(BCOGBONSUM, 0) )   BSUM,
+            (NVL(BPAYSUM1, 0) + NVL(BBONSUM1,   0) )   BSUM1,
+            NVL(MINTAX,   0),  NVL(MJUTAX ,   0) ,   NVL(MNONGTAX ,0),
+            (NVL(MINTAX,  0) + NVL(MJUTAX ,   0)  +  NVL(MNONGTAX ,0))   MTAXSUM,
+            NVL(YJUTAX,   0),  NVL(YNONGTAX,    0),
+            NVL(BCORPNAME,''), REPLACE(NVL(BCORPNO,''),'-','')  ,
+            NVL(BCORPNAME1,''), REPLACE(NVL(BCORPNO1,''),'-','')  ,
+            NVL(ZIPNO,''),     NVL(ADDR,''),
+            nvl(creditded, 0), nvl(mcogbonsum, 0), nvl(tinvestded,0),  /* parksh 20021218 수정 investded->tinvestded */
+            nvl(foreignded, 0)   /* dsa2000  2004.01. 추가.*/
+    FROM    PKMYSMAS
+    WHERE   WORKYY  = :workyy /*NVL(taxgross,0) > 0    and */   
+    ORDER BY EMPNO;
+
+    EXEC SQL OPEN cur1;
+
+
+    if (sqlca.sqlcode == 1403)
+    {
+        EXEC SQL CLOSE cur1;
+        printf(" 1403 \n");
+        return(SUCCESS);
+    }
+
+    if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != -1405) &&
+             (sqlca.sqlcode != 0))
+    {
+        EXEC SQL CLOSE cur1;
+        printf("Cursor1 열기 실패!\n");
+        return (FAIL);
+    }
+
+
+    cseqno = 0;
+    dseqno = 0;
+    s_yintax =0;
+    s_yjutax =0;
+    s_ynongtax =0;
+    s_taxgross =0;
+    s_dintax =0;
+
+    while(1)
+    {
+        Set_InitValC();
+
+        EXEC SQL FETCH cur1
+        INTO  :ysfrdate,  :ystodate,
+              :empno,     :korname,     :juminid,
+              :subdate, 
+              :minsum,
+              :mgitasodk, :mpaysum,     :mbonsum,     :mnotax,
+              :taxgross,  :notax,       :laborded,    :laboramt,
+              :selfded,   :mateded,     :famided,     :familyno,
+              :basicded,  :fami65no,    :oldded,      :obstacleno,
+              :obsded,    :womanded,    :childno,     :childded,
+              :appendded, :fewded,
+              :insded,    :hosded,      :eduded,      :houseded,
+              :giveded,   :specialded,
+/*2001.12.27 표준공제,연금보험료,연금저축,장기증권저축 추가 */ 
+              :standded,  :anuded,
+              :npended,   :tlstkded,           
+/******************************/              
+              :yintax,    :yinamt,      :pended,
+              :taxlevel,  :calctax ,
+              :incomeded,
+              :incomtded, :propded,     :hloanded,    
+              :forided,   :tdedsum,
+              :dintax,    :djutax,      :dnongtax,
+              :dtaxsum,
+              :bintax,    :bjutax,      :bnongtax,
+              :bintax1,   :bjutax1,      :bnongtax1,
+              :btaxsum,
+              :bpaysum,   :bbonsum,
+              :bpaysum1,  :bbonsum1,
+              :bcogbonsum,
+              :bsum,      :bsum1,
+              :mintax,    :mjutax  ,    :mnongtax ,:mtaxsum ,
+              :yjutax,    :ynongtax,
+              :bcorpname, :bcorpno ,
+              :bcorpname1, :bcorpno1 ,
+              :zipno,     :addr ,       :creditded , :mcogbonsum, :tinvestded , /* parksh 20021218 수정 investded->tinvestded */
+              :foreignded  ;          /* dsa2000  2004.01. 추가.*/
+              
+        if (sqlca.sqlcode == 1403)
+        {
+            EXEC SQL CLOSE cur1;
+            cseqno = cseqno ;
+            dseqno = dseqno ;  
+            
+                                
+            return(SUCCESS);  
+        }
+
+        if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405))
+        {
+            printf("[ERRCODE : %d] Record C 생성1 Error\n",sqlca.sqlcode);
+            EXEC SQL CLOSE cur1;
+            fclose(fp);
+            return(FAIL);
+         }
+
+        cseqno += 1;
+        MakeCRec();
+
+        s_yintax    += yintax;
+        s_yjutax    += yjutax;
+        s_ynongtax  += ynongtax;
+
+    } /* END OF WHILE */
+   
+}
+
+
+/* Detail자료를 Setting*/
+MakeCRec()
+{
+    int i ;
+
+    memset(buffer,'\0',sizeof(buffer));
+    memset(tmpjuminid, '\0', sizeof(tmpjuminid)) ;
+    i =0;
+
+    /* **** 자료관리번호 **** */
+    i +=  sprintf(buffer + i,  "%1s"   ,"C");          /* 레코드구분 x "C"    */
+    i +=  sprintf(buffer + i,  "%2s"   ,"20");         /* 자료구분   9 "20"   */
+    i +=  sprintf(buffer + i,  "%3s"   ,semusu);       /* 세무서코드 x        */
+    i +=  sprintf(buffer + i,  "%06d"  ,cseqno);       /* 일련번호   9        */
+
+    /* **** 원천징수의무자 **** */
+    i +=  sprintf(buffer + i,  "%-10s" ,corpno);       /* 사업자등록번호 x    */
+
+  
+    /* by yhs */
+    /* **** 소득자(근로자) **** */
+    if (( bbonsum1 > 0 ) || (bpaysum1 > 0 ))           /* 종근무처수     9    */
+        i +=  sprintf(buffer + i,  "%02d" ,2);
+    else if (( bbonsum > 0 ) || (bpaysum > 0 ))        /* 종근무처수     9    */
+        i +=  sprintf(buffer + i,  "%02d" ,1); 
+    else
+        i +=  sprintf(buffer + i,  "%02d" ,0);
+ 
+    
+    i +=  sprintf(buffer + i,  "%1s"   ,"1");          /* 거주자구분코드 9    */
+    i +=  sprintf(buffer + i,  "%2s"   ,"KR");         /* 거주지국코드 parksh 20021218 추가 */
+    i +=  sprintf(buffer + i,  "%-8s"  ,ysfrdate);     /* 귀속년도시작일 9    */
+    i +=  sprintf(buffer + i,  "%-8s"  ,ystodate);     /* 귀속년도종료일 9    */
+    i +=  sprintf(buffer + i,  "%-30s" ,korname);      /* 성명           x    */
+    
+    sprintf(tmpjuminid , "%.1s", juminid+6 ) ;     
+   /* parksh  20021218 외국인 코드 변경7,8->5,6*/ 
+   if ((strcmp(tmpjuminid, "5") == 0) || (strcmp(tmpjuminid, "6") == 0) )       
+    i +=  sprintf(buffer + i,  "%1s"   ,"9");          /* 내외국구분코드 9    */
+   else 
+    i +=  sprintf(buffer + i,  "%1s"   ,"1");          /* 내외국구분코드 9    */
+    
+    i +=  sprintf(buffer + i,  "%-13s" ,juminid);      /* 주민등록번호   x    */
+    
+    /*2000년 우편번호, 주소 삭제됨*/
+    /*i +=  sprintf(buffer + i,  "%-10s" ,zipno);         우편번호       x    */
+    /*i +=  sprintf(buffer + i,  "%-.70s" ,addr);         주소           x    */
+    
+    i +=  sprintf(buffer + i,  "%08d"  ,0);            /* 감면기간시작일 9    */
+    i +=  sprintf(buffer + i,  "%08d"  ,0);            /* 감면기간종료일 9    */
+
+    /* **** 주근무지 과세대상급여 **** */
+    i +=  sprintf(buffer + i,  "%011.0f" ,mpaysum);    /* (주) 급여총액  9    */
+    i +=  sprintf(buffer + i,  "%011.0f" ,mbonsum);    /* (주) 상여총액  9    */
+    /* by yhs macptbonus --> mcogbonsum, bcogbonsum */
+    i +=  sprintf(buffer + i,  "%011.0f" ,mcogbonsum); /* (주) 인정상여  9    */
+    i +=  sprintf(buffer + i,  "%011.0f" ,minsum );    /* (주) 계        9    */
+
+    /* **** 비과세 소득 **** */
+    i +=  sprintf(buffer + i,  "%010.0f" ,0.0 );       /* 국외근로       9    */
+    i +=  sprintf(buffer + i,  "%010.0f" ,0.0 );       /* 야간근로       9    */
+    i +=  sprintf(buffer + i,  "%010.0f" ,notax );     /* 기타비과세     9    */
+    i +=  sprintf(buffer + i,  "%010.0f" ,notax );     /* 계             9    */
+
+    /* **** 과세대상급여 (근로소득금액) **** */
+    i +=  sprintf(buffer + i,  "%011.0f" ,taxgross);   /* 과세대상급여   9    */
+    s_taxgross += taxgross;
+
+    /* **** 근로소득공제 **** */
+    i +=  sprintf(buffer + i,  "%010.0f"  ,laborded);   /* 근로소득공제   9    */
+
+    /* **** 과세대상근로소득금액 **** */
+    i +=  sprintf(buffer + i,  "%011.0f" ,laboramt);   /* 과세대상근로소득금액 9 */
+
+    /* **** 기본공제 **** */
+    i +=  sprintf(buffer + i,  "%08.0f"  ,selfded );   /* 본인공제         9  */
+    i +=  sprintf(buffer + i,  "%08.0f"  ,mateded );   /* 배우자 공제      9  */
+    i +=  sprintf(buffer + i,  "%02.0f"  ,familyno);   /* 부양가족공제인원 9  */
+    i +=  sprintf(buffer + i,  "%08.0f"  ,famided );   /* 부양가족공제금액 9  */
+
+    /* **** 추가공제 **** */
+    i +=  sprintf(buffer + i,  "%02.0f" ,fami65no   ); /* 경노우대공제인원 9  */
+    i +=  sprintf(buffer + i,  "%08.0f" ,oldded     ); /* 경로우대공제     9  */
+    i +=  sprintf(buffer + i,  "%02.0f" ,obstacleno);  /* 장애자공제인원   9  */
+    i +=  sprintf(buffer + i,  "%08.0f" ,obsded     ); /* 장애자공제       9  */
+    i +=  sprintf(buffer + i,  "%08.0f" ,womanded   ); /* 부녀자공제       9  */
+    i +=  sprintf(buffer + i,  "%02.0f" ,childno    ); /* 자녀양육공제인원 9  */ /* parksh?? */
+    i +=  sprintf(buffer + i,  "%08.0f" ,childded   ); /* 자녀양육공제     9  */ /* parksh?? */
+
+    /* **** 소수공제자 추가공제 **** */
+    i +=  sprintf(buffer + i,  "%08.0f" ,fewded     ); /* 소수추가공제     9  */
+
+    /*2001.12.27 연금보험료공제 추가*/ 
+    i +=  sprintf(buffer + i,  "%010.0f",anuded    );   /* 연금보험료공제  10  */
+    
+    /* **** 특별공제 **** */
+    i +=  sprintf(buffer + i,  "%08.0f",insded    );   /* 보험료공제       9  */
+    i +=  sprintf(buffer + i,  "%08.0f",hosded    );   /* 의료비공제       9  */
+    i +=  sprintf(buffer + i,  "%08.0f",eduded    );   /* 교육비공제       9  */
+    i +=  sprintf(buffer + i,  "%08.0f",houseded  );   /* 주택자금공제     9  */
+    i +=  sprintf(buffer + i,  "%010.0f",giveded   );   /* 기부금공제       9  */
+    i +=  sprintf(buffer + i,  "%010.0f",specialded);   /* 계               9  */
+/*2001.12.27 계와 표준공제 분리됨.*/    
+    i +=  sprintf(buffer + i,  "%08.0f", standded);     /* 표준공제        8  */
+
+    /* **** 차감소득금액 **** */
+    i +=  sprintf(buffer + i,  "%010.0f",yinamt);      /* 차감소득금액     9  */
+
+    /* **** 소득공제 **** */
+    i +=  sprintf(buffer + i,  "%08.0f",pended);       /* 개인연금저축     9  */
+/*2001.12.27 연금저축공제 추가*/        
+    i +=  sprintf(buffer + i,  "%08.0f",npended);      /* 연금저축         9  */
+
+/*2001.12.27 삭제     
+    i +=  sprintf(buffer + i,  "%08.0f",0.0);           현장기술인력     9  
+*/    
+    i +=  sprintf(buffer + i,  "%010.0f",tinvestded);   /* 투자조합출자     9  parskh 20021218 수정 00~01년투자조합 + 02년투자조합 */
+    /* by yhs */
+    i +=  sprintf(buffer + i,  "%08.0f", creditded);    /* 신용카드         9  */
+    
+    /* dsa2000 2004.01. 우리사주.외국인교육비로 수정*/
+    /*i +=  sprintf(buffer + i,  "%010.0f",0.0);         /* 공란             9  parksh??? */
+    i +=  sprintf(buffer + i,  "%010.0f", foreignded);   /* 우리사주.외국인교육비 */    
+
+    /* **** 종합소득과세표준 **** */
+    i +=  sprintf(buffer + i,  "%010.0f",taxlevel);    /* 종합소득과세표준 9  */
+
+    /* **** 산출세액 **** */
+    i +=  sprintf(buffer + i,  "%010.0f",calctax);     /* 산출세액         9  */
+
+    /* **** 세액감면 **** */                                                      /* parksh 20021218 위치수정 */
+    i +=  sprintf(buffer + i,  "%010.0f",0.0);          /* 소득세법        9  */
+    i +=  sprintf(buffer + i,  "%010.0f",0.0);          /* 조특법          9  */ 
+    i +=  sprintf(buffer + i,  "%010.0f",0.0);          /* 빈칸            9  */ 
+    i +=  sprintf(buffer + i,  "%010.0f",0.0);          /* 감면세액계      9  */ 
+      
+    /* **** 세액 공제 **** */
+    i +=  sprintf(buffer + i,  "%08.0f",incomtded);    /* 근로소득         9  */
+    
+    /*2000 재형저축 삭제*/
+    /*i +=  sprintf(buffer + i,  "%08.0f",propded   );    재형저축         9  */
+
+/*2001.12.27 납세조합 추가*/      
+    i +=  sprintf(buffer + i,  "%08.0f", 0.0 );        /* 납세조합       9  */
+    i +=  sprintf(buffer + i,  "%08.0f",hloanded);     /* 주택차입금       9  */
+    /* i +=  sprintf(buffer + i,  "%08.0f",stkded    );  */                      /*  parksh 20021218 --> 근로자 주식저축공제 없어짐*/    
+    i +=  sprintf(buffer + i,  "%08.0f",tlstkded   );   /* 장기증권저축공제  */    /*  parksh 2002.12.18 장기증권저축 lstkded->tlstkded 수정*/
+    i +=  sprintf(buffer + i,  "%08.0f",forided   );   /* 외국납부         9  */
+
+
+    i +=  sprintf(buffer + i,  "%8s"," ");            /* 공란             x  */
+    i +=  sprintf(buffer + i,  "%08.0f",tdedsum   );   /* 세액공제계       9  */
+
+   
+    /* **** 결정 세액 **** */
+    i +=  sprintf(buffer + i,  "%010.0f",dintax   );    /* 결정소득세      9  */    
+    i +=  sprintf(buffer + i,  "%010.0f",djutax   );    /* 결정주민세      9  */
+    i +=  sprintf(buffer + i,  "%010.0f",dnongtax);     /* 결정농특세      9  */
+    i +=  sprintf(buffer + i,  "%010.0f",dtaxsum  );    /* 결정세액계      9  */
+    s_dintax += dintax;
+
+    /* **** 기납부세액 종(전)근무지 **** */
+    /* by yhs  sum값 */
+    i +=  sprintf(buffer + i,  "%010.0f",bintax + bintax1   );       /* (종) 소득세     9  */
+    i +=  sprintf(buffer + i,  "%010.0f",bjutax + bjutax1  );        /* (종) 주민세     9  */
+    i +=  sprintf(buffer + i,  "%010.0f",bnongtax + bnongtax1 );     /* (종) 농특세     9  */    
+    i +=  sprintf(buffer + i,  "%010.0f",btaxsum );                  /* (종) 계         9  */
+
+    /* **** 기납부세액 주(현)근무지 **** */
+    i +=  sprintf(buffer + i,  "%010.0f",mintax   );    /* (주) 소득세     9  */
+    i +=  sprintf(buffer + i,  "%010.0f",mjutax   );    /* (주) 주민세     9  */    
+    i +=  sprintf(buffer + i,  "%010.0f",mnongtax);     /* (주) 농특세     9  */    
+    i +=  sprintf(buffer + i,  "%010.0f",mtaxsum );     /* (주) 계         9  */
+
+    /* **** 영수(지급)연월일 **** */
+    i +=  sprintf(buffer + i,  "%8s",acptdate  );       /* 영수(지급)연월일 9 */
+
+    /* **** 자료수정코드 **** */
+    i +=  sprintf(buffer + i,  "%1s" ," ");             /* 자료수정코드    x  */
+
+    /* **** 공란 **** */
+    i +=  sprintf(buffer + i,  "%10s" ," ");             /* 공란            x  */
+
+    sprintf(buffer+670,"\n");
+    fprintf(fp,"%s",buffer);
+
+    /* 전근무지 ; D 레코드 */
+    if ( bsum > 0 )
+    {
+        dseqno += 1;
+        MakeDRec();
+    }
+    /* by yhs */
+    /* 전전근무지 ; D 레코드 */
+    if ( bsum1 > 0 ) 
+    {
+        dseqno += 1;
+        MakeD2Rec();
+    }
+}
+
+
+MakeDRec()
+{
+    int i;
+    memset(buffer,'\0',sizeof(buffer));
+    i = 0;
+
+    /* **** 자료관리번호 **** */
+    i +=  sprintf(buffer + i,  "%1s"   ,"D");           /* 레코드구분 "D"  */
+    i +=  sprintf(buffer + i,  "%2s"   ,"20");          /* 자료구분   "20" */
+    i +=  sprintf(buffer + i,  "%3s"   ,semusu);        /* 세무서코드    */
+    i +=  sprintf(buffer + i,  "%06d"  ,cseqno);        /* 일련번호      */
+
+    /* **** 원천징수의무자 **** */
+    i +=  sprintf(buffer + i,  "%-10s" ,corpno);        /* 사업자등록번호 */
+    i +=  sprintf(buffer + i,  "%50s"   ," ");          /* 공란           */
+
+    /* **** 소득자(근로자) **** */
+    i +=  sprintf(buffer + i,  "%-13s" ,juminid);       /* 주민등록번호   */
+
+    /* **** 종(전)근무처 **** */
+    i +=  sprintf(buffer + i,  "%-40s"  ,bcorpname);    /* 근무처명       */
+    i +=  sprintf(buffer + i,  "%-10s"  ,bcorpno  );    /* 사업자번호*/
+    i +=  sprintf(buffer + i,  "%011.0f",bpaysum  );    /* 급여총액        */
+    i +=  sprintf(buffer + i,  "%011.0f",bbonsum  );    /* 상여총액        */
+    i +=  sprintf(buffer + i,  "%011.0f",bcogbonsum);   /* 인정상여        */
+    i +=  sprintf(buffer + i,  "%011.0f",bsum     );    /* 계              */
+
+    i +=  sprintf(buffer + i,  "%02d" ,  1);            /* 종근무처일련번호*/
+
+    i +=  sprintf(buffer + i,  "%1s"   ," ");           /* 자료수정코드    */
+    i +=  sprintf(buffer + i,  "%488s" ," ");           /* 공란            */
+    sprintf(buffer+670,"\n");
+
+    fprintf(fp,"%s",buffer);
+}    /* end of D record*/
+
+/* by yhs */
+MakeD2Rec()
+{
+    int i;
+    memset(buffer,'\0',sizeof(buffer));
+    i = 0;
+
+    /* **** 자료관리번호 **** */
+    i +=  sprintf(buffer + i,  "%1s"   ,"D");           /* 레코드구분 "D"  */
+    i +=  sprintf(buffer + i,  "%2s"   ,"20");          /* 자료구분   "20" */
+    i +=  sprintf(buffer + i,  "%3s"   ,semusu);        /* 세무서코드    */
+    i +=  sprintf(buffer + i,  "%06d"  ,cseqno);        /* 일련번호      */
+
+    /* **** 원천징수의무자 **** */
+    i +=  sprintf(buffer + i,  "%-10s" ,corpno);        /* 사업자등록번호 */
+    i +=  sprintf(buffer + i,  "%50s"   ," ");          /* 공란           */
+
+    /* **** 소득자(근로자) **** */
+    i +=  sprintf(buffer + i,  "%-13s" ,juminid);       /* 주민등록번호   */
+
+    /* **** 종(전)근무처 **** */
+    i +=  sprintf(buffer + i,  "%-40s"  ,bcorpname1);    /* 근무처명       */
+    i +=  sprintf(buffer + i,  "%-10s"  ,bcorpno1  );    /* 사업자번호*/
+    i +=  sprintf(buffer + i,  "%011.0f",bpaysum1  );    /* 급여총액        */
+    i +=  sprintf(buffer + i,  "%011.0f",bbonsum1  );    /* 상여총액        */
+    i +=  sprintf(buffer + i,  "%011.0f",0.0);           /* 인정상여        */
+    i +=  sprintf(buffer + i,  "%011.0f",bsum1     );    /* 계              */
+
+    i +=  sprintf(buffer + i,  "%02d" ,  2);            /* 종근무처일련번호*/
+
+    i +=  sprintf(buffer + i,  "%1s"   ," ");           /* 자료수정코드    */
+    i +=  sprintf(buffer + i,  "%488s" ," ");           /* 공란            */
+    sprintf(buffer+670,"\n");
+
+    fprintf(fp,"%s",buffer);
+}    /* end of D record*/

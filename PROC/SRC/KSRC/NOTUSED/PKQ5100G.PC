@@ -1,0 +1,660 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKQ5100G(임원용 퇴직지급율 계산)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 퇴직 
+ Programmer     : 유효성
+ Version        : 1.00
+ Date           : 2002.05.01
+
+사용하는 프로그램 : pkq2075g.pc, pkq5040g.pc, pkq5090g.pc , pkq4020g.pc	
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   1.00       2002.05.01         유효성          최초개발본      설계명세서
+                                                 -임원 퇴직금 지급율 산정방식이 변경됨.
+   1.01       2004.02.24         강륜종          Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.                                               
+=========================================================================== */
+
+#include <stdio.h>
+#include <stdlib.h> 
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"         
+#include "hinsa_macro.h"
+
+#define  FAIL      	-2
+
+/* ===========================================================================
+	Function Prototype 정의 
+   =========================================================================== */
+void	Ins_data(void);
+void	Update_date(void);
+void	Calc_Cltodate(void);
+void    Calc_days(void) ;
+void 	print_errmsg(int errcode, char *errmsg);
+
+EXEC SQL  BEGIN DECLARE SECTION;
+	char	calcdate[8+1];	/* 계산기준일		*/
+	char	empno[4+1];	/* 사번			*/
+ 	
+ 	char	frempno[4+1];	/* 급여계산기간From 	*/
+ 	char	toempno[4+1];	/* 급여계산기간To		*/
+ 	char	writeman[4+1];	/* 작업자사번		*/ 	
+ 	char    mempno[4+1];
+ 	char    mrtodate[8+1];
+ 		
+EXEC SQL  END DECLARE SECTION;
+EXEC SQL  INCLUDE sqlca;
+
+int	id;
+
+void	main(int argc, char *argv[])
+{
+	char FL_file[255];
+	
+	if (argc != 6) {
+		printf("[Usage] : pkq5100g 20031031 M033 M033 0970 hperson \n");
+		printf("1. 계산기준일 \n");
+		printf("2. 사번From 	\n");
+		printf("3. 사번To 	\n");		
+		printf("4. 작업자사번 	\n");
+		printf("5. DB UserID 	\n");
+		printf(" =======> 매개변수의 갯수와 사용법을 확인하십시요.\n\n");
+		return;
+	}
+
+	sprintf(calcdate,"%s", argv[1]);
+	sprintf(frempno, "%s", argv[2]);
+	sprintf(toempno, "%s", argv[3]);
+	sprintf(writeman,"%s", argv[4]);
+	
+	/*로그 디렉토리 생성 및 로그작업 */
+	STRINIT(FL_file);
+    	strcpy(FL_file,"pkq5100g");
+
+    	hinsa_get_filename(1, FL_file);
+    	if (hinsa_log_open(FL_file) == FAILURE)
+    	{
+      		hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+      		return;
+    	}
+    	
+	/*memset(dir,0x00,sizeof(dir));
+	if (Get_User(argv[5],&id,dir))
+	{
+		printf("[작업 종료] user가 정의되어있지 않습니다. \n");
+		return;
+	}*/
+
+	/* Dsa2000  2004.02.24.	**********************************/
+	/* DB_connect(id,0); */
+	hinsa_log_print(0,"임원용 퇴직지급율 계산 시작...");
+        hinsa_db_connect();  /*DB Connect 실시..*/
+	/*dsa2000  수정..End......................................*/
+
+       	Ins_data();
+       	
+       	Update_date() ;
+       	
+       	Calc_days() ;
+	
+	/* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+	if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	   error_quit("ERROR ====== [작업 실패] =====\n");
+	else	
+           hinsa_exit(0,"OK \n=== [임원 퇴직지급율 계산 작업성공] =====\n");
+}
+
+void	Ins_data (void)
+{
+	/* 1. 기존자료 삭제 */
+	EXEC SQL
+	delete 	from pkhrtdir a
+	where 	calcdate = :calcdate
+	and     calcdate <> '20020328'/*제도바뀐 기준일*/
+	and	empno  between :frempno and :toempno ; 
+	
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode,"1. 기존자료 삭제 에서 오류...");
+		error_quit("작업실패...");
+	} 
+	
+	if (sqlca.sqlcode == 0) 
+	{
+		printf("1. 기존자료 삭제 완료! "); 	
+	}
+	
+	/* 2003.08.12. 강륜종(Dsa2000) 추가.. 기준일(20020328)에 존재하는 사원중 퇴사일 업데이트 */
+	EXEC SQL
+	Update pkhrtdir B 
+	   Set B.retdate
+	     = (select A.retdate from pimpmas A
+          	 where A.empno   = B.empno
+          	   and A.pstate >= '80'
+           	   and calcdate = '20020328' )
+         where B.empno in (select A.empno from pimpmas A
+                            where A.empno   = B.empno
+          	              and A.pstate >= '80'
+           	              and calcdate  = '20020328'
+           	              and B.retdate is null );
+	
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode,"1. 기존자료 삭제 에서 오류...");
+		error_quit("작업실패...");
+	}             	              
+	/* Dsa2000 End...........................................................................*/           	              
+
+
+/**base**/	        
+	EXEC SQL
+	INSERT INTO PKHRTDIR (
+		CALCDATE, EMPNO,  KORNAME, EMPDATE, RETDATE,RETCL,
+		CLFRDATE, CLTODATE, WRITEMAN, WRITETIME)
+	select 	:calcdate, empno, korname, empdate, retdate, retcl,
+		clfrdate, cltodate, :writeman, to_char(sysdate,'yyyymmddhh24miss')		
+	from	pkhrtdir a
+	where	calcdate ='20020328'
+	  and   empno between :frempno and :toempno 
+	  and   retdate is null ;   /* 2003.08.12  Dsa2000 퇴사자는 제외토록 추가(재직자만 계산이되도록) */
+		
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode,"2. BASE 자료생성 에서 오류...");
+		error_quit("작업실패...");
+	}
+	
+/**add**/
+	EXEC SQL
+	INSERT INTO PKHRTDIR (
+		CALCDATE, EMPNO,  KORNAME, EMPDATE, RETDATE,RETCL,ANNONO,
+		CLFRDATE, CLTODATE, WRITEMAN, WRITETIME)
+	SELECT 	:calcdate, B.EMPNO, B.KORNAME, A.EMPDATE, A.RETDATE,B.PAYCL,B.ANNONO,
+		 ANFRDATE, '', :writeman, to_char(sysdate,'yyyymmddhh24miss')	
+         FROM PIMPMAS A, PIHANNO B	
+         WHERE A.EMPNO = B.EMPNO
+		 AND (ANCODE ='123'                /**임원진급**/
+	    OR (ANCODE ='131' AND B.PAYCL <='09')) /**임원신규계약**/
+	   AND  ANFRDATE >'20020328'
+	   AND  B.EMPNO BETWEEN :frempno AND :toempno;  
+	  
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode,"3. 자료생성 에서 오류...");
+		error_quit("작업실패...");
+	}        
+
+}
+	
+
+
+void	Update_date (void)
+{
+       printf("\n 직급to setting... ") ;
+       
+       EXEC SQL
+       DECLARE c9 CURSOR  FOR
+        SELECT DISTINCT EMPNO
+          FROM PKHRTDIR
+         WHERE CALCDATE = :calcdate 
+         ORDER BY EMPNO ;     
+         
+	EXEC	SQL	open c9;
+
+	if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+	{	print_errmsg(sqlca.sqlcode,"pkhrtdir rEAD ERROR");
+		error_quit("작업실패...");	
+	}
+    
+	while(1)
+	{
+		EXEC SQL FETCH c9 INTO
+		:empno;
+                 
+                if (sqlca.sqlcode == 1403)
+		{
+			EXEC SQL close c9;			
+			break;			
+		} 
+               
+            Calc_Cltodate () ;    
+        }
+        
+        
+ /*중간정산 반영 */	
+        EXEC SQL
+        DECLARE c8 CURSOR  FOR
+        SELECT EMPNO, MAX(MRTODATE) MRTODATE
+          FROM PKHMRHIS
+         WHERE  EMPNO IN (SELECT EMPNO FROM PKHRTDIR
+                          WHERE CALCDATE =:calcdate)
+        GROUP BY EMPNO ;     
+         
+	EXEC	SQL	open c8;
+
+	if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+	{	print_errmsg(sqlca.sqlcode,"PKHMRHIS READ ERROR");
+		error_quit("작업실패...");	
+	}
+
+	printf("\n 중간정산 반영 중...(pkq5100g) \n") ;
+    
+	while(1)
+	{
+		EXEC SQL FETCH c8 INTO
+		:mempno, :mrtodate ;
+                 
+                if (sqlca.sqlcode == 1403)
+		{
+			EXEC SQL close c8;			
+			break;			
+		} 
+		
+           
+           EXEC SQL    
+           UPDATE PKHRTDIR
+            SET EMPDATE = TO_CHAR(TO_DATE(:mrtodate,'YYYYMMDD')+1,'YYYYMMDD')
+           WHERE CALCDATE =:calcdate
+            AND  EMPNO=:mempno ;            
+           
+           if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	   {
+		print_errmsg(sqlca.sqlcode,"3.중간정산반영 EMPDATE SETTING에서 오류...");
+		error_quit("작업실패...");
+	   }  
+            
+           
+           EXEC SQL    
+           UPDATE PKHRTDIR
+            SET CLFRDATE = TO_CHAR(TO_DATE(:mrtodate,'YYYYMMDD')+1,'YYYYMMDD')
+           WHERE CALCDATE =:calcdate
+            AND  EMPNO=:mempno
+            AND :mrtodate BETWEEN CLFRDATE AND CLTODATE    ;                      
+            
+           if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	   {
+		print_errmsg(sqlca.sqlcode,"3.중간정산반영 CLFRDATE SETTING에서 오류...");
+		error_quit("작업실패...");
+	   }
+            
+           
+           EXEC SQL 
+           DELETE PKHRTDIR
+           WHERE CALCDATE =:calcdate
+           AND EMPNO = :mempno
+           AND CLTODATE <= :mrtodate ;
+           
+           if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	   {
+		print_errmsg(sqlca.sqlcode,"3.중간정산반영 DELETE에서 오류...");
+		error_quit("작업실패...");
+	   }
+           
+        } /*while end */
+
+}
+
+/**************/
+	
+	
+void Calc_Cltodate(void)	
+
+{
+   char firstyn[1+1] ;
+   char tempdate[8+1] ;
+   char iempno[4+1] ;
+   char ikorname[10+1];   
+   char iclfrdate[8+1];   
+   char icltodate[8+1];   
+   char bcltodate[8+1];   
+   char bbcltodate[8+1];      
+      	
+	
+	EXEC	SQL
+	DECLARE c1 CURSOR  FOR
+	SELECT 	EMPNO,  KORNAME, 
+		CLFRDATE, CLTODATE, 
+		TO_CHAR(TO_DATE(CLFRDATE,'yyyymmdd') - 1,'yyyymmdd') BCLTODATE
+	FROM	PKHRTDIR 
+	WHERE   CALCDATE = :calcdate 
+	  AND   EMPNO = :empno 
+	ORDER BY EMPNO, CLFRDATE DESC ;
+
+	EXEC	SQL open c1;
+	if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+	{	
+		print_errmsg(sqlca.sqlcode,"PKHRTDIR READ ERROR");
+		error_quit("작업실패...");	
+	}
+	
+	sprintf(firstyn, "%s", "Y") ;  
+
+	while(1)
+	{
+		EXEC SQL FETCH c1 INTO
+		:iempno,     :ikorname,
+		:iclfrdate,  :icltodate , 
+		:bcltodate ;				
+				
+		if(sqlca.sqlcode == 1403)
+		{
+			EXEC SQL close c1;			
+			break;
+		}		
+		
+		if (strncmp(firstyn ,"Y",1) == 0 )	            	
+		    sprintf(tempdate, "%s", calcdate) ;
+		else 
+		    sprintf(tempdate, "%s", bbcltodate) ;  	
+		
+		
+		sprintf(bbcltodate, "%s", bcltodate) ;  		
+		
+		 EXEC SQL
+                 UPDATE PKHRTDIR
+        	    SET CLTODATE  = :tempdate        	        
+                  WHERE CALCDATE  = :calcdate
+                    AND EMPNO     = :iempno
+                    AND CLFRDATE  = :iclfrdate ;                    
+       
+        	if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+		{	
+			print_errmsg(sqlca.sqlcode,"Update ERROR");
+			error_quit("작업실패...");	
+		}
+		
+		
+		sprintf(firstyn, "%s", "N") ;            
+	
+	}			
+}
+
+void	Calc_days (void)
+{
+  char	gempno[4+1] ;  
+  double  gretmm ;
+  double  gclretmm ;
+  char gclfrdate[8+1] ;		
+	
+/**총 근속 계산**/	
+	EXEC SQL
+	UPDATE PKHRTDIR 
+	   SET DUTYDAYS = MONTHS_BETWEEN(TO_DATE(CALCDATE,'YYYYMMDD')+1,
+                                    TO_DATE(EMPDATE,'YYYYMMDD'))*31
+        WHERE EMPNO BETWEEN :frempno AND :toempno
+          AND CALCDATE = :calcdate ;
+          
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {	
+		print_errmsg(sqlca.sqlcode,"Update ERROR");
+		error_quit("작업실패...");	
+	  }
+
+/**전체 근속제외**/        
+        EXEC SQL
+        UPDATE PKHRTDIR R 
+        SET  EXDAYS =
+            (SELECT 
+                 SUM(MONTHS_BETWEEN(
+                     TO_DATE(LEAST(X.EXTODATE   ,Y.CALCDATE),'YYYYMMDD')+1,
+                     TO_DATE(GREATEST(X.EXFRDATE,Y.EMPDATE),'YYYYMMDD'))*31
+                    )
+             FROM PKHEXDD X, (SELECT EMPNO, CALCDATE, EMPDATE
+                                     FROM PKHRTDIR
+                                     WHERE CALCDATE = :calcdate
+                                    GROUP BY EMPNO, CALCDATE, EMPDATE) Y
+             WHERE R.EMPNO = X.EMPNO   
+               AND X.EMPNO = Y.EMPNO            
+               AND UPPER(X.EXFIXYN) = 'Y'
+             GROUP BY R.EMPNO, X.EMPNO)
+        WHERE EMPNO BETWEEN  :frempno AND :toempno
+          AND CALCDATE =:calcdate
+          AND EMPNO IN (SELECT R.EMPNO 
+                          FROM PKHEXDD X, 
+                               (SELECT EMPNO, CALCDATE, EMPDATE 
+                                  FROM PKHRTDIR 
+                                 WHERE CALCDATE =:calcdate
+                                GROUP BY EMPNO, CALCDATE, EMPDATE) R
+                        WHERE R.EMPNO = X.EMPNO
+                          AND NOT (X.EXFRDATE > R.CALCDATE OR
+                                   X.EXTODATE < R.EMPDATE)
+                          AND UPPER(X.EXFIXYN) = 'Y'
+                          AND CALCDATE =:calcdate 
+                       );
+
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {	
+		print_errmsg(sqlca.sqlcode,"Update ERROR");
+		error_quit("작업실패...");	
+	  } 
+	  
+	
+	EXEC SQL
+        UPDATE PKHRTDIR 
+        SET  REALDAYS = NVL(DUTYDAYS,0) - NVL(EXDAYS,0)
+        WHERE EMPNO BETWEEN :frempno AND :toempno 
+         AND  CALCDATE =:calcdate ;
+
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {	
+		print_errmsg(sqlca.sqlcode,"Update ERROR");
+		error_quit("작업실패...");	
+	  }
+	  
+	EXEC SQL
+        UPDATE PKHRTDIR R 
+        SET REALYY = FLOOR(REALDAYS / 372),
+            REALMM = FLOOR(MOD(REALDAYS,372) /31),
+            REALDD = MOD(MOD(REALDAYS,372),31)
+         WHERE EMPNO BETWEEN :frempno AND :toempno 
+         AND  CALCDATE =:calcdate ;
+         
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {	
+		print_errmsg(sqlca.sqlcode,"Update ERROR");
+		error_quit("작업실패...");	
+	  }
+
+         
+        EXEC SQL
+        UPDATE PKHRTDIR R 
+        SET RETMM = REALYY * 12 + REALMM + DECODE(REALDD,0,0,1),
+            RETYY = REALYY + DECODE(REALMM+REALDD,0,0,1)
+         WHERE EMPNO BETWEEN :frempno AND :toempno 
+         AND  CALCDATE =:calcdate ;        
+        
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {	
+		print_errmsg(sqlca.sqlcode,"Update ERROR");
+		error_quit("작업실패...");	
+	  }
+ 
+	  
+	
+/**직급 근속 계산 **/	
+	EXEC SQL
+	UPDATE PKHRTDIR 
+	   SET CLDAYS = MONTHS_BETWEEN(TO_DATE(CLTODATE,'YYYYMMDD')+1,
+                                    TO_DATE(CLFRDATE,'YYYYMMDD'))*31
+        WHERE EMPNO BETWEEN :frempno AND :toempno
+          AND CALCDATE = :calcdate ;
+          
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {	
+		print_errmsg(sqlca.sqlcode,"Update ERROR");
+		error_quit("작업실패...");	
+	  }
+
+/**직급별 근속제외**/        
+        EXEC SQL
+        UPDATE PKHRTDIR R 
+        SET  CLEXDAYS =
+            (SELECT 
+                 SUM(MONTHS_BETWEEN(
+                     TO_DATE(LEAST(X.EXTODATE   ,R.CLTODATE),'YYYYMMDD')+1,
+                     TO_DATE(GREATEST(X.EXFRDATE,R.CLFRDATE),'YYYYMMDD'))*31
+                    )
+             FROM PKHEXDD X 
+             WHERE R.EMPNO = X.EMPNO               
+               AND UPPER(X.EXFIXYN) = 'Y'
+               AND NOT (X.EXFRDATE >  R.CLTODATE OR
+                    X.EXTODATE < R.CLFRDATE)               
+             GROUP BY R.EMPNO, X.EMPNO)                       
+         WHERE EMPNO BETWEEN  :frempno AND :toempno
+          AND CALCDATE =:calcdate
+          AND EMPNO IN (SELECT R.EMPNO FROM PKHEXDD X, PKHRTDIR R
+                        WHERE R.EMPNO = X.EMPNO
+                          AND NOT (X.EXFRDATE > R.CLTODATE OR
+                                   X.EXTODATE < R.CLFRDATE)
+                          AND UPPER(X.EXFIXYN) = 'Y'
+                          AND CALCDATE =:calcdate 
+                       );
+
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {	
+		print_errmsg(sqlca.sqlcode,"Update ERROR");
+		error_quit("작업실패...");	
+	  }
+        
+        
+        EXEC SQL
+        UPDATE PKHRTDIR 
+        SET  CLREALDAYS = NVL(CLDAYS,0) - NVL(CLEXDAYS,0)
+        WHERE EMPNO BETWEEN :frempno AND :toempno 
+         AND  CALCDATE =:calcdate ;
+
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {	
+		print_errmsg(sqlca.sqlcode,"Update ERROR");
+		error_quit("작업실패...");	
+	  }
+	
+	
+	EXEC SQL
+        UPDATE PKHRTDIR R 
+        SET CLREALYY = FLOOR(CLREALDAYS / 372),
+            CLREALMM = FLOOR(MOD(CLREALDAYS,372) /31),
+            CLREALDD = MOD(MOD(CLREALDAYS,372),31)
+         WHERE EMPNO BETWEEN :frempno AND :toempno 
+         AND  CALCDATE =:calcdate ;
+         
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {	
+		print_errmsg(sqlca.sqlcode,"Update ERROR");
+		error_quit("작업실패...");	
+	  }
+
+         
+        EXEC SQL
+        UPDATE PKHRTDIR R 
+        SET CLRETMM = CLREALYY * 12 + CLREALMM + DECODE(CLREALDD,0,0,1),
+            CLRETYY = CLREALYY + DECODE(CLREALMM+CLREALDD,0,0,1)
+         WHERE EMPNO BETWEEN :frempno AND :toempno 
+         AND  CALCDATE =:calcdate ;        
+        
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {	
+		print_errmsg(sqlca.sqlcode,"Update ERROR");
+		error_quit("작업실패...");	
+	  }
+	  
+
+/*NULL 값 조정*/	
+	EXEC SQL
+        UPDATE PKHRTDIR R 
+        SET DUTYDAYS = NVL(DUTYDAYS,0),
+            EXDAYS   = NVL(EXDAYS,  0),
+            CLDAYS   = NVL(CLDAYS,  0),
+            CLEXDAYS = NVL(CLEXDAYS,0)
+         WHERE EMPNO BETWEEN :frempno AND :toempno 
+         AND  CALCDATE =:calcdate ;        
+        
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  {	
+		print_errmsg(sqlca.sqlcode,"Update ERROR");
+		error_quit("작업실패...");	
+	  }
+	  
+	  
+/*직급별 근속기간과 전체 근속기간간 갭 해결 */	 
+	 EXEC SQL	 
+	 DECLARE c7 CURSOR  FOR 
+	 SELECT EMPNO,  RETMM, SUM(CLRETMM), MIN(CLFRDATE) FROM PKHRTDIR
+	 WHERE CALCDATE = :calcdate
+         GROUP BY CALCDATE,EMPNO,KORNAME,RETMM
+         HAVING SUM(CLRETMM) <> RETMM ;
+         
+        EXEC	SQL open c7;
+	if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+	{	
+		print_errmsg(sqlca.sqlcode,"PKHRTDIR READ ERROR");
+		error_quit("작업실패...");	
+	}	
+	
+
+	while(1)
+	{
+		EXEC SQL FETCH c7 INTO
+		:gempno,      :gretmm,     
+		:gclretmm,    :gclfrdate ;		
+				
+		if(sqlca.sqlcode == 1403)
+		{
+			EXEC SQL close c7;			
+			break;
+		}
+	      
+	       EXEC SQL 
+	       UPDATE PKHRTDIR A
+		SET CLRETMM = CLRETMM - ( :gclretmm - :gretmm)
+		WHERE CALCDATE = :calcdate
+		AND EMPNO = :gempno
+		AND CLFRDATE = :gclfrdate	 ;
+		
+		if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	  	{	
+			print_errmsg(sqlca.sqlcode,"Update ERROR");
+			error_quit("작업실패...");	
+	  	}
+				
+         
+        } 
+
+/**지급율 세팅**/        
+
+     EXEC SQL
+     UPDATE PKHRTDIR R SET
+            CLRETRATE =
+            (SELECT NVL(RETRATE,0.0)
+             FROM PKCRTTBL T
+             WHERE R.RETCL = T.RETCL
+               AND R.CLRETMM = T.DUTYMM
+            )
+        WHERE EMPNO BETWEEN :frempno AND :toempno
+        AND   CALCDATE =:calcdate ;
+
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+    {        
+        print_errmsg(sqlca.sqlcode,"퇴직금 지급율 계산중..");
+	error_quit("작업실패...");	
+    }    
+         
+
+}
+
+/*************************************************************************
+	print_errmsg	Function.
+ *************************************************************************/
+void 	print_errmsg(int errcode, char *errmsg)
+{
+	printf(" [ERR_CODE] : (%d)\n", errcode);
+	printf(" [ERR_POSITION] : (%s)\n",errmsg);
+
+	EXEC SQL
+	ROLLBACK WORK RELEASE;
+}	
+	

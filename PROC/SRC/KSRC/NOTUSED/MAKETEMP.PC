@@ -1,0 +1,110 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : maketemp(월 변동자료 추출)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 급여계산
+ Programmer     : 이인환
+ Version        : 1.00
+ Date           : 1997.02.16
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   1.00       1997.02.16         이인환          최초개발본      설계명세서
+   34.00     2004.02.24    강륜종   Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.  
+============================================================================= */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+	char	empno[5];
+	char	tvalue[13];	
+	char	sqlstr[1024];
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE sqlca;
+
+int  id;
+
+main(argc,argv)
+int argc;
+char *argv[];
+{
+	char	tmpstr[80];
+	char FL_file[255];
+	
+	/*로그 디렉토리 생성 및 로그작업
+	STRINIT(FL_file);
+    	strcpy(FL_file,"pkc10802");
+
+    	hinsa_get_filename(1, FL_file);
+    	if (hinsa_log_open(FL_file) == FAILURE)
+    	{
+      		hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+      		return;
+    	}*/
+
+	/*dsa2000 */	
+        hinsa_log_print(0,"월 변동자료 추출 시작...");        
+        hinsa_db_connect();  /*DB Connect 실시..*/
+	/*dsa2000  수정..End......................................*/
+               
+	Read_InsertData(argv[1],argv[2]);
+
+	/* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+	/*EXEC SQL COMMIT;
+	printf("OK");*/	
+	if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	   error_quit("ERROR ====== [작업 실패] =====\n");
+	else	
+           hinsa_exit(0,"OK ====== [월급여생성 작업성공] =====\n");
+}
+
+Read_InsertData(fname,tname)
+char 	*fname;
+char	*tname;
+{
+	FILE *fp;	
+	char buf[256];
+	char tmpstr[80];
+	
+	fp = fopen(fname,"r");
+	if (fp == NULL)
+	{
+		printf("[ERR] %s 화일이 없습니다",fname);
+
+		sprintf(sqlstr,"drop table %s ", tname);
+		EXEC SQL EXECUTE IMMEDIATE :sqlstr; 
+		
+		exit(0); 	
+	}
+
+	while (fgets(buf,256,fp))
+	{
+		sprintf(empno,"%4.4s",buf);
+		sprintf(tvalue,"%12s",buf+5);
+		sprintf(sqlstr,"insert into %s (empno,tvalue) values ('%s',%s)",
+			tname,empno,tvalue);
+
+		EXEC SQL EXECUTE IMMEDIATE :sqlstr; 
+
+		if (sqlca.sqlcode != 0)
+		{
+			printf("[ERRCODE : %d] %s번 임시 테이블 삽입 ERROR",sqlca.sqlcode,empno);
+			fclose(fp);
+
+			sprintf(sqlstr,"drop table %s ", tname);
+			EXEC SQL EXECUTE IMMEDIATE :sqlstr; 
+
+			exit(0);
+		}
+	}
+
+	fclose(fp);
+}

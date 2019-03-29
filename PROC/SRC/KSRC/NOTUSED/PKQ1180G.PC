@@ -1,0 +1,649 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKQ1180G.PC [ 퇴직소득(퇴직금) Disket Make Program ]
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 연말정산(퇴직소득) : 해당년도에  실제 퇴직 사원 + 중간정산 받은 사원 신고함.
+ Programmer     : 강륜종
+ Version        : 10.00
+ Date           : 2004.02.16.
+
+ 참 고 사 항    : 전근무지 관련 칼럼에는 중간정산받은 데이터가 들어 있음.(즉, 실제 전근무지가 아님)
+ 체크할 사항    : 입사일자, 귀속년도, 퇴직금합,           
+        
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description
+   10.01     2004.02.27    강륜종          Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드. 	                                                             
+   11.00     2005.01.      dsa2000         2004세법 적용.
+   12.00     2006.02.      dsa2000         2005세법 적용.
+================================================================================ */
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define SUCCESS  -1*/
+#define FAIL     -2
+
+EXEC SQL BEGIN DECLARE SECTION;
+char  workyy[04+1]    ="" ;
+char  givedate[8+1]   ="" ;    /* 제출년월일 */
+char  repmanno[6+1]   ="" ;    /* 세무대리인관리번호  */
+char  corpno[10+1]    ="" ;    /* 사업자등록번호      */
+char  corpname[40+1]  ="" ;    /* 법인명              */
+char  corpregno[13+1] ="" ;    /* 회사법인등록번호    */
+char  presname[30+1]  ="" ;    /* 사장명(대표자성명)  */
+char  presjuno[13+1]  ="" ;    /* 사장주민번호        */
+char  corptel[15+1]   ="" ;    /* 전화번호            */
+char  semusu[3+1]     ="" ;    /* 세무서코드          */
+
+/* ***** 제출내역 ***** */
+/* **** 소득자(퇴직자 ) **** */
+/*int     dutycnt ;           /* 신고(제출)의무자 수   */
+int     cdutycnt  ;           /* 현    근무처수 */
+double  retamtsum;            /* 소득금액 총계         */
+double  retintaxsum;          /* 소득세결정세액총계    */
+double  retjutaxsum;          /* 주민세결정세액총계    */
+double  retnongtaxsum;        /* 농특세결정세액총계    */
+double  BRec_rettaxsum;       /* 결정세액총계          */
+
+/* **** 소득자(중간정산받은자 ) **** */
+int     cdutycnt1 ;          /* 근무처수 */
+double  retamtsum1;          /* 소득금액 총계         */
+double  retintaxsum1;        /* 소득세결정세액총계    */
+double  retjutaxsum1;        /* 주민세결정세액총계    */
+double  retnongtaxsum1;      /* 농특세결정세액총계    */
+double  BRec_rettaxsum1;     /* 결정세액총계          */
+
+int   ddutycnt  ;            /* 종(전)근무처수 */
+
+char  empno[04+1]   ="" ;
+char  korname[30+1] ="" ;      /* 소득자성명  */
+char  juminid[13+1] ="" ;      /* 소득자주민번호  */
+char  juminidcmp[1+1] ="" ;    /* 소득자주민번호  체크...*/
+char  ysfrdate[8+1] ="" ;      /* 귀속년도 fr */
+char  ystodate[8+1] ="" ;      /* 귀속년도 to */
+
+double  retamt;                /* 퇴직금         */
+double  horretamt;             /* 명예퇴직수당   */
+double  retamtsum;             /* 단체퇴직보험금 */
+double  bretamt;               /* 전근무지퇴직금 (중간정산받은금액) */
+double  bhorretamt;            /* 전근무지명예퇴직수당   */
+double  bretamtsum;            /* 계 : 전근무지단체퇴직보험금 */
+
+double  rinded;                /*  퇴직소득공제  */
+double  taxstamt;              /*  퇴직소득과세표준    */
+double  avgtaxstamt;           /*  년평균퇴직과표      */
+double  retavgtax;             /*  퇴직연평균산출내역  */
+double  retcalctax;            /*  퇴직산출세액        */
+double  rettaxded;             /*  퇴직세액공제        */
+
+/* **** 결정 세액 **** */
+double  retintax;	       /*  결정소득세	    */
+double  retjutax;	       /*  결정주민세	    */
+double  retnongtax;	       /*  결정농특세	    */
+double  rettaxtot;             /*  결정세액계	    */
+
+char    acptdate[8+1] ="" ;    /*  영수(지급)년월일 */
+char    empdate[8+1]="";
+char    retdate[8+1]="";
+int     dutymm;                /* 근속월수 */
+int     dutyyy;                /* 근속년수 */
+
+/* **** 기납부세액 **** */
+double  bretintax;     	       /*  (종) 소득세	    */
+double  bretjutax;	       /*  (종) 주민세	    */
+double  bretnongtax;	       /*  (종) 농특세	    */
+double  brettaxsum;            /*  (종) 계	    */
+/***************************************************************/
+
+/* **** (종)근무처 *** */
+char    bcorpname[30+1] ="" ;    /* 종근무처명         */
+char    bcorpno[10+1]   ="" ;    /* 종근무처사업자번호 */
+double  bpaysum   ;              /*(종) 급여총액       */
+double  bbonsum   ;              /*(종) 상여총액       */
+double  bcogbonsum   ;           /*(종) 인정상여       */
+double  bsum      ;              /*(종) 계             */
+  
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE SQLCA;
+
+FILE *fp = stdout;
+
+char    cmdline[256];
+char    buffer[412] ="";
+int     cseqno = 0;   /*현 근무처수*/
+int     dseqno = 0;   /*종 근무처수*/
+int     id;
+
+void main(argc,argv)
+int  argc;
+char *argv[];
+{
+ 	char  path[100]="";
+ 	char  path_corpno[11+1]="";   /*현 사업자번호 파일명*/
+ 	char  *dir;
+        
+ 	if (argc != 4)
+ 	{   /* pkq1180g 2005 20060228 20060228 */
+    		printf("사용법 : 연말정산 디스켓 작성(퇴직자)\n");
+    		printf("         작업년도(4자리) \n");
+    		printf("         제출일자(8자리) \n");
+    		printf("         영수일자(8자리) \n");
+    		exit(1);
+ 	}
+
+	/* Dsa2000  2004.02.24.	**********************************/	
+        hinsa_log_print(0,"근태집계 프로그램 시작...");
+        hinsa_db_connect();  /*DB Connect 실시..*/
+	/* Dsa2000  수정 End......................................*/
+
+        strcpy(workyy,argv[1]);
+        strcpy(givedate,argv[2]);   /* 제출일*/
+	strcpy(acptdate,argv[3]);   /* 영수일*/
+
+        EXEC SQL
+        SELECT SUBSTR(REPLACE(CORPNO,'-',''),1,7)||'.'||
+               SUBSTR(REPLACE(CORPNO,'-',''),8,3)
+          INTO :path_corpno
+          FROM PKCPBAS;
+
+	dir = hinsa_home();
+	sprintf(path,"%s/data/Kdata/E%s",dir,path_corpno);
+	printf("%s\n",path);
+
+        if ((fp=fopen(path,"wt")) == NULL)
+        {
+                fclose(fp);
+                printf("화일 열기 Error. \n");
+                exit(1);
+        }
+
+        if (( MakeHeader()== FAIL) ||(MakeRecord()==FAIL))
+        {
+                fclose(fp);
+                printf(" 화일 생성 Error. \n");
+                exit(1);
+        }
+        
+        fclose(fp);
+        printf("  퇴직소득 디스켓을 작성하였습니다. \n");
+        printf("  화일 [%s] \n",path);
+        printf("  퇴직소득 & 중간정산 대상자 [%d] \n",cseqno);
+        printf("  전근무지가 존재하는 대상자 [%d] \n",dseqno);
+        
+	/* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+	if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	   error_quit("ERROR ====== [작업 실패] =====\n");
+	else	
+           hinsa_exit(0,"OK ====== [작업성공] =====\n");
+ }
+
+/* A record 변수를 초기화*/
+Set_InitValA()
+{
+     /*  회사 */
+     memset(repmanno,  '\0',sizeof(repmanno) );
+     memset(corpno,    '\0',sizeof(corpno    ));
+     memset(corpname,  '\0',sizeof(corpname  ));
+     memset(corpregno, '\0',sizeof(corpregno ));
+     memset(presname,  '\0',sizeof(presname  ));
+     memset(presjuno,  '\0',sizeof(presjuno  ));
+     memset(corptel,   '\0',sizeof(corptel   ));
+     memset(semusu,    '\0',sizeof(semusu    ));
+
+     /****** 제출내역 ******/
+     cdutycnt        = 0;         /* 신고(제출)의무자 수  : 실 퇴직자  */
+     retamtsum       = 0;         /* 소득금액 총계         */
+     retintaxsum     = 0;         /* 소득세결정세액총계    */
+     retjutaxsum     = 0;	  /* 주민세결정세액총계    */
+     retnongtaxsum   = 0;         /* 농특세결정세액총계    */
+     BRec_rettaxsum  = 0;         /* 결정세액총계          */
+     cdutycnt1       = 0;         /* 신고(제출)의무자 수  : 중간정산 받은자 */
+     retamtsum1      = 0;         /* 소득금액 총계         */
+     retintaxsum1    = 0;         /* 소득세결정세액총계    */
+     retjutaxsum1    = 0;	  /* 주민세결정세액총계    */
+     retnongtaxsum1  = 0;         /* 농특세결정세액총계    */
+     BRec_rettaxsum1 = 0;         /* 결정세액총계          */
+}
+
+/* C,D record 변수를 초기화*/
+Set_InitValC()
+{
+     /* **** 소득자(근로자) **** */
+     memset(empno,     '\0',sizeof(empno    ));
+     memset(korname,   '\0',sizeof(korname  ));
+     memset(juminid,   '\0',sizeof(juminid  ));
+     memset(juminidcmp,'\0',sizeof(juminidcmp));
+     memset(ysfrdate,  '\0',sizeof(ysfrdate )); 
+     memset(ystodate,  '\0',sizeof(ystodate ));
+
+     /* **** 결정 세액 **** */
+     retintax      = 0;
+     retjutax      = 0;
+     retnongtax    = 0;
+     rettaxtot     = 0;
+
+     /* **** 기납부세액 **** */
+     bretintax      = 0 ;
+     bretjutax      = 0 ;
+     bretnongtax    = 0 ;
+     brettaxsum     = 0 ;
+
+     memset(bcorpname,'\0',sizeof(bcorpname));
+     memset(bcorpno  ,'\0',sizeof(bcorpno  ));
+}
+
+
+/* header자료를 Setting*/
+MakeHeader()
+{
+ int     i = 0;
+
+ Set_InitValA();
+
+ EXEC SQL
+ SELECT CORPNAME,  
+        REPLACE(CORPNO,'-',''),    REPLACE(CORPREGNO,'-',''),
+        PRESNAME,  REPLACE(PRESJUNO,'-',''), CORPTEL, SEMUSU
+   INTO :corpname, :corpno,   :corpregno, 
+        :presname, :presjuno, :corptel,    :semusu
+   FROM PKCPBAS;
+
+ if (sqlca.sqlcode != 0 && sqlca.sqlcode != -1405)
+ {
+   printf("[ERRCODE : %d] Record A 생성1 Error\n",sqlca.sqlcode);
+   fclose(fp);
+   return(FAIL);
+ }
+
+ /* 제출 의무자 수 : 퇴직자 자료 */
+ EXEC SQL
+ SELECT COUNT(EMPNO),              SUM(NVL(RETAMTSUM,0)), 
+        SUM(NVL(RETINTAX,0)),  0 , SUM(NVL(RETJUTAX,0)),
+        SUM(NVL(RETINTAX,0)) + 0 + SUM(NVL(RETJUTAX,0))
+   INTO :cdutycnt,     :retamtsum ,   
+        :retintaxsum,  :retnongtaxsum,    :retjutaxsum,
+        :BRec_rettaxsum
+   FROM PKHRTHIS_2005
+  WHERE NVL(RETAMTSUM,0) > 0  
+    and RETDATE LIKE :workyy||'%'
+    AND Empno    not like 'M%'
+    /*and empno not in (select empno  FROM PKHRTHIS_2005 WHERE RETDATE in ('20051130','20051231'));*/
+    and empno not in (
+        '0011','0147','0167','0400','0451','0454','0481','0558','0560','0572',
+        '0881','0966','1547','1713','0023','0158','0159','0204','0212','0226',
+        '0237','0254','0273','0293','0324','0372','0483','0576','0581','0602',
+        '0632','0706','0926','0981','1028','1078','1138','1569','1696','1702',
+        '1769','0232','0306','1427','1673','0307','0421','0501','0216','0364',
+        '0308','0057','0061','0093','0094','0101','0164','0284','0122','0055',
+        '0160','0436','0471','0373','0234','0478','0201','0412','0406','0177',
+        '0503','1490','1507','0337','0995','0224','1017','1276','1667','0877',
+        '0052','0225','0777','1412','0358','0456','0914','1681','0168','0470',
+        '0524','0231','J027','0757','1542','0105','0443','J036','0731','1309',
+        '0366','P329','P397','P294','1801','P297','0612','0865','1691','P409',
+        '0453','P345','0100','0104','0107','0151','0175','0176','0417','0429',
+        '0674','0681','0860','1338','1400','1468','1706','1711','1818','0205',
+        'J033','0485','1636','P384','0075','0654','P313','P392','0368','0435',
+        '1131','0689');    
+    
+ if (sqlca.sqlcode != 0 && sqlca.sqlcode != -1405)
+ {
+  printf("[ERRCODE : %d] Record A 생성2(Get Bdata) Error\n",sqlca.sqlcode);
+  fclose(fp);
+  return(FAIL);
+ }
+
+ /* 제출 의무자 수 : 중간정산자 자료 */
+ EXEC SQL 
+ SELECT COUNT(distinct EMPNO),     SUM(NVL(RETAMT,0)+NVL(BRETAMT,0)), 
+        SUM(NVL(RETINTAX,0)),  0 , SUM(NVL(RETJUTAX,0)),
+        SUM(NVL(RETINTAX,0)) + 0 + SUM(NVL(RETJUTAX,0))
+   INTO :cdutycnt1,     :retamtsum1 ,   
+        :retintaxsum1,  :retnongtaxsum1,    :retjutaxsum1,
+        :BRec_rettaxsum1        
+   FROM PKHMRHIS_2005
+  WHERE NVL(RETAMTSUM,0) > 0
+    and MRTODATE   LIKE :workyy||'%'
+    AND Empno not like 'M%'
+    and empno not in (select empno  FROM PKHRTHIS_2005 WHERE RETDATE  LIKE :workyy||'%')
+    AND Empno not in (
+                '0011','0147','0167','0400','0451','0454','0481','0558','0560','0572',
+                '0881','0966','1547','1713','0023','0158','0159','0204','0212','0226',
+                '0237','0254','0273','0293','0324','0372','0483','0576','0581','0602',
+                '0632','0706','0926','0981','1028','1078','1138','1569','1696','1702',
+                '1769','0232','0306','1427','1673','0307','0421','0501','0216','0364',
+                '0308','0057','0061','0093','0094','0101','0164','0284','0122','0055',
+                '0160','0436','0471','0373','0234','0478','0201','0412','0406','0177',
+                '0503','1490','1507','0337','0995','0224','1017','1276','1667','0877',
+                '0052','0225','0777','1412','0358','0456','0914','1681','0168','0470',
+                '0524','0231','J027','0757','1542','0105','0443','J036','0731','1309',
+                '0366','P329','P397','P294','1801','P297','0612','0865','1691','P409',
+                '0453','P345','0100','0104','0107','0151','0175','0176','0417','0429',
+                '0674','0681','0860','1338','1400','1468','1706','1711','1818','0205',
+                'J033','0485','1636','P384','0075','0654','P313','P392','0368','0435',
+                '1131','0689');
+                       
+ if (sqlca.sqlcode != 0 && sqlca.sqlcode != -1405)
+ {
+  printf("[ERRCODE : %d] Record A 생성2(Get Bdata) Error\n",sqlca.sqlcode);
+  fclose(fp);
+  return(FAIL);
+ }
+
+                   
+/*****************************************************
+ /* 제출 의무자 수(전직장) 
+ EXEC SQL
+ SELECT COUNT(EMPNO)
+   INTO :ddutycnt
+   FROM PKHRTHIS_2005
+  WHERE BRETAMT > 0
+    AND RETDATE   LIKE :workyy||'%';
+    
+ if (sqlca.sqlcode != 0 && sqlca.sqlcode != -1405)
+ {
+   printf("[ERRCODE : %d] Record A 제출의무자(Get Bdata) Error\n",sqlca.sqlcode);
+   fclose(fp);
+   return(FAIL);
+ } */ 
+ ddutycnt = 0;  /*실제로 전근무지 존재 사원 없음.*/
+ 
+ memset(buffer,'\0',sizeof(buffer));
+
+ i = 0;
+ i +=  sprintf(buffer + i,  "%1s"   ,"A");             /* 레코드구분 A  */
+ i +=  sprintf(buffer + i,  "%2s"   ,"22");            /* 자료  구분 22 */
+ i +=  sprintf(buffer + i,  "%3s"   ,semusu);          /* 세무서코드    */
+ i +=  sprintf(buffer + i,  "%8s"   ,givedate);        /* 제출년월일    */
+ i +=  sprintf(buffer + i,  "%1s"   ,"2");             /* 제출자 구분   */
+ i +=  sprintf(buffer + i,  "%6s"   ," ");             /* 세무대리인관리번호*/
+ i +=  sprintf(buffer + i,  "%20s"  ," ");             /* 홈텍스ID*/
+ i +=  sprintf(buffer + i,  "%4s"   ,"9000");          /* 세무프로그램 코드*/
+ i +=  sprintf(buffer + i,  "%-10s" ,corpno);          /* 사업자등록번호    */
+ i +=  sprintf(buffer + i,  "%-40s" ,corpname);        /* 법인명           */
+ i +=  sprintf(buffer + i,  "%30s"  ,"회계팀");        /* 자료제출담당자 부서명*/
+ i +=  sprintf(buffer + i,  "%30s"  ,"조유임");        /* 자료제출담당자 성명*/
+ i +=  sprintf(buffer + i,  "%15s"  ,"9999");          /* 자료제출담당자 전화번호*/
+ i +=  sprintf(buffer + i,  "%05d"  ,1);               /* 제출의무자수      */
+ i +=  sprintf(buffer + i,  "%3s"   ,"101");           /* 한글코드 101      */
+ i +=  sprintf(buffer + i,  "%1s"   ,"2");             /* 제출대상기간코드  */
+ i +=  sprintf(buffer + i,  "%151s" ," ");             /* 공란              */
+ sprintf(buffer+330,"\n");
+ fprintf(fp,"%s",buffer);
+ /* end of Record - A*/
+
+
+ /* start Record - B */
+ i = 0;
+ memset(buffer,'\0',sizeof(buffer));
+ 
+ /*  회사 */
+ i +=  sprintf(buffer + i,  "%1s"   ,"B");             /* 레코드구분 B  */
+ i +=  sprintf(buffer + i,  "%2s"   ,"22");            /* 자료  구분 22 */
+ i +=  sprintf(buffer + i,  "%3s"   ,semusu);          /* 세무서코드    */
+ i +=  sprintf(buffer + i,  "%06d"  ,1);               /* 일련번호      */
+
+ /* 원천징수의무자*/
+ i +=  sprintf(buffer + i,  "%-10s" ,corpno);          /* 사업자등록번호      */
+ i +=  sprintf(buffer + i,  "%-40s" ,corpname);        /* 법인명              */
+ i +=  sprintf(buffer + i,  "%-30s" ,presname);        /* 사장명(대표자성명)  */
+ i +=  sprintf(buffer + i,  "%-13s" ,corpregno);       /* 회사법인등록번호    */
+ i +=  sprintf(buffer + i,  "%07d"  ,cdutycnt + cdutycnt1);              /* 제출건수(C - Record)*/
+ i +=  sprintf(buffer + i,  "%07d"  ,ddutycnt);                          /* 제출건수(D - Record)*/
+ i +=  sprintf(buffer + i,  "%014.0f" ,retamtsum + retamtsum1);          /* 소득금액총계        */
+ i +=  sprintf(buffer + i,  "%013.0f" ,retintaxsum + retintaxsum1);      /* 소득세결정세액총계  */
+ i +=  sprintf(buffer + i,  "%013.0f" ,0.0   );                          /* 법인세결정세액총계  */
+ i +=  sprintf(buffer + i,  "%013.0f" ,retjutaxsum + retjutaxsum1);      /* 주민세결정세액총계  */
+ i +=  sprintf(buffer + i,  "%013.0f" ,retnongtaxsum + retnongtaxsum1);  /* 농특세결정세액총계  */   
+ i +=  sprintf(buffer + i,  "%013.0f" ,BRec_rettaxsum + BRec_rettaxsum1);/* 결정세액총계        */
+ i +=  sprintf(buffer + i,  "%132s" ," ");                               /* 공란                */
+ sprintf(buffer+330,"\n");
+ fprintf(fp,"%s",buffer);
+
+ return (SUCCESS);
+ /* end of Record - B*/
+}
+
+/* 개별자료를 Setting Record - C*/
+/* 입사일자를 중간정산 받은 사원은 empdate가 변경되므로 bretfrday 입력. */
+MakeRecord()
+{
+  EXEC SQL DECLARE cur1 CURSOR for  /*퇴직자 자료 */
+  SELECT  GREATEST(NVL(BRETFRDAY, EMPDATE), '20050101') ysfrdate,  
+          NVL(RETDATE,'') ystodate,
+          EMPNO,    KORNAME,    REPLACE(JUMINID,'-',''),
+          NVL(BRETFRDAY,EMPDATE) EMPDATE,     RETDATE,
+          NVL(realmm,0) + nvl(bretmm,0) dutymm,       nvl(realyy,0) DUTYYY,
+          NVL(RETAMT,      0),  BRETAMT,  NVL(HORRETAMT,   0),   NVL(RETAMTSUM,   0),  
+	  NVL(RINDED      ,0),  NVL(TAXSTAMT,    0),  NVL(AVGTAXSTAMT, 0),
+          NVL(RETAVGTAX   ,0),  NVL(RETCALCTAX,  0),  NVL(RETTAXDED,   0),
+          NVL(RETINTAX    ,0),  NVL(RETJUTAX    ,0),  0,
+         (NVL(RETINTAX    ,0) + NVL(RETJUTAX,0) + 0) rettaxtot
+    FROM PKHRTHIS_2005
+   WHERE RETAMTSUM > 0  and RETDATE LIKE :workyy||'%' AND Empno not like 'M%'
+     and empno not in (
+        '0011','0147','0167','0400','0451','0454','0481','0558','0560','0572',
+        '0881','0966','1547','1713','0023','0158','0159','0204','0212','0226',
+        '0237','0254','0273','0293','0324','0372','0483','0576','0581','0602',
+        '0632','0706','0926','0981','1028','1078','1138','1569','1696','1702',
+        '1769','0232','0306','1427','1673','0307','0421','0501','0216','0364',
+        '0308','0057','0061','0093','0094','0101','0164','0284','0122','0055',
+        '0160','0436','0471','0373','0234','0478','0201','0412','0406','0177',
+        '0503','1490','1507','0337','0995','0224','1017','1276','1667','0877',
+        '0052','0225','0777','1412','0358','0456','0914','1681','0168','0470',
+        '0524','0231','J027','0757','1542','0105','0443','J036','0731','1309',
+        '0366','P329','P397','P294','1801','P297','0612','0865','1691','P409',
+        '0453','P345','0100','0104','0107','0151','0175','0176','0417','0429',
+        '0674','0681','0860','1338','1400','1468','1706','1711','1818','0205',
+        'J033','0485','1636','P384','0075','0654','P313','P392','0368','0435',
+        '1131','0689')
+  union    /* 중간정산자 자료*/
+  SELECT  GREATEST(TO_CHAR((TO_DATE(MRFRDATE,'YYYYMMDD')  + EXDD),'YYYYMMDD'), '20050101') ysfrdate,  MRTODATE ystodate,
+          EMPNO,     KORNAME,    REPLACE(JUMINID,'-',''),
+          MRFRDATE,  MRTODATE,
+          retmm  DUTYMM,    retyy  DUTYYY,
+          NVL(RETAMT      ,0),  BRETAMT,  0,          NVL(RETAMTSUM,   0),  
+          NVL(RINDED      ,0),  NVL(TAXSTAMT,    0),  NVL(AVGTAXSTAMT, 0),
+          NVL(RETAVGTAX   ,0),  NVL(RETCALCTAX,  0),  NVL(RETTAXDED,   0),
+          NVL(RETINTAX    ,0),  NVL(RETJUTAX    ,0),  0,
+         (NVL(RETINTAX    ,0) + NVL(RETJUTAX,0) + 0) rettaxtot
+    FROM PKHMRHIS_2005
+   WHERE NVL(RETAMTSUM,0) > 0 and  MRTODATE   LIKE :workyy||'%' AND Empno not like 'M%'
+     and empno not in (select empno  FROM PKHRTHIS WHERE RETDATE   LIKE :workyy||'%'  )
+     AND Empno not in (
+                '0011','0147','0167','0400','0451','0454','0481','0558','0560','0572',
+                '0881','0966','1547','1713','0023','0158','0159','0204','0212','0226',
+                '0237','0254','0273','0293','0324','0372','0483','0576','0581','0602',
+                '0632','0706','0926','0981','1028','1078','1138','1569','1696','1702',
+                '1769','0232','0306','1427','1673','0307','0421','0501','0216','0364',
+                '0308','0057','0061','0093','0094','0101','0164','0284','0122','0055',
+                '0160','0436','0471','0373','0234','0478','0201','0412','0406','0177',
+                '0503','1490','1507','0337','0995','0224','1017','1276','1667','0877',
+                '0052','0225','0777','1412','0358','0456','0914','1681','0168','0470',
+                '0524','0231','J027','0757','1542','0105','0443','J036','0731','1309',
+                '0366','P329','P397','P294','1801','P297','0612','0865','1691','P409',
+                '0453','P345','0100','0104','0107','0151','0175','0176','0417','0429',
+                '0674','0681','0860','1338','1400','1468','1706','1711','1818','0205',
+                'J033','0485','1636','P384','0075','0654','P313','P392','0368','0435',
+                '1131','0689')
+   ORDER BY EMPNO;
+
+  EXEC SQL OPEN cur1;
+
+  if ((sqlca.sqlcode != 0) && (sqlca.sqlcode = -1405) )
+  {
+       EXEC SQL CLOSE cur1;
+       printf("Cursor1 열기 실패!\n");
+       return (FAIL);
+  }
+
+  if ((sqlca.sqlcode != 0) && (sqlca.sqlcode = 1403) )
+  {
+       EXEC SQL CLOSE cur1;
+       printf("Cursor1 열기 실패! (해당자료 없슴)\n");
+       return (FAIL);
+  }
+   cseqno = 0;
+   dseqno = 0;
+        while(1)
+        {
+                Set_InitValC();
+
+                EXEC SQL FETCH cur1
+                INTO  :ysfrdate,     :ystodate,
+                      :empno,        :korname,       :juminid,
+                      :empdate,      :retdate,       :dutymm,          :dutyyy,
+                      :retamt,       :bretamt,       :horretamt,       :retamtsum,
+                      :rinded,       :taxstamt,      :avgtaxstamt,
+                      :retavgtax,    :retcalctax,    :rettaxded,
+                      :retintax,     :retjutax,      :retnongtax,      :rettaxtot;                      
+
+                if (sqlca.sqlcode == 1403)
+                {
+                        EXEC SQL CLOSE cur1;
+                        return(SUCCESS);
+                }
+
+                 if (sqlca.sqlcode != 0 && sqlca.sqlcode != -1405)
+                {
+                        printf("[ERRCODE : %d] Record C 생성1 Error\n",sqlca.sqlcode);
+                        EXEC SQL CLOSE cur1;
+                        fclose(fp);
+                        return(FAIL);
+                 }
+                cseqno = cseqno+ 1;
+
+                MakeCRec();
+                
+        } /* END OF WHILE */
+}
+
+/* Detail자료를 Setting*/
+MakeCRec()
+{
+  int i ;
+  memset(buffer,'\0',sizeof(buffer));
+  i =0;
+
+  i +=  sprintf(buffer + i,  "%1s"   ,"C");            /* 레코드구분 C  */
+  i +=  sprintf(buffer + i,  "%2s"   ,"22");           /* 자료  구분 22 */
+  i +=  sprintf(buffer + i,  "%3s"   ,semusu);         /* 세무서코드    */
+  i +=  sprintf(buffer + i,  "%06d"  ,cseqno);         /* 일련번호      */
+
+  /* 원천징수의무자*/
+  i +=  sprintf(buffer + i,  "%-10s" ,corpno);         /* 사업자등록번호  */
+
+  /* 소득자  */
+  i +=  sprintf(buffer + i,  "%02d" ,0);               /* 종지급처 수 0   */
+  i +=  sprintf(buffer + i,  "%1s" ,"1");              /* 거주자구분코드  */ 
+  
+  sprintf(juminidcmp, "%.1s",juminid+6);
+  if  ( (strcmp(juminidcmp,"5") == 0) || (strcmp(juminidcmp,"6") == 0) )
+    i +=  sprintf(buffer + i,  "%2s" ,"CA");           /* 거주지국코드  캐나다로 임의 지정. 추후 개별 수정.*/ 
+  else
+    i +=  sprintf(buffer + i,  "%2s" ,"KR");           /* 거주지국코드  */  
+  
+  i +=  sprintf(buffer + i,  "%-8s" ,ysfrdate);        /* 귀속년도시작일  */
+  i +=  sprintf(buffer + i,  "%-8s" ,ystodate);        /* 귀속년도종료    */
+  i +=  sprintf(buffer + i,  "%-30s",korname);         /* 성명            */
+  
+  if  ( (strcmp(juminidcmp,"5") == 0) || (strcmp(juminidcmp,"6") == 0) )
+    i +=  sprintf(buffer + i,  "%1s" ,"9");            /* 내외국구분코드  */
+  else
+    i +=  sprintf(buffer + i,  "%1s" ,"1");            /* 내외국구분코드  */
+      
+  i +=  sprintf(buffer + i,  "%-13s" ,juminid);        /* 주민등록번호    */
+
+  /* 지급처 소득명세 */
+  i +=  sprintf(buffer + i,  "%010.0f" ,retamt + bretamt);  /* 퇴직급여 (중간정산받은금액 포함) */  
+  i +=  sprintf(buffer + i,  "%010.0f" ,horretamt);         /* 명예퇴직수당    */
+  i +=  sprintf(buffer + i,  "%010.0f" ,0.0    );           /* 단체퇴직보험금  */
+  i +=  sprintf(buffer + i,  "%010.0f" ,retamtsum);         /* 계  */
+
+  /* 정산명세 */
+  i +=  sprintf(buffer + i,  "%-8s" ,empdate);         /* (현)입사일  */
+  i +=  sprintf(buffer + i,  "%-8s" ,retdate);         /* (현)퇴사일  */
+  i +=  sprintf(buffer + i,  "%04d" ,dutymm );         /* (현)근속월수  */
+  
+  i +=  sprintf(buffer + i,  "%08d" ,  0    );         /* (전)입사일  ?? */
+  i +=  sprintf(buffer + i,  "%08d" ,  0    );         /* (전)퇴사일  ??*/
+  i +=  sprintf(buffer + i,  "%04d" ,  0    );         /* (전)근속월수  */
+
+  i +=  sprintf(buffer + i,  "%04d" ,  0    );         /* (현)중복월수  */
+  i +=  sprintf(buffer + i,  "%02d" ,dutyyy );         /* (현)근속연수  */
+
+  /* 정산명세 */
+  i +=  sprintf(buffer + i,  "%010.0f" , retamtsum);   /* 퇴직급여액 */
+  i +=  sprintf(buffer + i,  "%010.0f" , rinded);      /* 퇴직소득공제*/
+  i +=  sprintf(buffer + i,  "%010.0f" , taxstamt);    /* 퇴직소득과세표준*/
+  i +=  sprintf(buffer + i,  "%010.0f" , avgtaxstamt); /* 연평균과세표준 */
+  i +=  sprintf(buffer + i,  "%010.0f" , retavgtax);   /* 연평균산출세액 */
+  i +=  sprintf(buffer + i,  "%010.0f" , retcalctax);  /* 산출세액 */
+  i +=  sprintf(buffer + i,  "%08.0f"  , rettaxded);   /* 퇴직소득세액공제 */
+
+  /* **** 결정 세액 **** */
+  i +=  sprintf(buffer + i,  "%010.0f",retintax);      /*  결정소득세   */
+  i +=  sprintf(buffer + i,  "%010.0f",retjutax);      /*  결정주민세   */
+  i +=  sprintf(buffer + i,  "%010.0f",0.0      );     /*  결정농특세   */
+  i +=  sprintf(buffer + i,  "%010.0f",rettaxtot);     /*  결정세액계   */
+
+  /* **** 기납부세액 **** */
+  /* 전근무지*/
+  i +=  sprintf(buffer + i,  "%010.0f",0.0);           /*  (종) 소득세  */
+  i +=  sprintf(buffer + i,  "%010.0f",0.0);           /*  (종) 농특세  */
+  i +=  sprintf(buffer + i,  "%010.0f",0.0);           /*  (종) 주민세  */
+  i +=  sprintf(buffer + i,  "%010.0f",0.0);           /*  (종) 계      */
+  
+  i +=  sprintf(buffer + i,  "%9s" ," ");              /*  공란         */
+   
+  sprintf(buffer+330,"\n");
+  fprintf(fp,"%s",buffer);
+
+  /* 전근무지  */
+  if ( 0 > 0 )
+  {
+      dseqno += 1;
+      MakeDRec();
+  }
+}
+
+/** 전근무지 자료 : 실제 존재치 않음. ****/
+MakeDRec()
+{
+  int i;
+  memset(buffer,'\0',sizeof(buffer));
+  i = 0;
+
+  i +=  sprintf(buffer + i,  "%1s"   ,"D");            /* 레코드구분 D  */
+  i +=  sprintf(buffer + i,  "%2s"   ,"22");           /* 자료  구분 22 */
+  i +=  sprintf(buffer + i,  "%3s"   ,semusu);         /* 세무서코드    */
+  i +=  sprintf(buffer + i,  "%06d"  ,dseqno);         /* 일련번호      */
+
+  /* 원천징수의무자*/
+  i +=  sprintf(buffer + i,  "%-10s" ,corpno);         /* 사업자등록번호 */
+  i +=  sprintf(buffer + i,  "%50s"   ," ");           /* 공란           */
+
+  /* 소득자 */
+  i +=  sprintf(buffer + i,  "%-13s" ,juminid);        /* 주민등록번호   */
+
+  /* 전근무처 */
+  i +=  sprintf(buffer + i,  "%-40s"  ,bcorpname);      /* 전근무처명       */
+  i +=  sprintf(buffer + i,  "%-10s"  ,bcorpno  );      /* 전근무처사업자번호*/
+
+  i +=  sprintf(buffer + i,  "%010.0f" ,bretamt);       /* 퇴직급여       */
+  i +=  sprintf(buffer + i,  "%010.0f" ,bhorretamt);    /* 명예퇴직수당   */
+  i +=  sprintf(buffer + i,  "%010.0f" ,0.0       );    /* 단체퇴직보험금 */
+  i +=  sprintf(buffer + i,  "%010.0f" ,bretamtsum);    /* 계   */
+  
+  i +=  sprintf(buffer + i,  "%02d" ,1);                /* 종근무처일련번호*/
+  i +=  sprintf(buffer + i,  "%153s" ," ");             /* 공란            */
+ 
+  sprintf(buffer+330,"\n");
+  fprintf(fp,"%s",buffer);
+}  /* end of D record*/

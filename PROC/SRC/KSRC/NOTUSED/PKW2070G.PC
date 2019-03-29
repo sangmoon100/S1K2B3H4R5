@@ -1,0 +1,706 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : 일반직사원 급여계산(pkw2070g.pc)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 일반직 급여계산
+ Programmer     : 
+ Version        : 1.00
+ Date           : 2000.05.23 
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+     2.00      2000.11.18          유효성        초과근무는 일반직 초과근무테이블(HINT 연동)에서.    
+     3.00      2001.08.30          유효성        제외식사시간/제외9이상시간 추가
+     3.01      2004.02.24        강륜종(dsa2000) Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.  
+    10.00      2004.12.29        강륜종(dsa2000) Rexec 대체서비스를 위한 수정작업.            
+============================================================================= */
+
+#include  <stdio.h>
+#include  <stdlib.h>          
+/* Dsa2000  추가.. 2004.02.24.*/
+#include <stdlib.h>
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define  FAIL  -2
+
+/* ===========================================================================
+	Function Prototype 정의 
+   =========================================================================== */
+void	calc_igpay(void);
+void	read_basic(void);
+void 	print_errmsg(int errcode, char *errmsg);
+
+/* ===========================================================================
+	Global Variable
+   =========================================================================== */
+
+EXEC SQL  BEGIN DECLARE SECTION;
+	char	paydate[6+1];	/* 급여지급월		*/
+	char	empno[4+1];	/* 사번			*/ 	
+ 	char	writeman[4+1];	/* 작업자사번		*/
+ 	char	frempno[4+1];	/* from사번		*/
+ 	char	toempno[4+1];	/* to사번		*/
+ 	
+ 	char    endday[2+1] ;	
+ 	char    paygryn[1+1] ;       /* 호봉갱신여부 */	
+ 	char    bonusyn[1+1] ;       /*기준테이블 참조변수*/
+ 	double  bonusterm = 0 ;      /*기준테이블 참조변수*/
+ 	double  indirectrate = 0 ;   /*기준테이블 참조변수*/
+ 	double  mcaramt=0 ;          /*기준테이블 참조변수*/
+ 	double  nightmealamt = 0 ;   /*기준테이블 참조변수*/
+ 	double  trainrate = 0;       /*기준테이블 참조변수*/
+ 	double  bonusrate = 0;       /*기준테이블 참조변수*/
+ 	
+EXEC SQL  END DECLARE SECTION;
+EXEC SQL  INCLUDE sqlca;
+
+int	id;
+/*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno = 0; 
+
+
+void	main(int argc, char *argv[])
+{
+	char FL_file[255];
+	
+	if (argc != 8) {   /* /hper8/HINSA/proc/bin/Kbin/pkw2070g 200401 0000 zzzz Y D006 pkw2060g 2004110100000 */
+	   printf("[Usage] : pkw2070g 1.급여지급월 2.사번From 3.사번To  4.호봉갱신여부(일괄:Y,개별:N) \n");
+	   printf("[Usage] :          5.작업자 6.프로그램ID 7.시작시간 \n");
+   	   exit(1);
+	}
+	
+	sprintf(paydate,"%s",argv[1]);
+	sprintf(frempno,"%s",argv[2]);
+	sprintf(toempno,"%s",argv[3]);	
+	sprintf(paygryn,"%s",argv[4]);
+	sprintf(writeman,"%s",argv[5]);
+		
+	/*로그 디렉토리 생성 및 로그작업 */
+	STRINIT(FL_file);
+    	strcpy(FL_file,"pkw2070g");
+
+    	hinsa_get_filename(1, FL_file);
+    	if (hinsa_log_open(FL_file) == FAILURE)
+    	{
+      		hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+      		return;
+    	}		
+	
+	/* Dsa2000  2004.02.24.	**********************************/	
+	/*DB_connect(id,0); */
+        hinsa_log_print(0,"일반직사원 급여계산 시작...[pkw2070g]");
+        hinsa_db_connect();  /*DB Connect 실시..*/
+	/* Dsa2000  수정 End......................................*/
+	
+	/*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =============*/
+	strcpy(log_writeman, argv[5]);
+	strcpy(log_progid,   argv[6]);
+	strcpy(log_rundate,  argv[7]);	
+		
+	EXEC SQL DECLARE log_db DATABASE;    
+	hinsa_log_db_connect();
+	/*========================================================*/
+	
+       	EXEC SQL
+       	SELECT TO_CHAR(LAST_DAY(TO_DATE(:paydate, 'YYYYMM')), 'DD')  
+       	  INTO :endday
+      	FROM DUAL;
+      	
+      	if (sqlca.sqlcode != 0) 
+	{
+		print_errmsg(sqlca.sqlcode,"마지막일 읽기에서 오류...");
+		error_quit("작업실패...");
+	}
+	
+        read_basic();  
+        
+       	calc_igpay();       	
+       	
+	/* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+	if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+	{
+		sprintf(log_buff, "ERROR ====== [작업 실패] =====");
+           	Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+		error_quit("ERROR ====== [작업 실패] =====\n");
+	}
+	else
+	{
+	 	sprintf(log_buff, "OK ====== [일반직 급여생성  작업성공] =====\n");
+           	Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+		hinsa_exit(0,"OK ====== [일반직 급여생성  작업성공] =====\n");
+	}
+	   
+}
+
+void	read_basic (void)
+{
+	EXEC SQL
+       	SELECT BONUSYN, BONUSTERM, INDIRECTRATE, MCARAMT, NIGHTMEALAMT, TRAINRATE, BONUSRATE
+       	  INTO :bonusyn, :bonusterm, :indirectrate, :mcaramt, :nightmealamt, :trainrate, :bonusrate
+       	FROM PKCIGBAS;
+       	
+        if (sqlca.sqlcode != 0) 
+	{
+		print_errmsg(sqlca.sqlcode,"1. 기준 정보 읽기에서 오류...");
+		Write_batlog(seqno++, "1. 기준 정보 읽기에서 오류...");   /*dsa2000 Rexec 대체*/
+		error_quit("작업실패...");
+	} 
+
+}
+
+
+void	calc_igpay(void)
+      
+{
+	char hempno[5]   ;	
+        int  htotmm   = 0 ;
+        int  hbasehh  = 0 ;
+        int  hexthh   = 0 ;
+        int  hholihh  = 0 ;
+        int  hnighthh = 0 ;
+        int  hnightmealdd = 0;
+        double hrestamt = 0 ;
+        double hsprestamt = 0 ;
+        int hmealhh     = 0 ;
+        int hexcephh    = 0 ;
+        double hmealamt = 0 ;
+        double hexcepamt = 0 ;
+        
+	
+	/* 1. 기존자료 삭제 */
+      if (strcmp(paygryn,"Y") == 0 )		
+      {
+	EXEC SQL
+	delete 	from pkmigpay a
+	where 	paydate = :paydate
+	  and   empno between :frempno and :toempno ;
+	  
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403)) 
+	{
+		print_errmsg(sqlca.sqlcode,"1. 기존자료 삭제 에서 오류...");
+		Write_batlog(seqno++, "1. 기존자료 삭제 에서 오류...");   /*dsa2000 Rexec 대체*/
+		error_quit("작업실패...");
+	} 
+        
+       }
+	
+	/* 2. 대상자료생성 */
+	
+     if (strcmp(paygryn,"Y") == 0 )		
+     {	
+	EXEC SQL
+	INSERT INTO PKMIGPAY (
+		PAYDATE, EMPNO,  KORNAME, ORGNUM,  DEPTCODE, FINCODE, 
+		PAYNUM,  PAYCL,  PAYGR,   JOBDUTY )
+	SELECT 	:paydate, A.EMPNO, A.KORNAME, A.ORGNUM,  A.DEPTCODE, B.FINCODE,
+		C.CPAYNUM, A.PAYCL, A.PAYGR,   A.TJOBDUTY
+	FROM	PIMPMAS A, PYCDEPT B, PKCIGBAS C
+	WHERE	A.EMPNO IN (SELECT EMPNO FROM PKHIGDUTY
+	                    WHERE DUFRDATE LIKE :paydate||'%' and conyn ='Y') 
+	  AND   A.ORGNUM = B.ORGNUM
+	  AND   A.DEPTCODE = B.DEPTCODE
+      	  and   A.EMPNO BETWEEN :frempno AND :toempno ;  
+       		
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode,"2. 대상자료생성 에서 오류...");
+		Write_batlog(seqno++, "2. 대상자료생성 에서 오류...");   /*dsa2000 Rexec 대체*/
+		error_quit("작업실패...");
+	}
+	
+     }  
+
+/*   호봉 갱신, 수습여부 갱신 */
+	
+    if (strcmp(paygryn,"Y") == 0 )		
+    {
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	PAYGR = (SELECT  nvl(EMPPAYGR ,0)
+	                       + TRUNC(MONTHS_BETWEEN(TO_DATE(:paydate||'01', 'YYYYMMDD'), TO_DATE(EMPDATE,'YYYYMMDD')) /12)
+	                 FROM PIMPMAS B
+	                 WHERE A.EMPNO = B.EMPNO
+	                 )
+	WHERE	PAYDATE = :paydate
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode,"3.1  호봉갱신에서 오류...");
+		Write_batlog(seqno++, "3.1  호봉갱신에서 오류...");   /*dsa2000 Rexec 대체*/
+		error_quit("작업실패...");
+	}
+       
+        EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	TRAINYN = 'N'			   
+	WHERE	PAYDATE = :paydate
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	                     
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode,"  수습여부갱신에서 오류1...");
+		Write_batlog(seqno++, "  수습여부갱신에서 오류1...");   /*dsa2000 Rexec 대체*/
+		error_quit("작업실패...");
+	}  
+        
+        
+        EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	TRAINYN = 'Y'			   
+	WHERE	PAYDATE = :paydate
+	  AND   EMPNO IN (SELECT EMPNO FROM PIMPMAS 
+	                   WHERE TRUNC(MONTHS_BETWEEN(TO_DATE(:paydate||'01', 'YYYYMMDD'), TO_DATE(CARDATE,'YYYYMMDD')) /12) < 1
+	                     AND EMPNO LIKE 'Y%'
+	                  ) 
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	                     
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode,"  수습여부갱신에서 오류2...");
+		Write_batlog(seqno++, "  수습여부갱신에서 오류2...");   /*dsa2000 Rexec 대체*/
+		error_quit("작업실패...");
+	}
+
+    }
+
+        /*   기준급 SETTING */ 
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	BASICAMT = (SELECT BASICAMT FROM PKCIGTBL B
+	                    WHERE  A.PAYNUM = B.PAYNUM
+	                      AND  A.PAYCL  = B.PAYCL
+	                      AND  A.PAYGR  = B.PAYGR
+	                    ) 
+	WHERE	PAYDATE = :paydate
+	  and   nvl(trainyn, 'N')= 'N' 
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," 기본급 갱신에서 오류1 ");
+		Write_batlog(seqno++, " 기본급 갱신에서 오류1 ");   /*dsa2000 Rexec 대체*/
+		error_quit("작업실패...");
+	}
+	
+	/*   기준급 SETTING : 수습은 * trainrate(80%)*/ 
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	BASICAMT = (SELECT ceil(BASICAMT * :trainrate / 100)  FROM PKCIGTBL B
+	                    WHERE  A.PAYNUM = B.PAYNUM
+	                      AND  A.PAYCL  = B.PAYCL
+	                      AND  A.PAYGR  = B.PAYGR
+	                    ) 
+	WHERE	PAYDATE = :paydate
+	  and   nvl(trainyn,'N') = 'Y' 
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," 기본급 갱신에서 오류2 ");
+		Write_batlog(seqno++, " 기본급 갱신에서 오류2 ");   /*dsa2000 Rexec 대체*/
+		error_quit("작업실패...");
+	}
+	
+
+/**************************************************************************************
+2000-11-18  초과근무 내역은 일반직 초과근무테이블(HINT 연동) 에서 
+
+	
+	EXEC 	SQL
+        DECLARE c5 CURSOR  FOR        
+        SELECT b.empno, SUM(NVL(B.TOTMM,0)), SUM(NVL(B.BASEHH,0)), 
+                        SUM(NVL(B.EXTHH,0)), SUM(NVL(B.NIGHTHH,0)), SUM(NVL(B.HOLIHH,0))
+	   FROM PKHIGDUTY B
+           WHERE  B.DUFRDATE LIKE :paydate||'%'
+             AND  B.CONYN ='Y'
+           group by b.empno  ;
+		
+
+	EXEC	SQL	open c5;
+
+	if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+	{	print_errmsg(sqlca.sqlcode,"근태시간 READ ERROR");
+		error_quit("작업실패...");	
+	}  
+
+	while(1)
+	{
+		EXEC SQL FETCH c5 INTO
+		:hempno,     :htotmm, 
+		:hbasehh,    :hexthh,
+		:hnighthh,   :hholihh ;
+                 
+                if (sqlca.sqlcode == 1403)
+		{
+			EXEC SQL close c5;			
+			break;			
+		} 
+             
+             
+                EXEC SQL          
+                update pkmigpay
+                set totmm    =  :htotmm,
+                    basehh   =  :hbasehh,
+                    exthh    =  :hexthh,
+                    nighthh  =  :hnighthh,
+                    holihh   =  :hholihh,
+                    restmm   = 0,
+                    holiexthh = 0                    
+                where empno   =  :hempno
+                and paydate   =  :paydate ;
+                
+               
+                if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+		{	
+		       print_errmsg(sqlca.sqlcode,"근태시간계 ERROR");
+		       error_quit("작업실패...");	
+		}
+
+          } *while end
+		
+*****************수정 start **********************************************************************/
+
+	EXEC 	SQL
+        DECLARE c5 CURSOR  FOR        
+        SELECT b.empno, SUM(NVL(B.EXTHH,0)), SUM(NVL(B.NIGHTHH,0)), SUM(NVL(B.HOLIHH,0)),
+               sum(nvl(b.restamt,0)) , sum(nvl(b.sprestamt,0)),/* 초과근무 제외시간 추가*/
+/* ============================================================
+     3.00      2001.08.30          유효성        제외식사시간/제외9이상시간 추가
+============================================================== */
+               sum(nvl(b.mealhh,0)), sum(nvl(b.excephh,0)),
+	       sum(nvl(b.mealamt,0)) , sum(nvl(b.excepamt,0)),                                                              
+               count(decode(b.nightmealyn,'Y','1','')) nightmealdd
+	   FROM PKHIGOT B
+           WHERE  B.ovtmdate LIKE :paydate||'%'
+             AND  B.CONYN ='Y'
+           group by b.empno  ;
+		
+
+	EXEC	SQL	open c5;
+
+	if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+	{	print_errmsg(sqlca.sqlcode,"근태시간 READ ERROR");
+		Write_batlog(seqno++, "근태시간 READ ERROR");   /*dsa2000 Rexec 대체*/
+		error_quit("작업실패...");	
+	}  
+
+	while(1)
+	{
+		EXEC SQL FETCH c5 INTO
+		:hempno,     :hexthh,
+		:hnighthh,   :hholihh, 
+		:hrestamt,   :hsprestamt,
+		:hmealhh,    :hexcephh,
+		:hmealamt,   :hexcepamt,
+		:hnightmealdd;
+                 
+                if (sqlca.sqlcode == 1403)
+		{
+			EXEC SQL close c5;			
+			break;			
+		} 
+             
+             
+                EXEC SQL          
+                update pkmigpay
+                set exthh    =  :hexthh,
+                    nighthh  =  :hnighthh,
+                    holihh   =  :hholihh,
+                    restmm   = 0 ,
+                    restamt  =  :hrestamt,
+                    sprestamt = :hsprestamt,
+                    mealhh    = :hmealhh,
+                    excephh   = :hexcephh,
+                    mealamt   = :hmealamt,
+                    excepamt  = :hexcepamt,
+                    nightmealdd = :hnightmealdd                 
+                where empno   =  :hempno
+                and paydate   =  :paydate ;
+                
+               
+                if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+		{	
+		       print_errmsg(sqlca.sqlcode,"근태시간계 ERROR");
+		       /*Write_batlog(seqno++, "근태시간계 ERROR");   dsa2000 Rexec 대체*/
+		       error_quit("작업실패...");	
+		}
+
+        } /*while end
+        
+*********수정 end ***************************************************/
+	
+	/* 근태일수 계 */
+	
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	(MCARDD, NOPAYCNT ) =	         
+	        (SELECT NVL(MCARDD,0),  :endday  - NVL(REALDD,0) 
+	           FROM PKHIGDUSUM B
+                   WHERE  A.EMPNO = B.EMPNO
+                     AND  B.DUYYMM = :paydate                     
+	                    ) 
+	WHERE	PAYDATE = :paydate 
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," 근태일수계에서 오류...");
+		Write_batlog(seqno++, "근태일수계에서 오류...");   /*dsa2000 Rexec 대체*/
+		error_quit("작업실패...");
+	}
+
+
+	/* 직접비 계산 */
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	MONPAYAMT = ceil(BASICAMT * (30 - NVL(NOPAYCNT,0))/30 )    	        
+	WHERE	PAYDATE = :paydate 
+	 AND    EMPNO BETWEEN :frempno AND :toempno ;
+
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," 월급여계산에서 오류...");
+		Write_batlog(seqno++, " 월급여계산에서 오류...");   /*dsa2000 Rexec 대체*/			
+		error_quit("작업실패...");
+	}
+
+	
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	MONBONAMT = ceil((nvl(MONPAYAMT,0) * :bonusrate / 100) / 3) 	                     
+	WHERE	PAYDATE = :paydate 
+	  AND   jobduty  <> '31'             /* TSR은 상여지급안함*/
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," 월상여계산에서 오류...");
+		Write_batlog(seqno++, " 월상여계산에서 오류...");   /*dsa2000 Rexec 대체*/			
+		error_quit("작업실패...");
+	}
+
+        
+        EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	MONRETAMT =  ceil((nvl(MONPAYAMT,0) + nvl(MONBONAMT,0)) / 12)
+	WHERE	PAYDATE = :paydate 
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	
+	
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," 월퇴충계산에서 오류...");
+		Write_batlog(seqno++," 월퇴충계산에서 오류...");   /*dsa2000 Rexec 대체*/			
+		error_quit("작업실패...");
+	}
+     
+     /*상여계산*/
+         
+	if (strcmp(bonusyn,"Y") == 0 )		
+	{	
+		EXEC SQL
+		UPDATE	PKMIGPAY A
+		SET	BONUSAMT =  (SELECT nvl(B.MONBONAMT,0) + SUM(nvl(C.MONBONAMT,0)) 
+		                      FROM PKMIGPAY B, PKHIGPAY C
+		                      WHERE A.EMPNO = B.EMPNO
+		                        AND B.EMPNO = C.EMPNO
+		                        AND C.PAYDATE BETWEEN (to_char(to_date(:paydate, 'YYYYMM') - (:bonusterm-1), 'YYYYMM'))
+		                                         AND  (to_char(to_date(:paydate, 'YYYYMM') - (:bonusterm-2), 'YYYYMM')))
+		WHERE	PAYDATE = :paydate 
+		  AND   jobduty  <> '31'             /* TSR은 상여지급안함*/
+		  AND   EMPNO BETWEEN :frempno AND :toempno ;
+		
+		if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	          {
+		    print_errmsg(sqlca.sqlcode," 상여계산에서 오류...");
+		    Write_batlog(seqno++," 상여계산에서 오류...");   /*dsa2000 Rexec 대체*/			
+		    error_quit("작업실패...");
+	           }
+	 }
+	 else
+	 {
+	 	EXEC SQL
+		UPDATE	PKMIGPAY A
+		SET	BONUSAMT =  0
+		WHERE	PAYDATE = :paydate 
+		  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	    
+              if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	         {
+		  print_errmsg(sqlca.sqlcode," 상여계산에서 오류2...");
+		  Write_batlog(seqno++," 상여계산에서 오류2...");   /*dsa2000 Rexec 대체*/			
+		  error_quit("작업실패...");
+	         }
+	
+	 }
+	
+	/* 간접비 계산- TSR은 십원단위에서 반올림*/
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	MONINDAMT = ceil( (nvl(MONPAYAMT,0) +nvl(MONBONAMT,0) + nvl(MONRETAMT,0)) * :indirectrate /100 )
+	WHERE	PAYDATE = :paydate 
+	  AND   EMPNO BETWEEN :frempno AND :toempno 
+	  AND   JOBDUTY <> '31';  
+	    
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," 간접비계산 에서 오류...");
+		Write_batlog(seqno++," 간접비계산 에서 오류...");   /*dsa2000 Rexec 대체*/	
+		error_quit("작업실패...");
+	}
+	
+	
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	MONINDAMT = ROUND( (nvl(MONPAYAMT,0) +nvl(MONBONAMT,0) + nvl(MONRETAMT,0)) * :indirectrate /100 , -2 )
+	WHERE	PAYDATE = :paydate 
+	  AND   EMPNO BETWEEN :frempno AND :toempno 
+	  AND   JOBDUTY ='31';  
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," TSR 간접비계산 에서 오류...");
+		Write_batlog(seqno++," TSR 간접비계산 에서 오류...");   /*dsa2000 Rexec 대체*/	
+		error_quit("작업실패...");
+	}
+	
+	
+	/*기타급여계산*/
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	(MCARAMT, NIGHTMEALAMT,BASEAMT,EXTAMT,NIGHTAMT,HOLIAMT,
+	         HOLIEXTAMT  )  =  
+	        (SELECT nvl(B.MCARDD,0) * :mcaramt, nvl(B.NIGHTMEALDD,0) * :nightmealamt, 0, nvl(B.EXTHH,0) * nvl(C.EXTAMT,0),
+	                nvl(B.NIGHTHH,0) * nvl(C.NIGHTAMT,0), nvl(B.HOLIHH,0) * nvl(C.EXTAMT,0), 0
+	         FROM PKMIGPAY B, PKCIGTBL C
+	         WHERE A.EMPNO  = B.EMPNO
+	           AND B.PAYNUM = C.PAYNUM
+	           AND B.PAYCL  = C.PAYCL
+	           AND B.PAYGR  = C.PAYGR
+	           AND B.PAYDATE = :paydate)
+	WHERE	PAYDATE = :paydate 
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	    
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," 기타급여계산에서 오류...");
+		Write_batlog(seqno++," 기타급여계산에서 오류...");   /*dsa2000 Rexec 대체*/	
+		error_quit("작업실패...");
+	}
+	
+  if (strcmp(paygryn,"Y") == 0 )		
+  {	
+	EXEC SQL
+	UPDATE	PKMIGPAY 
+	SET	SELFDEVAMT = 0,
+	        ATTRFEEAMT = 0, 
+	        ETCTAXAMT  = 0 
+	WHERE	PAYDATE = :paydate 
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	    
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," 기타급여초기값 setting에서 오류...");
+		Write_batlog(seqno++," 기타급여초기값 setting에서 오류...");   /*dsa2000 Rexec 대체*/	
+		error_quit("작업실패...");
+	}
+	
+	
+    }	
+	
+	/*금액 계 결과*/
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	COMPANYPAY = nvl(MONPAYAMT,0) + nvl(MONBONAMT,0) + nvl(MONRETAMT,0) + nvl(MONINDAMT,0),
+	        PERSONPAY  = nvl(MONPAYAMT,0) + nvl(BONUSAMT,0) 	        
+	WHERE	PAYDATE = :paydate 
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	    
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," 금액계계산 에서 오류...");
+		Write_batlog(seqno++," 금액계계산 에서 오류...");   /*dsa2000 Rexec 대체*/	
+		error_quit("작업실패...");
+	}
+	
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	COMPAYSUM  = nvl(COMPANYPAY,0) + nvl(EXTAMT,0) + nvl(NIGHTAMT,0) + nvl(HOLIAMT,0) +
+	                     nvl(MCARAMT,0) + NVL(NIGHTMEALAMT,0) +nvl(SELFDEVAMT,0) + nvl(ATTRFEEAMT,0) + nvl(ETCTAXAMT,0)
+	                     - nvl(restamt,0) - nvl(sprestamt,0) 
+	                     - nvl(mealamt,0) - nvl(excepamt,0) ,
+	        PERPAYSUM  = nvl(PERSONPAY,0) + nvl(EXTAMT,0) + nvl(NIGHTAMT,0) + nvl(HOLIAMT,0) +
+	                     nvl(MCARAMT,0) + NVL(NIGHTMEALAMT,0) +nvl(SELFDEVAMT,0) + nvl(ATTRFEEAMT,0) + nvl(ETCTAXAMT,0)
+	                     - nvl(restamt,0) - nvl(sprestamt,0)
+	                     - nvl(mealamt,0) - nvl(excepamt,0) 
+	WHERE	PAYDATE = :paydate 
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	    
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," COMPAYSUM 계산 에서 오류...");
+		Write_batlog(seqno++, " COMPAYSUM 계산 에서 오류...");   /*dsa2000 Rexec 대체*/	
+		error_quit("작업실패...");
+	}
+	
+	EXEC SQL
+	UPDATE	PKMIGPAY A
+	SET	COMREALPAY  = nvl(COMPAYSUM,0) - nvl(COMDEDSUM,0),
+	        PERREALPAY  = nvl(PERPAYSUM,0) - nvl(PERDEDSUM,0),
+	        WRITETIME   = to_char(sysdate,'yyyymmddhh24miss'),
+	        WRITEMAN    = :writeman
+	WHERE	PAYDATE = :paydate 
+	  AND   EMPNO BETWEEN :frempno AND :toempno ;
+	    
+
+	if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+	{
+		print_errmsg(sqlca.sqlcode," 실지급액 계산 에서 오류...");
+		Write_batlog(seqno++, " 실지급액 계산 에서 오류...");   /*dsa2000 Rexec 대체*/	
+		error_quit("작업실패...");
+	}
+}
+
+
+/***************************************************************************
+	print_errmsg	Function.
+ ***************************************************************************/
+void 	print_errmsg(int errcode, char *errmsg)
+{
+	printf(" [ERR_CODE] : (%d)\n", errcode);
+	printf(" [ERR_POSITION] : (%s)\n",errmsg);
+
+	EXEC SQL
+	ROLLBACK WORK RELEASE;
+}	
+
+/*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{	
+        EXEC SQL AT log_db 
+        INSERT INTO PYBATLOG
+        VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+        if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+	{	
+		printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);		
+		return(FAIL);
+	}                        
+                        
+        EXEC SQL AT log_db COMMIT WORK ;	
+}
