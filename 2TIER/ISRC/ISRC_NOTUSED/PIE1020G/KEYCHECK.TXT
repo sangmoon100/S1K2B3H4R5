@@ -1,0 +1,230 @@
+{.....................................................................}
+
+procedure Tpiz10101Form.FormKeyPress(Sender: TObject; var Key: Char);
+begin
+   if key = chr(vk_return) then
+      key := chr(0);
+   HelpDsr.Caption := '';
+   KeyCheck := 0;
+end;
+
+procedure Tpiz10101Form.Mark1KeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if key = vk_Down then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : Mark2.SetFocus;
+  2 : Mark3.SetFocus;
+  3 : Mark4.SetFocus;
+  4 : Mark5.SetFocus;
+  5 : Mark6.SetFocus;
+  6 : Mark7.SetFocus;
+  7 : Mark8.SetFocus;
+  8 : Mark9.SetFocus;
+  9 : Mark1.SetFocus;
+end;
+
+if key = vk_Up then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : Mark9.SetFocus;
+  2 : Mark1.SetFocus;
+  3 : Mark2.SetFocus;
+  4 : Mark3.SetFocus;
+  5 : Mark4.SetFocus;
+  6 : Mark5.SetFocus;
+  7 : Mark6.SetFocus;
+  8 : Mark7.SetFocus;
+  9 : Mark8.SetFocus;
+end;
+
+
+end;
+
+procedure Tpiz10101Form.leng1KeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if key = vk_Down then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : leng2.SetFocus;
+  2 : Leng3.SetFocus;
+  3 : Leng4.SetFocus;
+  4 : Leng5.SetFocus;
+  5 : Leng6.SetFocus;
+  6 : Leng7.SetFocus;
+  7 : Leng8.SetFocus;
+  8 : Leng9.SetFocus;
+  9 : Leng1.SetFocus;
+end;
+if key = vk_Up then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : Leng9.SetFocus;
+  2 : Leng1.SetFocus;
+  3 : Leng2.SetFocus;
+  4 : Leng3.SetFocus;
+  5 : Leng4.SetFocus;
+  6 : Leng5.SetFocus;
+  7 : Leng6.SetFocus;
+  8 : Leng7.SetFocus;
+  9 : Leng8.SetFocus;
+end;
+
+end;
+
+procedure Tpiz10101Form.value1KeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+case key of
+vk_down :
+  case strToint(copy(TEdit(Sender).Name,6,1)) of
+    1 : Value2.SetFocus;
+    2 : Value3.SetFocus;
+    3 : Value4.SetFocus;
+    4 : Value5.SetFocus;
+    5 : Value6.SetFocus;
+    6 : Value7.SetFocus;
+    7 : Value8.SetFocus;
+    8 : Value9.SetFocus;
+    9 : Value1.SetFocus;
+  end;
+
+vk_Up :
+  case strToint(copy(TEdit(Sender).Name,6,1)) of
+    1 : Value9.SetFocus;
+    2 : Value1.SetFocus;
+    3 : Value2.SetFocus;
+    4 : Value3.SetFocus;
+    5 : Value4.SetFocus;
+    6 : Value5.SetFocus;
+    7 : Value6.SetFocus;
+    8 : Value7.SetFocus;
+    9 : Value8.SetFocus;
+  end;
+end;
+
+end;
+
+procedure Tpiz10101Form.mark1KeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if not (ssShift in Shift) then
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : begin
+      if KeyCheck = 0 then
+         Leng1.SetFocus;
+      KeyCheck := 0;
+      end;
+  2 : Leng2.SetFocus;
+  3 : Leng3.SetFocus;
+  4 : Leng4.SetFocus;
+  5 : Leng5.SetFocus;
+  6 : Leng6.SetFocus;
+  7 : Leng7.SetFocus;
+  8 : Leng8.SetFocus;
+  9 : Leng9.SetFocus;
+end;
+end
+
+else   {if shift}
+
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : Value9.SetFocus;
+  2 : Value1.SetFocus;
+  3 : Value2.SetFocus;
+  4 : Value3.SetFocus;
+  5 : Value4.SetFocus;
+  6 : Value5.SetFocus;
+  7 : Value6.SetFocus;
+  8 : Value7.SetFocus;
+  9 : Value8.SetFocus;
+end;
+
+end;
+
+end;
+
+procedure Tpiz10101Form.leng1KeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if not (ssShift in Shift) then
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+    1 : Value1.SetFocus;
+    2 : Value2.SetFocus;
+    3 : Value3.SetFocus;
+    4 : Value4.SetFocus;
+    5 : Value5.SetFocus;
+    6 : Value6.SetFocus;
+    7 : Value7.SetFocus;
+    8 : Value8.SetFocus;
+    9 : Value9.SetFocus;
+end;
+end
+
+else {if shift}
+
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : Mark1.SetFocus;
+  2 : Mark2.SetFocus;
+  3 : Mark3.SetFocus;
+  4 : Mark4.SetFocus;
+  5 : Mark5.SetFocus;
+  6 : Mark6.SetFocus;
+  7 : Mark7.SetFocus;
+  8 : Mark8.SetFocus;
+  9 : Mark9.SetFocus;
+end;
+
+end;
+
+end;
+
+procedure Tpiz10101Form.value1KeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if not (ssShift in Shift) then
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,6,1)) of
+  1 : Mark2.SetFocus;
+  2 : Mark3.SetFocus;
+  3 : Mark4.SetFocus;
+  4 : Mark5.SetFocus;
+  5 : Mark6.SetFocus;
+  6 : Mark7.SetFocus;
+  7 : Mark8.SetFocus;
+  8 : Mark9.SetFocus;
+  9 : Mark1.SetFocus;
+end;
+end
+
+else  {if shift}
+
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,6,1)) of
+  1 : Leng1.SetFocus;
+  2 : Leng2.SetFocus;
+  3 : Leng3.SetFocus;
+  4 : Leng4.SetFocus;
+  5 : Leng5.SetFocus;
+  6 : Leng6.SetFocus;
+  7 : Leng7.SetFocus;
+  8 : Leng8.SetFocus;
+  9 : Leng9.SetFocus;
+end;
+end;
+end;
+

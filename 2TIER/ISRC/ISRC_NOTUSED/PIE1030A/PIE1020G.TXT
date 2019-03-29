@@ -1,0 +1,486 @@
+unit E1020g;
+
+interface
+
+uses
+  SysUtils, WinTypes, WinProcs, Messages, Classes, Graphics, Controls,
+  Forms, Dialogs, StdCtrls, Buttons, Mask, ExtCtrls, Gauges, IniFiles, DB,
+  DBTables;
+
+type
+  TForm1 = class(TForm)
+    Panel1: TPanel;
+    Label1: TLabel;
+    L_UserName: TLabel;
+    L_CurDate: TLabel;
+    Panel2: TPanel;
+    Label5: TLabel;
+    Label7: TLabel;
+    Panel3: TPanel;
+    Label4: TLabel;
+    Label8: TLabel;
+    MaskEdit1: TMaskEdit;
+    Panel4: TPanel;
+    BB_Close: TBitBtn;
+    BB_Run: TBitBtn;
+    Panel5: TPanel;
+    Label2: TLabel;
+    P_helpinfo_: TPanel;
+    P_Help: TLabel;
+    Gauge1: TGauge;
+    OpenDialog1: TOpenDialog;
+    Database1: TDatabase;
+    Query1: TQuery;
+    Query2: TQuery;
+    Query2TOPOYM: TStringField;
+    Query2ORGNUM: TStringField;
+    Query2DEPTCODE: TStringField;
+    Query2TPGUBUN: TStringField;
+    Query2FIELDCODE: TStringField;
+    Query2BONCODE: TStringField;
+    Query2TDIRECT: TFloatField;
+    Query2TPOS1: TFloatField;
+    Query2TPOS2: TFloatField;
+    Query2TPOS3: TFloatField;
+    Query2TPOS4: TFloatField;
+    Query2TPOS5: TFloatField;
+    Query2TPOS6: TFloatField;
+    Query2TPOS7: TFloatField;
+    Query2TPOS8: TFloatField;
+    Query2TPOSSUM: TFloatField;
+    Query2TSPE1: TFloatField;
+    Query2TSPE21: TFloatField;
+    Query2TSPE22: TFloatField;
+    Query2TSPE23: TFloatField;
+    Query2TSPE24: TFloatField;
+    Query2TSPE25: TFloatField;
+    Query2TSPE26: TFloatField;
+    Query2TSPE27: TFloatField;
+    Query2TSPE2: TFloatField;
+    Query2TSPE3: TFloatField;
+    Query2TSPE4: TFloatField;
+    Query2TSPE5: TFloatField;
+    Query2TSPESUM: TFloatField;
+    Query2TEMPTOT: TFloatField;
+    Query2TEXTR1: TFloatField;
+    Query2TEXTR2: TFloatField;
+    Query2TEXTR3: TFloatField;
+    Query2TEXTR4: TFloatField;
+    Query2TEXTR5: TFloatField;
+    Query2TEXTRSUM: TFloatField;
+    Query2TTEMPSUM: TFloatField;
+    Query2TIMSITOT: TFloatField;
+    Query2TTOTAL: TFloatField;
+    Query2TCRETIME: TStringField;
+    Query2PDIR11: TFloatField;
+    Query2PDIR21: TFloatField;
+    Query2PDIR31: TFloatField;
+    Query2PDIR41: TFloatField;
+    Query2PDIR51: TFloatField;
+    Query2PDIR61: TFloatField;
+    Query2PDIR6A: TFloatField;
+    Query2PDIR71: TFloatField;
+    Query2PDIR72: TFloatField;
+    Query2PDIR7A: TFloatField;
+    Query2PDIRRTC: TFloatField;
+    Query2PDIRSUM: TFloatField;
+    Query2PPOS1: TFloatField;
+    Query2PPOS2: TFloatField;
+    Query2PPOS3: TFloatField;
+    Query2PPOS4: TFloatField;
+    Query2PPOS5: TFloatField;
+    Query2PPOS6: TFloatField;
+    Query2PPOS7: TFloatField;
+    Query2PPOS8: TFloatField;
+    Query2PPOSSUM: TFloatField;
+    Query2PSPE1: TFloatField;
+    Query2PSPE21: TFloatField;
+    Query2PSPE22: TFloatField;
+    Query2PSPE23: TFloatField;
+    Query2PSPE24: TFloatField;
+    Query2PSPE25: TFloatField;
+    Query2PSPE26: TFloatField;
+    Query2PSPE27: TFloatField;
+    Query2PSPE2: TFloatField;
+    Query2PSPE3: TFloatField;
+    Query2PSPE4: TFloatField;
+    Query2PSPE5: TFloatField;
+    Query2PSPESUM: TFloatField;
+    Query2PEMPTOT: TFloatField;
+    Query2PEXTR1: TFloatField;
+    Query2PEXTR2: TFloatField;
+    Query2PEXTR3: TFloatField;
+    Query2PEXTR4: TFloatField;
+    Query2PEXTR5: TFloatField;
+    Query2PEXTRSUM: TFloatField;
+    Query2PTEMPSUM: TFloatField;
+    Query2PIMSITOT: TFloatField;
+    Query2PTOTAL: TFloatField;
+    Query2PCRETIME: TFloatField;
+    Query2TPBIGO: TFloatField;
+    Query2WRITETIME: TStringField;
+    Query2WRITEEMP: TStringField;
+    Button1: TButton;
+    procedure BB_CloseClick(Sender: TObject);
+    procedure BB_RunClick(Sender: TObject);
+    procedure FormActivate(Sender: TObject);
+    procedure MaskEdit1DblClick(Sender: TObject);
+    procedure Button1Click(Sender: TObject);
+  private
+    { Private declarations }
+    procedure LastCount;
+  public
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+  ErrorHelp : array[0..255] of char;
+  Ai, Ci : integer;
+  empno :String;
+implementation
+uses TimeFtp,Winsock;
+{$R *.DFM}
+
+procedure TForm1.BB_CloseClick(Sender: TObject);
+var
+  BitBtn: Integer;
+begin
+  BitBtn := Application.MessageBox('종료 하시겠습니까?', 'Message Box',
+    mb_OKCancel + mb_DefButton1);
+ if Bitbtn = IDOK then
+   close;
+ if BitBtn = IDCANCEL then
+
+end;
+
+{PC 화일을 읽어 라인 수를 가진다....................................}
+procedure TForm1.LastCount;
+var
+  F: TextFile;
+  S: string;
+begin
+    AssignFile(F, MaskEdit1.text);   { File selected in dialog box }
+    Reset(F);
+    Ai := 0;
+    while not EOF(F) do
+    begin
+    Readln(F, S);
+    inc(Ai);
+    end;
+    CloseFile(F);
+end;
+
+procedure TForm1.BB_RunClick(Sender: TObject);
+var
+  F: TextFile;
+  BitBtn,Deptcnt,ccnt,Si,errcnt,Pihcnt,guval: Integer;
+  CurOrg,Tempyymm,Lastyymm,gubun,deptcode,manplan,Dfieldcode,Dboncode,S: String;
+begin
+ if MaskEdit1.Text = '' then begin
+    showmessage('화일명을 반드시 입력하셔야 합니다.');
+    MaskEdit1.SetFocus;
+    end
+    else
+ begin
+  BitBtn := Application.MessageBox('실행하시겠습니까?', 'Message Box',
+    mb_OKCancel + mb_DefButton1);
+ if Bitbtn = IDOK then begin
+    {............................실행 시작 부분입니다..........................}
+    {1.현조직차수와 최종작업년월을 읽어온다....................................}
+     begin
+          Query1.Close;
+          Query1.SQL.Clear;
+          Query1.SQL.ADD(' SELECT  VALUE1,WRITETIME ');
+          Query1.SQL.ADD('   FROM  PIMVARI ');
+          Query1.SQL.ADD('  WHERE ((GUBUN =:lgubun) AND ');
+          Query1.SQL.ADD('         (SGUBUN =:lsgubun))');
+          Query1.ParamByName('lgubun').AsString := '00';
+          Query1.ParamByName('lsgubun').AsString := '0001';
+          Query1.Open;
+     end;
+     CurOrg   := Query1.Fields[0].AsString;
+     Tempyymm := Query1.Fields[1].AsString;
+     Lastyymm := Copy(Tempyymm,1,6);
+     Query1.Close;
+    {1.의 끝...................................................................}
+    {2.텍스트 화일을 읽어 확인한다.............................................}
+     begin
+         AssignFile(F, MaskEdit1.text);   { File selected in dialog box }
+         Reset(F);
+         LastCount;
+         Ci := 0;
+         errcnt := 0;
+              while Ci < Ai do
+              begin
+              gauge1.Progress := Ci * (100 div Ai);
+              Readln(F, S);             { Read the first line out of the file }
+              CCnt := 0;
+              Si := 1;
+              guval := 0;
+                   while True do
+                   begin
+                        CCnt := System.Pos(',', S);
+                        if CCnt = 0 then
+                          Break;
+                        case Si of
+                          1:
+                            gubun := Copy(S, 1, CCnt-1);
+                          2:
+                            deptcode := Copy(S, 1, CCnt-1);
+                        end; {...case의 end...}
+                        S := copy(S, CCnt+1, 8);
+                        inc(Si);
+                   end;
+                   manplan := S;
+                   if manplan = '' then begin
+                      manplan := '0';
+                      end;
+                   {3.부서코드 존재여부를 확인한다.............................}
+                   begin
+                        Query1.Close;
+                        Query1.SQL.Clear;
+                        Query1.SQL.ADD(' SELECT  FIELDCODE,BONCODE ');
+                        Query1.SQL.ADD('   FROM  PYCDEPT ');
+                        Query1.SQL.ADD('  WHERE ((ORGNUM =:lorgnum) AND ');
+                        Query1.SQL.ADD('         (DEPTCODE =:ldcode))');
+                        Query1.ParamByName('lorgnum').AsString := CurOrg;
+                        Query1.ParamByName('ldcode').AsString  := deptcode;
+                        Query1.Open;
+                        Deptcnt := Query1.RecordCount;
+                   end;
+                   Dfieldcode := Query1.Fields[0].AsString;
+                   Dboncode   := Query1.Fields[1].AsString;
+                   {3.의 끝....................................................}
+                   {3.5 각 데이타 값의 조건 체크를 위해 gubun에 특정 값을 준다.}
+                   begin
+                        if StrToInt(gubun) = 10 then begin
+                           guval := 10;
+                           end;
+                        if StrToInt(gubun) = 15 then begin
+                           guval := 15;
+                           end;
+                        if StrToInt(gubun) = 20 then begin
+                           guval := 20;
+                           end;
+                   end;
+                   {3.5 의 끝..................................................}
+                   {4.각 데이타의 값에 대한 타당성을 검사한다..................}
+                   begin
+                        if Deptcnt > 0 then begin
+                           if guval <> 0 then begin
+                              if StrToInt(manplan) > 0 then begin
+{100........위 조건을 만족할 경우 여기서 저장한다..............................}
+                              {5.작업년월,조직차수,부서코드를 KEY로 하여
+                                   계획인원/현원인원화일에 존재여부를 확인한다.}
+                   begin
+                        Query1.Close;
+                        Query1.SQL.Clear;
+                        Query1.SQL.ADD(' SELECT  TOPOYM ');
+                        Query1.SQL.ADD('   FROM  PIHTOPO ');
+                        Query1.SQL.ADD('  WHERE ((TOPOYM =:ltopoym) AND ');
+                        Query1.SQL.ADD('         (ORGNUM =:lorgnum) AND ');
+                        Query1.SQL.ADD('         (DEPTCODE =:ldeptcode) AND ');
+                        Query1.SQL.ADD('         (TPGUBUN =:ltpgubun))');
+                        Query1.ParamByName('ltopoym').AsString   := Lastyymm;
+                        Query1.ParamByName('lorgnum').AsString   := CurOrg;
+                        Query1.ParamByName('ldeptcode').AsString := deptcode;
+                        Query1.ParamByName('ltpgubun').AsString  := gubun;
+                        Query1.Open;
+                        Pihcnt := Query1.RecordCount;
+                   end;
+                   {5.의 끝....................................................}
+                   if Pihcnt > 0 then begin
+                      {6.............해당 자료를 수정한다......................}
+                        Query2.Close;
+                        Query2.SQL.Clear;
+{                        Query2.SQL.ADD(' UPDATE PIHTOPO ');
+                        Query2.SQL.ADD('    SET TEMPTOT = '''+manplan+''', TTOTAL = '''+manplan+''', ');
+                        Query2.SQL.ADD('        WRITETIME =:lwritetime, WRITEEMP =:lwriteemp ');
+                        Query2.SQL.ADD('  WHERE ((TOPOYM = '''+Lastyymm+''') AND ');
+                        Query2.SQL.ADD('         (ORGNUM = '''+CurOrg+''') AND ');
+                        Query2.SQL.ADD('         (DEPTCODE = '''+deptcode+''') AND ');
+                        Query2.SQL.ADD('         (TPGUBUN = '''+gubun+'''))');}
+                        Query2.SQL.ADD(' UPDATE PIHTOPO ');
+                        Query2.SQL.ADD('    SET TEMPTOT =:ltemptot, TTOTAL =:lttotal, ');
+                        Query2.SQL.ADD('        WRITETIME =:lwritetime, WRITEEMP =:lwriteemp ');
+                        Query2.SQL.ADD('  WHERE ((TOPOYM =:ltopoym) AND ');
+                        Query2.SQL.ADD('         (ORGNUM =:lorgnum) AND ');
+                        Query2.SQL.ADD('         (DEPTCODE =:ldeptcode) AND ');
+                        Query2.SQL.ADD('         (TPGUBUN =:ltpgubun))');
+                        Query2.ParamByName('ltemptot').AsInteger := StrToInt(manplan);
+                        Query2.ParamByName('lttotal').AsInteger  := StrToInt(manplan);
+                        Query2.ParamByName('lwritetime').AsString:= Copy(TimeDate,1,15);
+                        Query2.ParamByName('lwriteemp').AsString := Copy(empno,1,4);
+
+                        Query2.ParamByName('ltopoym').AsString   := Copy(Lastyymm,1,6);
+                        Query2.ParamByName('lorgnum').AsString   := Copy(CurOrg,1,3);
+
+                        Query2.ParamByName('ldeptcode').AsString := deptcode;
+                        Query2.ParamByName('ltpgubun').AsString  := gubun;
+
+                        Query2.EXECSQL;
+                        Query2.CLOSE;
+                      {6.의 끝.................................................}
+                      end
+                   else begin
+                      {7.............해당 자료를 생성한다......................}
+                        Query1.Close;
+                        Query1.SQL.Clear;
+                        Query1.SQL.ADD(' INSERT  INTO  PIHTOPO ');
+                        Query1.SQL.ADD('(TOPOYM,ORGNUM,DEPTCODE,TPGUBUN,FIELDCODE,BONCODE, ');
+                        Query1.SQL.ADD(' TDIRECT,TPOS1,TPOS2,TPOS3,TPOS4,TPOS5, ');
+                        Query1.SQL.ADD(' TPOS6,TPOS7,TPOS8,TPOSSUM,TSPE1,TSPE21, ');
+                        Query1.SQL.ADD(' TSPE22,TSPE23,TSPE24,TSPE25,TSPE26,TSPE27, ');
+                        Query1.SQL.ADD(' TSPE2,TSPE3,TSPE4,TSPE5,TSPESUM,TEMPTOT, ');
+                        Query1.SQL.ADD(' TEXTR1,TEXTR2,TEXTR3,TEXTR4,TEXTR5, ');
+                        Query1.SQL.ADD(' TEXTRSUM,TTEMPSUM,TIMSITOT,TTOTAL,TCRETIME, ');
+                        {}
+                        Query1.SQL.ADD(' PDIR11,PDIR21,PDIR31,PDIR41,PDIR51,PDIR61,PDIR6A, ');
+                        {PDIRRTC 는 임시로 테이블에 맞춰놓은 것 ---> PDIRETC  가 맞다. }
+                        Query1.SQL.ADD(' PDIR71,PDIR72,PDIR7A,PDIRRTC,PDIRSUM, ');
+                        Query1.SQL.ADD(' PPOS1,PPOS2,PPOS3,PPOS4,PPOS5, ');
+                        Query1.SQL.ADD(' PPOS6,PPOS7,PPOS8,PPOSSUM, ');
+                        Query1.SQL.ADD(' PSPE1,PSPE21,PSPE22,PSPE23,PSPE24,PSPE25, ');
+                        Query1.SQL.ADD(' PSPE26,PSPE27,PSPE2,PSPE3,PSPE4,PSPE5, ');
+                        Query1.SQL.ADD(' PSPESUM,PEMPTOT, ');
+                        Query1.SQL.ADD(' PEXTR1,PEXTR2,PEXTR3,PEXTR4,PEXTR5, ');
+                        Query1.SQL.ADD(' PEXTRSUM,PTEMPSUM,PIMSITOT,PTOTAL,PCRETIME, ');
+                        {}
+                        Query1.SQL.ADD(' TPBIGO,WRITETIME,WRITEEMP) ');
+                        Query1.SQL.ADD(' VALUES(:ltopoym,:lorgnum,:ldeptcode,:ltpgubun, ');
+                        Query1.SQL.ADD('        :lfieldcode,:lboncode, ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''',:ltemptot, ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        :lttotal,:ltcretime, ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        '''+IntToStr(0)+''','''+IntToStr(0)+''', ');
+                        Query1.SQL.ADD('        NULL,NULL, ');
+                        Query1.SQL.ADD('        :lwritetime,:lwriteemp)');
+                        Query1.ParamByName('ltopoym').AsString    := Copy(Lastyymm,1,6);
+                        Query1.ParamByName('lorgnum').AsString    := Copy(Curorg,1,3);
+                        Query1.ParamByName('ldeptcode').AsString  := Copy(deptcode,1,5);
+                        Query1.ParamByName('ltpgubun').AsString   := Copy(gubun,1,2);
+                        Query1.ParamByName('lfieldcode').AsString := Copy(Dfieldcode,1,2);
+                        Query1.ParamByName('lboncode').AsString   := Copy(Dboncode,1,6);
+                        Query1.ParamByName('ltemptot').AsInteger  := StrToInt(manplan);
+                        Query1.ParamByName('lttotal').AsInteger   := StrToInt(manplan);
+                        Query1.ParamByName('ltcretime').AsString  := Copy(TimeDate,1,15);
+                        Query1.ParamByName('lwritetime').AsString := Copy(TimeDate,1,15);
+                        Query1.ParamByName('lwriteemp').AsString  := Copy(empno,1,4);
+                        Query1.EXECSQL;
+                        Query1.Close;
+                      {7.의 끝.................................................}
+                      end;
+{100..의 끝....................................................................}
+                                 end
+                              else begin
+                                 errcnt := errcnt+1;
+                                 end;
+                              end
+                           else begin
+                              errcnt := errcnt +1;
+                              end;
+                           end
+                        else begin
+                           errcnt := errcnt +1;
+                           end;
+                   end;
+                   {4.의 끝....................................................}
+                   inc(Ci);{읽은 데이타 건수를 증가시킨다......................}
+         end;
+         Gauge1.progress := 100;
+    {2.의 끝...................................................................}
+    end;
+                  {.............작업 결과를 보여준다...........}
+    showmessage('전체데이타'+IntToStr(Ai)+' 건 중'+IntToStr(errcnt)+'건 에러 발생');
+    {............................실행 끝 부분입니다............................}
+ end
+ else
+ if BitBtn = IDCANCEL then begin
+    BB_run.setfocus;
+ end;
+
+ end;
+end;
+
+procedure TForm1.FormActivate(Sender: TObject);
+var
+   Inifile : TIniFile;
+   CurDate{,empno}: String;
+   korname : String;
+begin
+   Try
+      Database1.Connected := True;
+   EXCEPT ON E : EDataBaseError Do
+      MessageBox(handle,StrPcopy(ErrorHelp,E.Message+'DB 접속 실패'),'에 러',MB_OK or $0010);
+   END;
+   inifile := TiniFile.Create('C:\insa\insa.ini');
+   empno   := iniFile.ReadString('Connect','사원번호','');
+   korname := iniFile.ReadString('Connect','사원성명','');
+   iniFile.Destroy;
+
+   CurDate := TimeDate;
+   L_UserName.Caption := korname+'('+empno+')';
+   L_CurDate.Caption  := copy(CurDate,1,4)+'/'+copy(CurDate,5,2)+'/'+copy(CurDate,7,2);
+end;
+
+procedure TForm1.MaskEdit1DblClick(Sender: TObject);
+begin
+  OpenDialog1.FileName := '*.txt';
+  if OpenDialog1.Execute then
+  begin
+       MaskEdit1.Text := OpenDialog1.FileName;
+  end;
+end;
+
+procedure TForm1.Button1Click(Sender: TObject);
+begin
+     Query1.Close;
+     Query1.SQL.Clear;
+     Query1.SQL.ADD(' DELETE FROM PIHTOPO ');
+     Query1.EXECSQL;
+end;
+
+end.
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+     Mtpass.Caption := IntToStr(data17)+'('+Format('%-4.1f', [rate5])+'%)';;
+     Btpass.Caption := IntToStr(data18)+'('+Format('%-4.1f', [rate6])+'%)';;
+     Gtpass.Caption := IntToStr(data19)+'('+Format('%-4.1f', [rate7])+'%)';;
+     Wtpass.Caption := IntToStr(data20)+'('+Format('%-4.1f', [rate8])+'%)';;

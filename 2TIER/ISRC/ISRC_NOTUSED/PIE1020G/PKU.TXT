@@ -1,0 +1,367 @@
+procedure TForm1.MtdirectKeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if key = vk_Down then
+Case TComponent(Sender).Tag of
+  1 : begin
+      Mtpos1.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  2 : begin
+      Mtpos2.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  3 : begin
+      Mtpos3.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  4 : begin
+      Mtpos4.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  5 : begin
+      Mtpos5.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  6 : begin
+      Mtpos6.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  7 : begin
+      Mtpos7.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  8 : begin
+      Mtdirect.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+end;
+
+if key = vk_Up then
+Case TComponent(Sender).Tag of
+  1 : begin
+      Mtpos7.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  2 : begin
+      Mtdirect.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  3 : begin
+      Mtpos1.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  4 : begin
+      Mtpos2.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  5 : begin
+      Mtpos3.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  6 : begin
+      Mtpos4.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  7 : begin
+      Mtpos5.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+  8 : begin
+      Mtpos6.SetFocus;
+      calculate1;
+      calculate4;
+      end;
+end;
+end;
+
+procedure TForm1.Mtspe2KeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+     if key = vk_Down then
+Case TComponent(Sender).Tag of
+  1 : begin
+      Mtspe1.SetFocus;
+      calculate2;
+      calculate4;
+      end;
+  2 : begin
+      Mtspe3.SetFocus;
+      calculate2;
+      calculate4;
+      end;
+  3 : begin
+      Mtspe4.SetFocus;
+      calculate2;
+      calculate4;
+      end;
+  4 : begin
+      Mtspe2.SetFocus;
+      calculate2;
+      calculate4;
+      end;
+end;
+
+if key = vk_Up then
+Case TComponent(Sender).Tag of
+  1 : begin
+      Mtspe4.SetFocus;
+      calculate2;
+      calculate4;
+      end;
+  2 : begin
+      Mtspe2.SetFocus;
+      calculate2;
+      calculate4;
+      end;
+  3 : begin
+      Mtspe1.SetFocus;
+      calculate2;
+      calculate4;
+      end;
+  4 : begin
+      Mtspe3.SetFocus;
+      calculate2;
+      calculate4;
+      end;
+end;
+end;
+
+procedure TForm1.Mextr1KeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+     if key = vk_Down then
+Case TComponent(Sender).Tag of
+  1 : begin
+      Mextr2.SetFocus;
+      calculate3;
+      calculate4;
+      end;
+  2 : begin
+      Mextr3.SetFocus;
+      calculate3;
+      calculate4;
+      end;
+  3 : begin
+      Mextr1.SetFocus;
+      calculate3;
+      calculate4;
+      end;
+end;
+
+if key = vk_Up then
+Case TComponent(Sender).Tag of
+  1 : begin
+      Mextr3.SetFocus;
+      calculate3;
+      calculate4;
+      end;
+  2 : begin
+      Mextr1.SetFocus;
+      calculate3;
+      calculate4;
+      end;
+  3 : begin
+      Mextr2.SetFocus;
+      calculate3;
+      calculate4;
+      end;
+end;
+end;
+
+procedure TForm1.MtdirectKeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if not (ssShift in Shift) then
+begin
+if (key = vk_Tab) or (key = vk_return) then
+Case TComponent(Sender).Tag of
+  1 : begin
+      CalCulate1;   CalCulate2;    CalCulate3;     CalCulate4;
+      Mtspe2.SetFocus;
+      end;
+  2 : begin
+      CalCulate1;   CalCulate2;    CalCulate3;     CalCulate4;
+      Mtspe2.SetFocus;
+      end;
+  3 : begin
+      CalCulate1;   CalCulate2;    CalCulate3;     CalCulate4;
+      Mtspe2.SetFocus;
+      end;
+  4 : begin
+      CalCulate1;   CalCulate2;    CalCulate3;     CalCulate4;
+      Mtspe2.SetFocus;
+      end;
+  5 : begin
+      CalCulate1;   CalCulate2;    CalCulate3;     CalCulate4;
+      Mtspe2.SetFocus;
+      end;
+  6 : begin
+      CalCulate1;   CalCulate2;    CalCulate3;     CalCulate4;
+      Mtspe2.SetFocus;
+      end;
+  7 : begin
+      CalCulate1;   CalCulate2;    CalCulate3;    CalCulate4;
+      Mtspe2.SetFocus;
+      end;
+  8 : begin
+      CalCulate1;   CalCulate2;   CalCulate3;     CalCulate4;
+      Mtspe2.SetFocus;
+      end;
+end;
+end
+
+else   {if shift}
+
+begin
+if (key = vk_Tab) or (key = vk_return) then
+Case TComponent(Sender).Tag of
+  1 : begin
+      CalCulate1;     CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  2 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  3 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  4 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  5 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  6 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  7 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  8 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+end;
+
+end;
+end;
+
+procedure TForm1.Mtspe2KeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+if not (ssShift in Shift) then
+begin
+if (key = vk_Tab) or (key = vk_return) then
+Case TComponent(Sender).Tag of
+  1 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  2 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  3 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  4 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+end;
+end
+
+else   {if shift}
+
+begin
+if (key = vk_Tab) or (key = vk_return) then
+Case TComponent(Sender).Tag of
+  1 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mtspe1.SetFocus;
+      end;
+  2 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mtspe1.SetFocus;
+      end;
+  3 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mtspe1.SetFocus;
+      end;
+  4 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mtspe1.SetFocus;
+      end;
+end;
+
+end;
+end;
+
+procedure TForm1.Mextr1KeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+if not (ssShift in Shift) then
+begin
+if (key = vk_Tab) or (key = vk_return) then
+Case TComponent(Sender).Tag of
+  1 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mtpos1.SetFocus;
+      end;
+  2 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mtpos1.SetFocus;
+      end;
+  3 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mtpos1.SetFocus;
+      end;
+end;
+end
+
+else   {if shift}
+
+begin
+if (key = vk_Tab) or (key = vk_return) then
+Case TComponent(Sender).Tag of
+  1 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  2 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+  3 : begin
+      CalCulate1;      CalCulate2;      CalCulate3;      CalCulate4;
+      Mextr1.SetFocus;
+      end;
+end;
+
+end;
+end;

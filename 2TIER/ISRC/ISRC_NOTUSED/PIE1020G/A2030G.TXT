@@ -1,0 +1,372 @@
+ unit Pcb2070g;
+
+interface
+
+uses
+  SysUtils, WinTypes, WinProcs, Messages, Classes, Graphics, Controls,
+  Forms, Dialogs, StdCtrls, Mask, Gauges, Buttons, ExtCtrls, DB, DBTables;
+
+type
+  Tpcb2070gForm = class(TForm)
+    helpDsr: TLabel;
+    helpLabel: TLabel;
+    Panel5: TPanel;
+    Brun: TBitBtn;
+    Bexit: TBitBtn;
+    Panel2: TPanel;
+    Gauge1: TGauge;
+    Label7: TLabel;
+    Panel1: TPanel;
+    Label5: TLabel;
+    Label3: TLabel;
+    Label4: TLabel;
+    Label6: TLabel;
+    MaskEdit1: TMaskEdit;
+    Panel19: TPanel;
+    L_Name: TLabel;
+    L_Date: TLabel;
+    OpenDialog1: TOpenDialog;
+    QPcmubas: TQuery;
+    QPcmubasEMPYY: TStringField;
+    QPcmubasEMPGUBUN: TStringField;
+    QPcmubasEMPNUM: TStringField;
+    QPcmubasGUBUN: TStringField;
+    QPcmubasSGUBUN: TStringField;
+    QPcmubasBUMUNCODE: TStringField;
+    QPcmubasLINECODE: TStringField;
+    QPcmubasMARK1: TStringField;
+    QPcmubasLENG1: TFloatField;
+    QPcmubasVALUE1: TStringField;
+    QPcmubasMARK2: TStringField;
+    QPcmubasLENG2: TFloatField;
+    QPcmubasVALUE2: TStringField;
+    QPcmubasMARK3: TStringField;
+    QPcmubasLENG3: TFloatField;
+    QPcmubasVALUE3: TStringField;
+    QPcmubasMARK4: TStringField;
+    QPcmubasLENG4: TFloatField;
+    QPcmubasVALUE4: TStringField;
+    QPcmubasMARK5: TStringField;
+    QPcmubasLENG5: TFloatField;
+    QPcmubasVALUE5: TStringField;
+    QPcmubasMARK6: TStringField;
+    QPcmubasLENG6: TFloatField;
+    QPcmubasVALUE6: TStringField;
+    QPcmubasMARK7: TStringField;
+    QPcmubasLENG7: TFloatField;
+    QPcmubasVALUE7: TStringField;
+    QPcmubasMARK8: TStringField;
+    QPcmubasLENG8: TFloatField;
+    QPcmubasVALUE8: TStringField;
+    QPcmubasMARK9: TStringField;
+    QPcmubasLENG9: TFloatField;
+    QPcmubasVALUE9: TStringField;
+    QPcmubasMARK10: TStringField;
+    QPcmubasLENG10: TFloatField;
+    QPcmubasVALUE10: TStringField;
+    QPcmubasWRITETIME: TStringField;
+    QPcmubasWRITEEMP: TStringField;
+    QPctuapp: TQuery;
+    QPctuappENROLLNO: TStringField;
+    QPctuappKORNAME: TStringField;
+    QPctuappBUMUNCODE: TStringField;
+    QPctuappLINECODE: TStringField;
+    QPctuappAREACODE: TStringField;
+    QPctuappSCHCODE: TStringField;
+    QPctuappJUMINID: TStringField;
+    QPctuappBOHUNYN: TStringField;
+    QPctuappENGLPOINT: TFloatField;
+    QPctuappSANGPOINT: TFloatField;
+    QPctuappMAJORPOINT: TFloatField;
+    QPctuappFIBOPOINT: TFloatField;
+    QPctuappFILPOINT: TFloatField;
+    QPctuappINJUSCORE: TFloatField;
+    QPctuappINJUTRUST: TFloatField;
+    QPctuappINJUCLASS: TStringField;
+    QPctuappWRITETIME: TStringField;
+    QPctuappWRITEEMP: TStringField;
+    Database1: TDatabase;
+    englpoint: TEdit;
+    sangpoint: TEdit;
+    majorpoint: TEdit;
+    fibopoint: TEdit;
+    filpoint: TEdit;
+    injuscore: TEdit;
+    injutrust: TEdit;
+    injuclass: TEdit;
+    L_Read: TLabel;
+    L_Save: TLabel;
+    L_Error: TLabel;
+    enrollno: TEdit;
+    bohunyn: TEdit;
+    procedure BexitClick(Sender: TObject);
+    procedure FormActivate(Sender: TObject);
+    procedure MaskEdit1DblClick(Sender: TObject);
+    procedure FormShow(Sender: TObject);
+    procedure BrunClick(Sender: TObject);
+  private
+    { Private declarations }
+    procedure LastCount;
+    procedure DataClear;
+    procedure SaveData;
+    procedure SelBohun;
+  public
+    { Public declarations }
+  end;
+
+var
+  Hwnd : Word;
+  pcb2070gForm: Tpcb2070gForm;
+  Ai, Ci, Errcnt : integer;
+  BOVAL : String;
+implementation
+
+{$R *.DFM}
+
+{종료버턴을 누를경우}
+procedure Tpcb2070gForm.BexitClick(Sender: TObject);
+var
+  BitBtn: Integer;
+begin
+  BitBtn := Application.MessageBox('종료 하시겠습니까?', 'Message Box',
+    mb_OKCancel + mb_DefButton1);
+ if Bitbtn = IDOK then
+    begin
+    ShowWindow(Hwnd,sw_ShowNormal);
+    Close;
+    end
+    else
+    begin
+    MaskEdit1.Setfocus;
+    end;
+end;
+
+procedure Tpcb2070gForm.SelBohun;
+begin
+     with QPctuapp do
+          begin
+               Close;
+               SQL.CLear;
+               SQL.ADD('SELECT PCTUAPP.* ');
+               SQL.ADD('FROM "DPER"."PCTUAPP" PCTUAPP');
+               SQL.ADD('WHERE ( PCTUAPP."ENROLLNO" =:enrollno)');
+               ParamByName('enrollno').AsString := enrollno.text;
+               Open;
+
+               bohunyn.Text := QPctuappBOHUNYN.AsString;
+          end;
+end;
+
+procedure Tpcb2070gForm.DataClear;
+begin
+     enrollno.text   := '';
+     englpoint.Text  := '';
+     sangpoint.Text  := '';
+     majorpoint.Text := '';
+     fibopoint.text  := '';
+     filpoint.text   := '';
+     injuscore.Text  := '';
+     injutrust.Text  := '';
+     injuclass.Text  := '';
+     MaskEdit1.Text  := '';
+     L_Read.Caption  := '읽은 건수:';
+     L_Save.Caption  := '저장 건수:';
+     L_Error.Caption := '오류 건수:';
+end;
+
+{데이타 UPDATE 모듈..................................................}
+procedure Tpcb2070gForm.SaveData;
+begin
+    with QPctuapp do
+                 begin
+                 Close;
+                 SQL.CLEAR;
+                 SQL.ADD( 'UPDATE DPER."PCTUAPP" SET ');
+                 SQL.ADD( 'ENGLPOINT =:englpoint, ');
+                 SQL.ADD( 'SANGPOINT =:sangpoint,MAJORPOINT =:majorpoint,');
+                 SQL.ADD( 'FIBOPOINT =:fibopoint,FILPOINT =:filpoint,');
+                 SQL.ADD( 'INJUSCORE =:injuscore,INJUTRUST =:injutrust,');
+                 SQL.ADD( 'INJUCLASS =:injuclass ');
+                        {WIRTETIME =:        ,WRITEEMP =:,}
+
+                 SQL.ADD( 'WHERE (PCTUAPP."ENROLLNO" =:enrollno)');
+                 ParamByName('enrollno').AsString  := enrollno.text;
+                 ParamByName('englpoint').AsFloat  := StrToFloat(englpoint.Text);
+                 ParamByName('sangpoint').AsFloat  := StrToFloat(sangpoint.Text);
+                 ParamByName('majorpoint').AsFloat := StrToFloat(majorpoint.Text);
+                 ParamByName('fibopoint').AsFloat  := StrToFloat(fibopoint.text);
+                 ParamByName('filpoint').AsFloat   := StrToFloat(filpoint.text);
+                 ParamByName('injuscore').AsFloat  := StrToFloat(injuscore.Text);
+                 ParamByName('injutrust').AsFloat  := StrToFloat(injuscore.Text);
+                 ParamByName('injuclass').AsString := injuclass.text;
+
+                 EXECSQL;
+  {               Close;}
+                 end;
+
+    QPctuapp.Close;
+end;
+
+{PC 화일을 읽어 라인 수를 가진다....................................}
+procedure Tpcb2070gForm.LastCount;
+var
+  F: TextFile;
+  S: string;
+begin
+    AssignFile(F, MaskEdit1.text);   { File selected in dialog box }
+    Reset(F);
+    Ai := 0;
+    while not EOF(F) do
+    begin
+    Readln(F, S);
+    inc(Ai);
+    L_Read.Caption := '읽은 건수:'+IntToStr(Ai);
+    end;
+    CloseFile(F);
+end;
+
+procedure Tpcb2070gForm.FormActivate(Sender: TObject);
+begin
+ try
+     Database1.Connected := True;
+     except
+       on EDataBaseError DO
+          MessageBox(handle,'서버와 연결실패.(서버장비 확인요망!.)','에  러',MB_OK or $0040);
+       else
+          MessageBox(handle,'서버와 연결실패.(서버장비 확인요망!.)','에  러',MB_OK or $0040);
+       end;{try end}
+
+  Hwnd := FindWindow('TdanForm','채용작업');
+  ShowWindow(Hwnd,sw_Hide);
+end;
+
+procedure Tpcb2070gForm.MaskEdit1DblClick(Sender: TObject);
+begin
+  OpenDialog1.FileName := '*.txt';
+  if OpenDialog1.Execute then
+  begin
+       MaskEdit1.Text := OpenDialog1.FileName;
+  end;
+end;
+
+procedure Tpcb2070gForm.FormShow(Sender: TObject);
+begin
+ L_Date.Caption := FormatDateTime('yyyy/mm/dd', date);
+ L_Name.Caption := '정재헌(1234)';
+ DataClear;
+
+     QPcmubas.Close;
+     QPcmubas.ParamByName('empyy').AsString  := '1996';
+     QPcmubas.ParamByName('empgubun').AsString := '2';
+     QPcmubas.ParamByName('empnum').AsString := '1';
+     QPcmubas.ParamByName('gubun').AsString := '11';
+     QPcmubas.Open;
+
+     {BOVAL := StrToFloat(QPcmubasVALUE10.AsString);}
+     BOVAL := FloatToStr(StrToFloat(QPcmubasVALUE10.AsString));
+end;
+
+procedure Tpcb2070gForm.BrunClick(Sender: TObject);
+var
+  BitBtn: Integer;
+  CCnt: Integer;
+  Si: Integer;
+  F: TextFile;
+  S, S0, S1, S2, S3 : string;
+  K: string;
+begin
+  BitBtn := Application.MessageBox('실행하시겠습니까?', 'Message Box',
+    mb_OKCancel + mb_DefButton1);
+ if Bitbtn = IDOK then
+    if MaskEdit1.Text = '' then
+       begin
+       Showmessage('화일명을 반드시 입력하시오!');
+       end
+    else
+    begin
+         AssignFile(F, MaskEdit1.text);   { File selected in dialog box }
+         Reset(F);
+         LastCount;
+         Ci := 0;
+              while Ci < Ai do
+              begin
+              L_Save.Caption := '저장 건수:'+IntToStr(Ci+1);
+              gauge1.Progress := Ci * (100 div Ai);
+              Readln(F, S);             { Read the first line out of the file }
+              CCnt := 0;
+              Si := 1;
+                   while True do
+                   begin
+                        CCnt := System.Pos(',', S);
+                        if CCnt = 0 then
+                          Break;
+                        case Si of
+                          1:
+                            enrollno.text   := Copy(S, 1, CCnt-1);
+                          2:
+                            englpoint.text  := Copy(S, 1, CCnt-1);
+                          3:
+                            sangpoint.text  := Copy(S, 1, CCnt-1);
+                          4:
+                            majorpoint.text := Copy(S, 1, CCnt-1);
+                          5:
+                            injuscore.text  := Copy(S, 1, CCnt-1);
+                          6:
+                            injutrust.text  := Copy(S, 1, CCnt-1);
+                        end;
+                        S := copy(S, CCnt+1, 50);
+                        Inc(Si);
+                   end;
+                   injuclass.text := S;
+
+                   SelBohun;
+
+                   begin
+                        if (englpoint.text = '') or (sangpoint.text = '')
+                           or (majorpoint.text = '') or (injuscore.text = '')
+                           or (injutrust.text = '') then
+                           begin
+                             Errcnt := Errcnt + 1;
+                             showmessage(IntToStr(Errcnt));
+                           end
+                        else
+                          begin
+                          if bohunyn.text = '1' then
+                             if StrToFloat(BOVAL) < 1.00 then
+                                begin
+                                     fibopoint.text := FloatToStr(StrToFloat(englpoint.text) * StrToFloat(BOVAL));
+                                end
+                             else
+                                begin
+                                     fibopoint.text := FloatToStr(StrToFloat(BOVAL));
+                                end
+                          else
+                              begin
+                                     fibopoint.text := '0';
+                              end;
+                          filpoint.text := FloatToStr(StrToFloat(englpoint.text) + StrToFloat(fibopoint.text));
+                          sangpoint.setfocus;
+                          end;
+                  end;
+
+                   showmessage('');
+                  {UPDATE ROUTINE이 들어 갈 곳이다...........................}
+                   inc(Ci);
+                   SaveData;
+              end;                       { Put string in a TEdit control }
+              gauge1.Progress := 100;
+              CloseFile(F);
+              L_Error.Caption := '오류 건수:'+IntToStr(ErrCnt);
+              showmessage('작업이 종료 되었습니다!');
+              gauge1.Progress := 0;
+              DataClear;
+ end
+ else
+     begin
+          showmessage('작업이 취소되었습니다!');
+          DataClear;
+     end;
+
+end;
+
+end.

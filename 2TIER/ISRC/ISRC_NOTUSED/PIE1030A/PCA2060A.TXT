@@ -1,0 +1,951 @@
+unit Pca2060a;
+
+interface
+
+uses
+  SysUtils, WinTypes, WinProcs, Messages, Classes, Graphics, Controls,
+  Forms, Dialogs, StdCtrls, Buttons, Mask, ExtCtrls, Gauges, inifiles, DB,
+  DBTables;
+
+type
+  TForm1 = class(TForm)
+    Panel1: TPanel;
+    Label1: TLabel;
+    L_UserName: TLabel;
+    L_CurDate: TLabel;
+    Panel3: TPanel;
+    Label10: TLabel;
+    P_helpinfo_: TPanel;
+    P_Help: TLabel;
+    empgubun1: TRadioButton;
+    empgubun2: TRadioButton;
+    empgubun3: TRadioButton;
+    DataField: TPanel;
+    Label4: TLabel;
+    hodeptname1: TLabel;
+    Label6: TLabel;
+    hodeptname2: TLabel;
+    Label8: TLabel;
+    hodeptname3: TLabel;
+    Label9: TLabel;
+    bumuncode: TLabel;
+    bumunname: TLabel;
+    Label15: TLabel;
+    areacode: TLabel;
+    areaname: TLabel;
+    Label18: TLabel;
+    schcode: TLabel;
+    schcodename: TLabel;
+    Label21: TLabel;
+    coschool: TLabel;
+    coschoolname: TLabel;
+    Label24: TLabel;
+    unschool: TLabel;
+    unschoolname: TLabel;
+    Label27: TLabel;
+    w1school: TLabel;
+    w1schoolname: TLabel;
+    Label30: TLabel;
+    paycl: TLabel;
+    payclname: TLabel;
+    Label33: TLabel;
+    jobline: TLabel;
+    joblinename: TLabel;
+    Label36: TLabel;
+    linecode: TLabel;
+    linename: TLabel;
+    Label39: TLabel;
+    sexname: TLabel;
+    sex: TLabel;
+    Label42: TLabel;
+    comajor: TLabel;
+    comajorname: TLabel;
+    Label45: TLabel;
+    unmajor: TLabel;
+    unmajorname: TLabel;
+    Label48: TLabel;
+    w1major: TLabel;
+    w1majorname: TLabel;
+    Label51: TLabel;
+    paygr: TLabel;
+    Panel5: TPanel;
+    BB_Save: TBitBtn;
+    BB_Close: TBitBtn;
+    BB_Delete: TBitBtn;
+    BB_Cancel: TBitBtn;
+    Label53: TLabel;
+    deptcode: TMaskEdit;
+    deptname: TLabel;
+    Label55: TLabel;
+    empno: TMaskEdit;
+    Panel6: TPanel;
+    Label56: TLabel;
+    Label57: TLabel;
+    Label58: TLabel;
+    Label59: TLabel;
+    Label60: TLabel;
+    Label61: TLabel;
+    Label62: TLabel;
+    atinwon: TLabel;
+    btinwon: TLabel;
+    apinwon: TLabel;
+    bpinwon: TLabel;
+    asinwon: TLabel;
+    bsinwon: TLabel;
+    arinwon: TLabel;
+    brinwon: TLabel;
+    ainwon: TLabel;
+    binwon: TLabel;
+    Panel7: TPanel;
+    hodept1: TLabel;
+    hodept2: TLabel;
+    hodept3: TLabel;
+    Label75: TLabel;
+    pappoint: TLabel;
+    Label77: TLabel;
+    myunpoint: TLabel;
+    Label79: TLabel;
+    filpoint: TLabel;
+    Panel4: TPanel;
+    Label2: TLabel;
+    enroll: TMaskEdit;
+    Label3: TLabel;
+    korname: TMaskEdit;
+    Database1: TDatabase;
+    Qpcmplan: TQuery;
+    QpcmplanEMPYY: TStringField;
+    QpcmplanEMPGUBUN: TStringField;
+    QpcmplanEMPNUM: TStringField;
+    QpcmplanORGNUM: TStringField;
+    QpcmplanDEPTCODE: TStringField;
+    QpcmplanTINWON: TFloatField;
+    QpcmplanPINWON: TFloatField;
+    QpcmplanSINWON: TFloatField;
+    QpcmplanRINWON: TFloatField;
+    QpcmplanWRITETIME: TStringField;
+    QpcmplanWRITEEMP: TStringField;
+    Qpcmpass: TQuery;
+    Qdept: TQuery;
+    QpcmpassEMPYY: TStringField;
+    QpcmpassEMPGUBUN: TStringField;
+    QpcmpassEMPNUM: TStringField;
+    QpcmpassENROLLNO: TStringField;
+    QpcmpassEMPNO: TStringField;
+    QpcmpassKORNAME: TStringField;
+    QpcmpassORGNUM: TStringField;
+    QpcmpassHODEPTCODE1: TStringField;
+    QpcmpassHODEPTCODE2: TStringField;
+    QpcmpassHODEPTCODE3: TStringField;
+    QpcmpassDEPTCODE: TStringField;
+    QpcmpassAREA: TStringField;
+    QpcmpassANDEPTCODE: TStringField;
+    QpcmpassANNONO: TStringField;
+    QpcmpassANFRDATE: TStringField;
+    QpcmpassANINPYN: TStringField;
+    QpcmpassWRITETIME: TStringField;
+    QpcmpassWRITEEMP: TStringField;
+    QdeptORGNUM: TStringField;
+    QdeptDEPTCODE: TStringField;
+    QdeptDEPTNAME: TStringField;
+    Qpctuapp: TQuery;
+    QpctuappENROLLNO: TStringField;
+    QpctuappKORNAME: TStringField;
+    QpctuappBUMUNCODE: TStringField;
+    QpctuappLINECODE: TStringField;
+    QpctuappAREACODE: TStringField;
+    QpctuappSCHCODE: TStringField;
+    QpctuappSEX: TStringField;
+    QpctuappCOSCHOOL: TStringField;
+    QpctuappCOMAJOR: TStringField;
+    QpctuappUNSCHOOL: TStringField;
+    QpctuappUNMAJOR: TStringField;
+    QpctuappW1SCHOOL: TStringField;
+    QpctuappW1MAJOR: TStringField;
+    QpctuappPAPPOINT: TFloatField;
+    QpctuappFILPOINT: TFloatField;
+    QpctuappMYUNPOINT: TFloatField;
+    QpctuappPAYCL: TStringField;
+    QpctuappPAYGR: TFloatField;
+    QpctuappJOBLINE: TStringField;
+    Qcode: TQuery;
+    QcodeCODEID: TStringField;
+    QcodeCODENO: TStringField;
+    QcodeCODENAME: TStringField;
+    Qdeptcnt: TQuery;
+    Qenrollchk: TQuery;
+    QenrollchkENROLLNO: TStringField;
+    QenrollchkEMPNO: TStringField;
+    QdeptcntDEPTCODE: TStringField;
+    procedure BB_CloseClick(Sender: TObject);
+    procedure BB_RunClick(Sender: TObject);
+    procedure BB_DeleteClick(Sender: TObject);
+    procedure BB_CancelClick(Sender: TObject);
+    procedure FormActivate(Sender: TObject);
+    procedure FormShow(Sender: TObject);
+    procedure enrollDblClick(Sender: TObject);
+    procedure deptcodeDblClick(Sender: TObject);
+    procedure DataKeyMove(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure BB_SaveClick(Sender: TObject);
+    procedure empgubun1Click(Sender: TObject);
+    procedure empgubun2Click(Sender: TObject);
+    procedure empgubun3Click(Sender: TObject);
+  private
+    { Private declarations }
+    procedure DataClear;
+    procedure SaveData1;
+    procedure SaveData2;
+    procedure EnrollCheck;
+    procedure EmpCheck;
+
+  public
+    { Public declarations }
+    function QCodeDisp(s1,s2 : String) : String;
+    function QdeptDisp(t1 : String) : String;
+  end;
+
+var
+  Form1: TForm1;
+  ErrorHelp: array[0..255] of char;
+  Empgubun : String;
+  EnrollCnt, EmpCnt: Integer;
+  Fdeptcode : String;
+implementation
+uses codelib,dept1lib,timeftp,enrollno;
+{$R *.DFM}
+
+{입력받은 데이타를 코드 화일에서 찾아서 해당 필드에 보여준다..}
+function TForm1.QCodeDisp(s1,s2 : String) : String;
+begin
+  QCode.Close;
+  QCode.ParamByName('lcodeid').AsString  := s1;
+  QCode.ParamByName('lcodeno').AsString := s2;
+  QCode.Open;
+  QCodeDisp := QCodeCODENAME.AsString;
+end;
+
+{입력받은 데이타를 코드 화일에서 찾아서 해당 필드에 보여준다..}
+function TForm1.QDeptDisp(t1 : String) : String;
+begin
+  Qdept.Close;
+  Qdept.ParamByName('deptcode').AsString := t1;
+{  Qdept.ParamByName('lcodeno').AsString := s2;}
+  Qdept.Open;
+  QdeptDisp := QdeptDEPTNAME.AsString;
+end;
+
+procedure TForm1.BB_CloseClick(Sender: TObject);
+var
+  BitBtn: Integer;
+begin
+  BitBtn := Application.MessageBox('종료 하시겠습니까?', 'Message Box',
+    mb_OKCancel + mb_DefButton1);
+ if Bitbtn = IDOK then
+   close;
+ if BitBtn = IDCANCEL then
+
+end;
+
+procedure TForm1.DataClear;
+begin
+     enroll.text          := '';
+     korname.text         := '';
+     deptcode.text        := '';
+     empno.text           := '';
+     deptname.caption   := '';
+     atinwon.caption      := '    0';
+     apinwon.caption      := '    0';
+     asinwon.caption      := '    0';
+     arinwon.caption      := '    0';
+     btinwon.caption      := '    0';
+     bpinwon.caption      := '    0';
+     bsinwon.caption      := '    0';
+     brinwon.caption      := '    0';
+     ainwon.caption       := '    0';
+     binwon.caption       := '    0';
+     hodept1.caption      := '';
+     hodept2.caption      := '';
+     hodept3.caption      := '';
+     hodeptname1.caption  := '';
+     hodeptname2.caption  := '';
+     hodeptname3.caption  := '';
+     bumuncode.caption    := '';
+     bumunname.caption    := '';
+     linecode.caption     := '';
+     linename.caption     := '';
+     areacode.caption     := '';
+     areaname.caption     := '';
+     sex.caption          := '';
+     sexname.caption      := '';
+     schcode.caption      := '';
+     schcodename.caption  := '';
+     coschool.caption     := '';
+     coschoolname.caption := '';
+     comajor.caption      := '';
+     comajorname.caption  := '';
+     unschool.caption     := '';
+     unschoolname.caption := '';
+     unmajor.caption      := '';
+     unmajorname.caption  := '';
+     w1school.caption     := '';
+     w1schoolname.caption := '';
+     w1major.caption      := '';
+     w1majorname.caption  := '';
+     paycl.caption        := '';
+     paygr.caption        := '';
+     jobline.caption      := '';
+     payclname.caption    := '';
+     joblinename.caption  := '';
+     pappoint.caption     := '';
+     filpoint.caption     := '';
+     myunpoint.caption    := '';
+end;
+
+procedure TForm1.BB_RunClick(Sender: TObject);
+var
+  BitBtn: Integer;
+begin
+  BitBtn := Application.MessageBox('실행하시겠습니까?', 'Message Box',
+    mb_OKCancel + mb_DefButton1);
+ if Bitbtn = IDOK then
+
+ if BitBtn = IDCANCEL then
+
+end;
+
+procedure TForm1.BB_DeleteClick(Sender: TObject);
+var
+  BitBtn: Integer;
+begin
+  BitBtn := Application.MessageBox('삭제하시겠습니까?', 'Message Box',
+    mb_OKCancel + mb_DefButton1);
+ if Bitbtn = IDOK then
+    begin
+          with QPcmpass do
+             begin
+                Close;
+                SQL.CLEAR;
+                SQL.ADD('DELETE FROM DPER."PCMPASS" ');
+                SQL.ADD('WHERE ("ENROLLNO" = :enrollno) ');
+                ParamByName('enrollno').AsString := enroll.text;
+
+                EXECSQL;
+            end;
+            DataClear;
+    end
+    else
+         enroll.setfocus;
+end;
+
+procedure TForm1.BB_CancelClick(Sender: TObject);
+var
+  BitBtn: Integer;
+begin
+  BitBtn := Application.MessageBox('취소하시겠습니까?', 'Message Box',
+    mb_OKCancel + mb_DefButton1);
+ if Bitbtn = IDOK then
+    DataClear;
+    enroll.SetFocus;
+ if BitBtn = IDCANCEL then
+
+end;
+
+procedure TForm1.FormActivate(Sender: TObject);
+var
+   Inifile : TIniFile;
+   CurDate : String;
+   empno,korname : String;
+begin
+   Try
+      Database1.Connected := True;
+   EXCEPT ON E : EDataBaseError Do
+      MessageBox(handle,StrPcopy(ErrorHelp,E.Message+'DB 접속 실패'),'에 러',MB_OK or $0010);
+   END;
+   inifile := TiniFile.Create('C:\insa\insa.ini');
+   empno   := iniFile.ReadString('Connect','사원번호','');
+   korname := iniFile.ReadString('Connect','사원성명','');
+   iniFile.Destroy;
+
+   CurDate := TimeDate;
+   L_UserName.Caption := korname+'('+empno+')';
+   L_CurDate.Caption  := copy(CurDate,1,4)+'/'+copy(CurDate,5,2)+'/'+copy(CurDate,7,2);
+end;
+
+procedure TForm1.FormShow(Sender: TObject);
+begin
+     DataClear;
+     Empgubun := '1';
+end;
+
+{수험번호를 부른 후 수험번호에 따른 해당 데이타를 불러온다...................}
+procedure TForm1.enrollDblClick(Sender: TObject);
+var
+  EForm : TEnrollForm;
+  ROK   : integer;
+begin
+  EForm := TenrollForm.Create(self);
+  Try
+  EForm.Left       := Left+enroll.Left;
+  EForm.Top        := Top+enroll.Top+115;
+
+  EForm.ShowModal;
+  ROK := EForm.ModalResult;
+  if ROK = mrOk then
+  begin
+    enroll.Text  := EForm.QEnrollENROLLNO.AsString;
+    korname.Text := EForm.QEnrollKORNAME.AsString;
+  end;
+  Finally
+  EForm.Free;
+  end;
+  if Enrollno.EnrollClick = 0 then
+  begin
+  begin
+    with QPcmpass do
+           begin
+               Close;
+               SQL.CLear;
+               SQL.ADD('SELECT PCMPASS.* ');
+               SQL.ADD('FROM "DPER"."PCMPASS" PCMPASS');
+               SQL.ADD('WHERE ( PCMPASS."ENROLLNO" =:enrollno)');
+               ParamByName('enrollno').AsString := enroll.text;
+               Open;
+               deptcode.text   := QpcmpassDEPTCODE.AsString;
+               empno.text      := QpcmpassEMPNO.AsString;
+               hodept1.caption := QpcmpassHODEPTCODE1.AsString;
+               hodept2.caption := QpcmpassHODEPTCODE2.AsString;
+               hodept3.caption := QpcmpassHODEPTCODE3.AsString;
+
+           end;
+  end;
+  begin
+      with QPcmplan do
+           begin
+               Close;
+               SQL.CLear;
+               SQL.ADD('SELECT PCMPLAN.* ');
+               SQL.ADD('FROM "DPER"."PCMPLAN" PCMPLAN');
+               SQL.ADD('WHERE ( PCMPLAN."DEPTCODE" =:deptcode)');
+               ParamByName('deptcode').AsString := deptcode.text;
+               Open;
+               btinwon.caption := IntToStr(QpcmplanTINWON.AsInteger);
+               bpinwon.caption := IntToStr(QpcmplanPINWON.AsInteger);
+               bsinwon.caption := IntToStr(QpcmplanSINWON.AsInteger);
+               brinwon.caption := IntToStr(QpcmplanRINWON.AsInteger);
+               atinwon.caption := '   0';
+               apinwon.caption := '   0';
+               asinwon.caption := '   0';
+               arinwon.caption := '   0';
+           end;
+end;
+begin
+     with QPctuapp do
+           begin
+               Close;
+               SQL.CLear;
+               SQL.ADD('SELECT PCTUAPP.* ');
+               SQL.ADD('FROM "DPER"."PCTUAPP" PCTUAPP');
+               SQL.ADD('WHERE ( PCTUAPP."ENROLLNO" =:enrollno)');
+               ParamByName('enrollno').AsString := enroll.text;
+               Open;
+
+               bumuncode.caption    := QpctuappBUMUNCODE.AsString;
+               linecode.caption     := QpctuappLINECODE.AsString;
+               areacode.caption     := QpctuappAREACODE.AsString;
+               sex.caption          := QpctuappSEX.AsString;
+               schcode.caption      := QpctuappSCHCODE.AsString;
+               coschool.caption     := QpctuappCOSCHOOL.AsString;
+               comajor.caption      := QpctuappCOMAJOR.AsString;
+               unschool.caption     := QpctuappUNSCHOOL.AsString;
+               unmajor.caption      := QpctuappUNMAJOR.AsString;
+               w1school.caption     := QpctuappW1SCHOOL.AsString;
+               w1major.caption      := QpctuappW1MAJOR.AsString;
+               paycl.caption        := QpctuappPAYCL.AsString;
+               paygr.caption        := QpctuappPAYGR.AsString;
+               jobline.caption      := QpctuappJOBLINE.AsString;
+               pappoint.caption     := IntToStr(QpctuappPAPPOINT.AsInteger);
+               filpoint.caption     := IntToStr(QpctuappFILPOINT.AsInteger);
+               myunpoint.caption    := IntToStr(QpctuappMYUNPOINT.AsInteger);
+
+           end;
+end;
+     Fdeptcode := deptcode.text;
+     with Qdeptcnt do
+           begin
+               Close;
+               SQL.CLear;
+               SQL.ADD('SELECT PCMPASS."DEPTCODE" ');
+               SQL.ADD('FROM "DPER"."PCMPASS" PCMPASS');
+               SQL.ADD('WHERE ( PCMPASS."DEPTCODE" =:ldeptcode)');
+               ParamByName('ldeptcode').AsString := Fdeptcode;
+               Open;
+               binwon.caption := IntToStr(Qdeptcnt.Recordcount);
+           end;
+
+
+     ainwon.caption       := '   0';
+
+     deptname.caption     := QdeptDisp(deptcode.Text);
+     hodeptname1.caption  := QdeptDisp(hodept1.caption);
+     hodeptname2.caption  := QdeptDisp(hodept2.caption);
+     hodeptname3.caption  := QdeptDisp(hodept3.caption);
+     bumunname.caption    := QCodeDisp('C011',bumuncode.caption);
+     linename.caption     := QCodeDisp('C012',linecode.caption);
+     areaname.caption     := QCodeDisp('C013',areacode.caption);
+     sexname.caption      := QCodeDisp('C401',sex.caption);
+     schcodename.caption  := QCodeDisp('C101',schcode.caption);
+     coschoolname.caption := QCodeDisp('C102',coschool.caption);
+     comajorname.caption  := QCodeDisp('C103',comajor.caption);
+     unschoolname.caption := QCodeDisp('C102',unschool.caption);
+     unmajorname.caption  := QCodeDisp('C103',unmajor.caption);
+     w1schoolname.caption := QCodeDisp('C102',w1school.caption);
+     w1majorname.caption  := QCodeDisp('C103',w1major.caption);
+     payclname.caption    := QCodeDisp('I112',paycl.caption);
+     joblinename.caption  := QCodeDisp('I115',jobline.caption);
+end
+else
+begin
+     enroll.Setfocus;
+end;
+end;
+
+procedure TForm1.deptcodeDblClick(Sender: TObject);
+begin
+     deptForm := TDeptForm.Create(self);
+     Try
+     deptForm.DataVal1 := '부서코드';
+     deptForm.DataVal2 := '조직차수';
+     deptForm.ShowModal;
+     TMaskEdit(Sender).Text := deptForm.Code1;
+     TMaskEdit(Sender).Text := deptForm.Code2;
+     TMaskEdit(Sender).Text := deptForm.Code3;
+     TMaskEdit(Sender).Text := deptForm.Code1;
+     deptname.caption       := deptForm.CodeName;
+     Finally
+            deptForm.Free;
+     end;
+     with QPcmplan do
+                      begin
+                           Close;
+                           SQL.CLear;
+                           SQL.ADD('SELECT PCMPLAN.* ');
+                           SQL.ADD('FROM "DPER"."PCMPLAN" PCMPLAN');
+                           SQL.ADD('WHERE ( PCMPLAN."DEPTCODE" =:deptcode)');
+                           ParamByName('deptcode').AsString := deptcode.text;
+                           Open;
+                           atinwon.caption := IntToStr(QpcmplanTINWON.AsInteger);
+                           apinwon.caption := IntToStr(QpcmplanPINWON.AsInteger);
+                           asinwon.caption := IntToStr(QpcmplanSINWON.AsInteger);
+                           arinwon.caption := IntToStr(QpcmplanRINWON.AsInteger);
+                      end;
+      begin
+           with Qdeptcnt do
+                begin
+                     Close;
+                     SQL.CLear;
+                     SQL.ADD('SELECT PCMPASS."DEPTCODE" ');
+                     SQL.ADD('FROM "DPER"."PCMPASS" PCMPASS');
+                     SQL.ADD('WHERE ( PCMPASS."DEPTCODE" =:ldeptcode)');
+                     ParamByName('ldeptcode').AsString := deptcode.text;
+                     Open;
+                     ainwon.caption := IntToStr(Qdeptcnt.Recordcount+1);
+                     Qdeptcnt.Close;
+                end;
+
+      begin
+      with Qdeptcnt do
+                     begin
+                          Close;
+                          SQL.CLear;
+                          SQL.ADD('SELECT PCMPASS."DEPTCODE" ');
+                          SQL.ADD('FROM "DPER"."PCMPASS" PCMPASS');
+                          SQL.ADD('WHERE ( PCMPASS."DEPTCODE" =:ldeptcode)');
+                          ParamByName('ldeptcode').AsString := Fdeptcode;
+                          Open;
+                          binwon.caption := IntToStr(Qdeptcnt.Recordcount-1);
+                     Qdeptcnt.Close;
+                     end;
+     end
+end;
+end;
+
+{데이타 필드에서의 키제어..............................................}
+procedure TForm1.DataKeyMove(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+var
+  i : integer;
+  K, K1, K2 : String;
+begin
+if not (ssShift in Shift) then
+begin
+   if (Key = vk_Return) or (Key = vk_Tab) then
+     begin
+      case Tcomponent(Sender).Tag of
+        0 : begin
+            with QPcmpass do
+                 begin
+                      Close;
+                      SQL.CLear;
+                      SQL.ADD('SELECT PCMPASS.* ');
+                      SQL.ADD('FROM "DPER"."PCMPASS" PCMPASS');
+                      SQL.ADD('WHERE ( PCMPASS."ENROLLNO" =:enrollno)');
+                      ParamByName('enrollno').AsString := enroll.text;
+                      Open;
+                      deptcode.text   := QpcmpassDEPTCODE.AsString;
+                      empno.text      := QpcmpassEMPNO.AsString;
+                      hodept1.caption := QpcmpassHODEPTCODE1.AsString;
+                      hodept2.caption := QpcmpassHODEPTCODE2.AsString;
+                      hodept3.caption := QpcmpassHODEPTCODE3.AsString;
+                 end;
+            begin
+                 with QPcmplan do
+                      begin
+                           Close;
+                           SQL.CLear;
+                           SQL.ADD('SELECT PCMPLAN.* ');
+                           SQL.ADD('FROM "DPER"."PCMPLAN" PCMPLAN');
+                           SQL.ADD('WHERE ( PCMPLAN."DEPTCODE" =:deptcode)');
+                           ParamByName('deptcode').AsString := deptcode.text;
+                           Open;
+                           btinwon.caption := IntToStr(QpcmplanTINWON.AsInteger);
+                           bpinwon.caption := IntToStr(QpcmplanPINWON.AsInteger);
+                           bsinwon.caption := IntToStr(QpcmplanSINWON.AsInteger);
+                           brinwon.caption := IntToStr(QpcmplanRINWON.AsInteger);
+                           atinwon.caption := '   0';
+                           apinwon.caption := '   0';
+                           asinwon.caption := '   0';
+                           arinwon.caption := '   0';
+                      end;
+            end;
+                with QPctuapp do
+                     begin
+                     Close;
+                     SQL.CLear;
+                     SQL.ADD('SELECT PCTUAPP.* ');
+                     SQL.ADD('FROM "DPER"."PCTUAPP" PCTUAPP');
+                     SQL.ADD('WHERE ( PCTUAPP."ENROLLNO" =:enrollno)');
+                     ParamByName('enrollno').AsString := enroll.text;
+                     Open;
+
+                     korname.text      := QpcmpassKORNAME.AsString;
+                     bumuncode.caption := QpctuappBUMUNCODE.AsString;
+                     linecode.caption  := QpctuappLINECODE.AsString;
+                     areacode.caption  := QpctuappAREACODE.AsString;
+                     sex.caption       := QpctuappSEX.AsString;
+                     schcode.caption   := QpctuappSCHCODE.AsString;
+                     coschool.caption  := QpctuappCOSCHOOL.AsString;
+                     comajor.caption   := QpctuappCOMAJOR.AsString;
+                     unschool.caption  := QpctuappUNSCHOOL.AsString;
+                     unmajor.caption   := QpctuappUNMAJOR.AsString;
+                     w1school.caption  := QpctuappW1SCHOOL.AsString;
+                     w1major.caption   := QpctuappW1MAJOR.AsString;
+                     paycl.caption     := QpctuappPAYCL.AsString;
+                     paygr.caption     := QpctuappPAYGR.AsString;
+                     jobline.caption   := QpctuappJOBLINE.AsString;
+                     pappoint.caption  := IntToStr(QpctuappPAPPOINT.AsInteger);
+                     filpoint.caption  := IntToStr(QpctuappFILPOINT.AsInteger);
+                     myunpoint.caption := IntToStr(QpctuappMYUNPOINT.AsInteger);
+                end;
+           begin
+                with Qdeptcnt do
+                     begin
+                          Close;
+                          SQL.CLear;
+                          SQL.ADD('SELECT PCMPASS."DEPTCODE" ');
+                          SQL.ADD('FROM "DPER"."PCMPASS" PCMPASS');
+                          SQL.ADD('WHERE ( PCMPASS."DEPTCODE" =:ldeptcode)');
+                          ParamByName('ldeptcode').AsString := deptcode.text;
+                          Open;
+
+                          binwon.caption := IntToStr(Qdeptcnt.Recordcount);
+                     end;
+
+                         ainwon.caption       := '   0';
+
+                         deptname.caption     := QdeptDisp(deptcode.Text);
+                         hodeptname1.caption  := QdeptDisp(hodept1.caption);
+                         hodeptname2.caption  := QdeptDisp(hodept2.caption);
+                         hodeptname3.caption  := QdeptDisp(hodept3.caption);
+                         bumunname.caption    := QCodeDisp('C011',bumuncode.caption);
+                         linename.caption     := QCodeDisp('C012',linecode.caption);
+                         areaname.caption     := QCodeDisp('C013',areacode.caption);
+                         sexname.caption      := QCodeDisp('C401',sex.caption);
+                         schcodename.caption  := QCodeDisp('C101',schcode.caption);
+                         coschoolname.caption := QCodeDisp('C102',coschool.caption);
+                         comajorname.caption  := QCodeDisp('C103',comajor.caption);
+                         unschoolname.caption := QCodeDisp('C102',unschool.caption);
+                         unmajorname.caption  := QCodeDisp('C103',unmajor.caption);
+                         w1schoolname.caption := QCodeDisp('C102',w1school.caption);
+                         w1majorname.caption  := QCodeDisp('C103',w1major.caption);
+                         payclname.caption    := QCodeDisp('I112',paycl.caption);
+                         joblinename.caption  := QCodeDisp('I115',jobline.caption);
+                     end;
+            korname.setfocus;
+            end;
+        1 : begin
+            deptcode.setfocus;
+            end;
+        2 : begin
+            deptname.caption := QdeptDisp(deptcode.Text);
+            empno.setfocus;
+            end;
+   end;
+end
+else
+begin
+   if (Key = vk_Return) or (Key = vk_Tab) then
+      case Tcomponent(Sender).Tag of
+      0 : begin
+            with QPcmpass do
+                 begin
+                      Close;
+                      SQL.CLear;
+                      SQL.ADD('SELECT PCMPASS.* ');
+                      SQL.ADD('FROM "DPER"."PCMPASS" PCMPASS');
+                      SQL.ADD('WHERE ( PCMPASS."ENROLLNO" =:enrollno)');
+                      ParamByName('enrollno').AsString := enroll.text;
+                      Open;
+                      korname.text    := QpcmpassKORNAME.AsString;
+                      deptcode.text   := QpcmpassDEPTCODE.AsString;
+                      empno.text      := QpcmpassEMPNO.AsString;
+                      hodept1.caption := QpcmpassHODEPTCODE1.AsString;
+                      hodept2.caption := QpcmpassHODEPTCODE2.AsString;
+                      hodept3.caption := QpcmpassHODEPTCODE3.AsString;
+                 end;
+            begin
+                 with QPcmplan do
+                      begin
+                           Close;
+                           SQL.CLear;
+                           SQL.ADD('SELECT PCMPLAN.* ');
+                           SQL.ADD('FROM "DPER"."PCMPLAN" PCMPLAN');
+                           SQL.ADD('WHERE ( PCMPLAN."DEPTCODE" =:deptcode)');
+                           ParamByName('deptcode').AsString := deptcode.text;
+                           Open;
+                           btinwon.caption := IntToStr(QpcmplanTINWON.AsInteger);
+                           bpinwon.caption := IntToStr(QpcmplanPINWON.AsInteger);
+                           bsinwon.caption := IntToStr(QpcmplanSINWON.AsInteger);
+                           brinwon.caption := IntToStr(QpcmplanRINWON.AsInteger);
+                           atinwon.caption := '   0';
+                           apinwon.caption := '   0';
+                           asinwon.caption := '   0';
+                           arinwon.caption := '   0';
+                      end;
+            end;
+                with QPctuapp do
+                     begin
+                     Close;
+                     SQL.CLear;
+                     SQL.ADD('SELECT PCTUAPP.* ');
+                     SQL.ADD('FROM "DPER"."PCTUAPP" PCTUAPP');
+                     SQL.ADD('WHERE ( PCTUAPP."ENROLLNO" =:enrollno)');
+                     ParamByName('enrollno').AsString := enroll.text;
+                     Open;
+
+                     bumuncode.caption    := QpctuappBUMUNCODE.AsString;
+                     linecode.caption     := QpctuappLINECODE.AsString;
+                     areacode.caption     := QpctuappAREACODE.AsString;
+                     sex.caption          := QpctuappSEX.AsString;
+                     schcode.caption      := QpctuappSCHCODE.AsString;
+                     coschool.caption     := QpctuappCOSCHOOL.AsString;
+                     comajor.caption      := QpctuappCOMAJOR.AsString;
+                     unschool.caption     := QpctuappUNSCHOOL.AsString;
+                     unmajor.caption      := QpctuappUNMAJOR.AsString;
+                     w1school.caption     := QpctuappW1SCHOOL.AsString;
+                     w1major.caption      := QpctuappW1MAJOR.AsString;
+                     paycl.caption        := QpctuappPAYCL.AsString;
+                     paygr.caption        := QpctuappPAYGR.AsString;
+                     jobline.caption      := QpctuappJOBLINE.AsString;
+                     pappoint.caption     := IntToStr(QpctuappPAPPOINT.AsInteger);
+                     filpoint.caption     := IntToStr(QpctuappFILPOINT.AsInteger);
+                     myunpoint.caption    := IntToStr(QpctuappMYUNPOINT.AsInteger);
+                end;
+           begin
+                with Qdeptcnt do
+                     begin
+                          Close;
+                          SQL.CLear;
+                          SQL.ADD('SELECT PCMPASS."DEPTCODE" ');
+                          SQL.ADD('FROM "DPER"."PCMPASS" PCMPASS');
+                          SQL.ADD('WHERE ( PCMPASS."DEPTCODE" =:ldeptcode)');
+                          ParamByName('ldeptcode').AsString := deptcode.text;
+                          Open;
+
+                          binwon.caption := IntToStr(Qdeptcnt.Recordcount);
+                     end;
+
+                         ainwon.caption       := '   0';
+
+                         deptname.caption     := QdeptDisp(deptcode.Text);
+                         hodeptname1.caption  := QdeptDisp(hodept1.caption);
+                         hodeptname2.caption  := QdeptDisp(hodept2.caption);
+                         hodeptname3.caption  := QdeptDisp(hodept3.caption);
+                         bumunname.caption    := QCodeDisp('C011',bumuncode.caption);
+                         linename.caption     := QCodeDisp('C012',linecode.caption);
+                         areaname.caption     := QCodeDisp('C013',areacode.caption);
+                         sexname.caption      := QCodeDisp('C401',sex.caption);
+                         schcodename.caption  := QCodeDisp('C101',schcode.caption);
+                         coschoolname.caption := QCodeDisp('C102',coschool.caption);
+                         comajorname.caption  := QCodeDisp('C103',comajor.caption);
+                         unschoolname.caption := QCodeDisp('C102',unschool.caption);
+                         unmajorname.caption  := QCodeDisp('C103',unmajor.caption);
+                         w1schoolname.caption := QCodeDisp('C102',w1school.caption);
+                         w1majorname.caption  := QCodeDisp('C103',w1major.caption);
+                         payclname.caption    := QCodeDisp('I112',paycl.caption);
+                         joblinename.caption  := QCodeDisp('I115',jobline.caption);
+                     end;
+            korname.setfocus;
+            end;
+        1 : begin
+            deptcode.setfocus;
+            end;
+        2 : begin
+            deptname.caption := QdeptDisp(deptcode.Text);
+            empno.setfocus;
+            end;
+   end;
+end;
+end;
+end;
+
+{수정 데이타를 저장한다.................................................}
+procedure TForm1.BB_SaveClick(Sender: TObject);
+var
+  BitBtn: Integer;
+begin
+  BitBtn := Application.MessageBox('저장하시겠습니까?', 'Message Box',
+    mb_OKCancel + mb_DefButton1);
+ if Bitbtn = IDOK then
+    begin
+         if empno.text = '' then
+            begin
+                 showmessage('사원번호를 입력하시오..');
+                 empno.setfocus;
+            end
+            else
+            begin
+                 EnrollCheck;
+                 if enrollcnt > 0 then
+                 begin
+                      EmpCheck;
+                      if empCnt > 0 then
+                         begin
+                              showmessage('사원번호 중복입니다..');
+                              empno.setfocus;
+                         end
+                         else
+                         begin
+                              SaveData1;
+                         end;
+                 end
+                 else
+                 begin
+                     EmpCheck;
+                      if empCnt > 0 then
+                         begin
+                              showmessage('사원번호 중복입니다..');
+                              empno.setfocus;
+                         end
+                         else
+                         begin
+                              SaveData2;
+                         end;
+                 end;
+                 end;
+    end;
+ if BitBtn = IDCANCEL then
+
+end;
+
+procedure TForm1.SaveData1;
+begin
+    with QPcmpass do
+         begin
+              Close;
+              SQL.CLEAR;
+              SQL.ADD( 'UPDATE DPER."PCMPASS" SET ');
+              SQL.ADD( 'DEPTCODE =:deptcode,EMPNO =:empno ');
+                     {WIRTETIME =:        ,WRITEEMP =:,}
+              SQL.ADD( 'WHERE (PCMPASS."ENROLLNO" =:enrollno and PCMPASS."KORNAME" =:korname)');
+
+              ParamByName('enrollno').AsString := enroll.text;
+              ParamByName('korname').AsString  := korname.text;
+              ParamByName('deptcode').AsString := deptcode.Text;
+              ParamByName('empno').AsString    := empno.Text;
+
+              EXECSQL;
+         end;
+         DataClear;
+end;
+
+procedure TForm1.SaveData2;
+begin
+     with QPcmpass do
+          begin
+               Close;
+               SQL.CLEAR;
+               SQL.ADD( 'INSERT INTO DPER."PCMPASS" ');
+               SQL.ADD( '("ENROLLNO","KORNAME","DEPTCODE","EMPNO")');
+                        {WIRTETIME =:        ,WRITEEMP =:,}
+               SQL.ADD( 'VALUES(:enrollno,:korname,:deptcode,:empno)');
+                        {WIRTETIME =:        ,WRITEEMP =:,}
+               ParamByName('enrollno').AsString := enroll.text;
+               ParamByName('korname').AsString  := korname.text;
+               ParamByName('deptcode').AsString := deptcode.Text;
+               ParamByName('empno').AsString    := empno.Text;
+               ExecSQL;
+               Close;
+      end;
+      QPctuapp.Close;
+      DataClear;
+end;
+
+procedure TForm1.EnrollCheck;
+begin
+     with Qenrollchk do
+          begin
+               Close;
+                     SQL.CLear;
+                     SQL.ADD('SELECT PCMPASS."ENROLLNO",PCMPASS."EMPNO" ');
+                     SQL.ADD('FROM "DPER"."PCMPASS" PCMPASS');
+                     SQL.ADD('WHERE ( PCMPASS."ENROLLNO" =:enrollno)');
+                     ParamByName('enrollno').AsString := enroll.text;
+                     Open;
+                     enrollcnt := Qenrollchk.RecordCount;
+      end;
+      Qenrollchk.Close;
+end;
+
+procedure TForm1.EmpCheck;
+begin
+     with Qenrollchk do
+          begin
+               Close;
+                     SQL.CLear;
+                     SQL.ADD('SELECT PCMPASS."ENROLLNO",PCMPASS."EMPNO" ');
+                     SQL.ADD('FROM "DPER"."PCMPASS" PCMPASS');
+                     SQL.ADD('WHERE (PCMPASS."ENROLLNO" <>:enrollno and PCMPASS."EMPNO" =:empno)');
+                     ParamByName('enrollno').AsString := enroll.text;
+                     ParamByName('empno').AsString    := empno.text;
+                     Open;
+                     empcnt := Qenrollchk.RecordCount;
+      end;
+      Qenrollchk.Close;
+end;
+
+procedure TForm1.empgubun1Click(Sender: TObject);
+begin
+     Empgubun := '1';
+end;
+
+procedure TForm1.empgubun2Click(Sender: TObject);
+begin
+     Empgubun := '2';
+end;
+
+procedure TForm1.empgubun3Click(Sender: TObject);
+begin
+     Empgubun := '3';
+end;
+
+end.

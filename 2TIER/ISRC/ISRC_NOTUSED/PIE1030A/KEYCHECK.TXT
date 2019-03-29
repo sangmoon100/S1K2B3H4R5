@@ -1,0 +1,827 @@
+unit Pcz1010a;
+
+interface
+
+uses
+  SysUtils, WinTypes, WinProcs, Messages, Classes, Graphics, Controls,
+  Forms, Dialogs, StdCtrls, ExtCtrls, Buttons, DB, DBTables, Mask;
+
+type
+  Tpcz1010aForm = class(TForm)
+    Panel1: TPanel;
+    progName: TLabel;
+    userid: TLabel;
+    dateLabel: TLabel;
+    Panel2: TPanel;
+    Label1: TLabel;
+    Label2: TLabel;
+    datapanel: TPanel;
+    Label3: TLabel;
+    Label4: TLabel;
+    Label5: TLabel;
+    Panel4: TPanel;
+    Label6: TLabel;
+    Label7: TLabel;
+    Label8: TLabel;
+    Label9: TLabel;
+    Label10: TLabel;
+    Label11: TLabel;
+    Label12: TLabel;
+    mark1: TEdit;
+    mark2: TEdit;
+    mark3: TEdit;
+    mark4: TEdit;
+    mark5: TEdit;
+    mark6: TEdit;
+    mark7: TEdit;
+    value1: TEdit;
+    value2: TEdit;
+    value3: TEdit;
+    value4: TEdit;
+    value5: TEdit;
+    value6: TEdit;
+    value7: TEdit;
+    gubun: TEdit;
+    sgubun: TEdit;
+    helpDsr: TLabel;
+    helpLabel: TLabel;
+    leng1: TMaskEdit;
+    leng2: TMaskEdit;
+    leng3: TMaskEdit;
+    leng4: TMaskEdit;
+    leng5: TMaskEdit;
+    leng6: TMaskEdit;
+    leng7: TMaskEdit;
+    Label13: TLabel;
+    Panel5: TPanel;
+    save: TBitBtn;
+    del: TBitBtn;
+    cancel: TBitBtn;
+    exit: TBitBtn;
+    serch: TBitBtn;
+    FindQuery: TQuery;
+    FindQueryGUBUN: TStringField;
+    FindQuerySGUBUN: TStringField;
+    FindQueryMARK1: TStringField;
+    FindQueryLENG1: TFloatField;
+    FindQueryVALUE1: TStringField;
+    FindQueryMARK2: TStringField;
+    FindQueryLENG2: TFloatField;
+    FindQueryVALUE2: TStringField;
+    FindQueryMARK3: TStringField;
+    FindQueryLENG3: TFloatField;
+    FindQueryVALUE3: TStringField;
+    FindQueryMARK4: TStringField;
+    FindQueryLENG4: TFloatField;
+    FindQueryVALUE4: TStringField;
+    FindQueryMARK5: TStringField;
+    FindQueryLENG5: TFloatField;
+    FindQueryVALUE5: TStringField;
+    FindQueryMARK6: TStringField;
+    FindQueryLENG6: TFloatField;
+    FindQueryVALUE6: TStringField;
+    FindQueryMARK7: TStringField;
+    FindQueryLENG7: TFloatField;
+    FindQueryVALUE7: TStringField;
+    FindQueryWRITETIME: TStringField;
+    FindQueryWRITEEMP: TStringField;
+    Database1: TDatabase;
+    procedure exitClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure serchClick(Sender: TObject);
+    procedure saveClick(Sender: TObject);
+    procedure FormActivate(Sender: TObject);
+    procedure cancelClick(Sender: TObject);
+    procedure delClick(Sender: TObject);
+    procedure Mark1KeyDown(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure leng1KeyDown(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure value1KeyDown(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure mark1KeyUp(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure leng1KeyUp(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure value1KeyUp(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure gubunKeyUp(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure sgubunKeyUp(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure sgubunKeyPress(Sender: TObject; var Key: Char);
+    procedure gubunClick(Sender: TObject);
+    procedure FormKeyPress(Sender: TObject; var Key: Char);
+    procedure mark1Change(Sender: TObject);
+    procedure DataFieldClick(Sender: TObject);
+  private
+    exesave     : integer;  {저장,실행 버튼 판단유무}
+    DataCheck   : integer;
+    SQLCommand1 : string;
+    SQLCommand2 : string;
+    SQLCommand3 : string;
+    SQLCommand4 : string;
+    SQLCommand5 : string;
+    SQLCommand6 : string;
+    SQLCommand7 : string;
+    KeyCheck : integer;     {Enter 키 체크 유무}
+    procedure DispData;
+    procedure ClearDisp;
+    { Private declarations }
+  public
+    DataChange  : integer;  {데이타 필드가 변했는 지 확인하는 변수}
+    procedure SerchData;
+    { Public declarations }
+  end;
+
+var
+  Hwnd : word;
+  pcz1010aForm: Tpcz1010aForm;
+
+implementation
+uses pcz1011a; {,exitDial;}   {인력충원변수 조회 화일}
+
+{$R *.DFM}
+{$I+}
+procedure Tpcz1010aForm.ClearDisp;
+begin
+   {gubun.Text := '';    sgubun.Text := '';}
+    mark1.Text := '';    mark2.Text := '';    mark3.Text := '';
+    mark4.Text := '';    mark5.Text := '';    mark6.Text := '';
+    mark7.Text := '';
+    leng1.Text := '';    leng2.Text := '';    leng3.Text := '';
+    leng4.Text := '';    leng5.Text := '';    leng6.Text := '';
+    leng7.Text := '';
+    value1.Text:= '';    value2.Text:= '';    value3.Text:= '';
+    value4.Text:= '';    value5.Text:= '';    value6.Text:= '';
+    value7.Text:= '';
+
+    save.Caption := '실행';
+    exesave := 0;
+    del.Enabled := False;
+    cancel.Enabled := False;
+    gubun.SetFocus;
+end;
+
+
+procedure Tpcz1010aForm.SerchData;
+var
+  temp1,temp2 : string;
+begin
+Try
+  FindQuery.Close;
+  FindQuery.SQL.Clear;
+  FindQuery.SQL.Add(SQLCommand1);
+  FindQuery.SQL.Add(SQLCommand2);
+  FindQuery.SQL.Add(SQLCommand3);
+  FindQuery.ParamByName('Lgubun').AsString  := gubun.Text;
+  FindQuery.ParamByName('Lsgubun').AsString := sgubun.Text;
+  Findquery.Open;
+Except On EDataBaseError do
+   MessageBox(handle,'서버연결 실패.','에  러',MB_OK or $0040);
+else
+   MessageBox(handle,'서버연결 실패.','에  러',MB_OK or $0040);
+END;
+
+  IF FindQuery.RecordCount > 0 then
+  begin
+     del.Enabled := True;
+     DispData;
+  end
+  else
+  begin
+     del.Enabled := False;
+     temp1 := gubun.text;
+     temp2 := sgubun.text;
+     ClearDisp;
+     gubun.text  := temp1;
+     sgubun.text := temp2;
+  end;
+
+  save.Caption := '저장';
+  exesave := 1;
+  cancel.Enabled := True;
+  Value7.SetFocus;
+
+end;
+
+
+procedure Tpcz1010aForm.DispData;
+begin
+    gubun.Text := FindQuery.FieldByName('gubun').AsString;
+    sgubun.Text := FindQuery.FieldByName('sgubun').AsString;
+    mark1.Text := FindQuery.FieldByName('mark1').AsString;
+    mark2.Text := FindQuery.FieldByName('mark2').AsString;
+    mark3.Text := FindQuery.FieldByName('mark3').AsString;
+    mark4.Text := FindQuery.FieldByName('mark4').AsString;
+    mark5.Text := FindQuery.FieldByName('mark5').AsString;
+    mark6.Text := FindQuery.FieldByName('mark6').AsString;
+    mark7.Text := FindQuery.FieldByName('mark7').AsString;
+    leng1.Text := Format('%2d',[FindQuery.FieldByName('leng1').AsInteger]);
+    leng2.Text := Format('%2d',[FindQuery.FieldByName('leng2').AsInteger]);
+    leng3.Text := Format('%2d',[FindQuery.FieldByName('leng3').AsInteger]);
+    leng4.Text := Format('%2d',[FindQuery.FieldByName('leng4').AsInteger]);
+    leng5.Text := Format('%2d',[FindQuery.FieldByName('leng5').AsInteger]);
+    leng6.Text := Format('%2d',[FindQuery.FieldByName('leng6').AsInteger]);
+    leng7.Text := Format('%2d',[FindQuery.FieldByName('leng7').AsInteger]);
+    value1.Text:= FindQuery.FieldByName('value1').AsString;
+    value2.Text:= FindQuery.FieldByName('value2').AsString;
+    value3.Text:= FindQuery.FieldByName('value3').AsString;
+    value4.Text:= FindQuery.FieldByName('value4').AsString;
+    value5.Text:= FindQuery.FieldByName('value5').AsString;
+    value6.Text:= FindQuery.FieldByName('value6').AsString;
+    value7.Text:= FindQuery.FieldByName('value7').AsString;
+end;
+
+
+procedure Tpcz1010aForm.FormCreate(Sender: TObject);
+var
+  Present : TDateTime;
+begin
+  Present := Now;
+  dateLabel.Caption := formatDateTime('yyyy/mm/dd',present);
+  helpDsr.Caption := '';
+end;
+
+procedure Tpcz1010aForm.FormActivate(Sender: TObject);
+begin
+  Try
+    Database1.Connected := True;
+  EXCEPT
+  ON EDataBaseError DO
+     MessageBox(handle,'서버와 연결실패.(서버장비 확인요망!.)','에  러',MB_OK or $0040);
+  ELSE
+     MessageBox(handle,'서버와 연결실패.(서버장비 확인요망!.)','에  러',MB_OK or $0040);
+  END;  {TRY end}
+
+
+  Hwnd := FindWindow('TdanForm','인력충원공통');
+  ShowWindow(Hwnd,sw_Hide);
+
+  SQLCommand1 := 'SELECT * FROM "DPER"."PCMVARI" PCMVARI ';
+  SQLCommand2 := 'WHERE ( ( PCMVARI."GUBUN" = :Lgubun ) AND ';
+  SQLCommand3 := '( PCMVARI."SGUBUN" = :Lsgubun ) )';
+
+  SQLCommand4 := 'DELETE FROM "DPER"."PCMVARI" PCMVARI';
+  SQLCommand5 := 'WHERE ( ( PCMVARI."GUBUN" = :Lgubun ) AND ';
+  SQLCommand6 := '( PCMVARI."SGUBUN" = :Lsgubun ) )';
+
+  save.Caption := '실행';
+  exesave := 0;
+  KeyCheck := 0;   {Enter키 체크}
+
+  del.Enabled := False;
+  cancel.Enabled := False;
+  gubun.SetFocus;
+end;
+
+procedure Tpcz1010aForm.exitClick(Sender: TObject);
+begin
+
+KeyCheck := 1;
+
+if exesave = 1 then
+begin
+
+if DataChange = 1 then
+begin
+if MessageBox(handle,'종료하시겠습니까 ?..','확  인',MB_YESNO) = ID_YES then
+  begin
+     exesave := 1;
+     DataChange := 0;
+     SaveClick(Exit);
+  end
+  else Mark1.SetFocus;
+end {DataChage Check if}
+else
+begin
+if MessageBox(handle,'종료하시겠습니까 ?..','확  인',MB_YESNO) = ID_YES then
+  begin
+     ClearDisp;
+  end
+  else Mark1.SetFocus;
+
+end; {DataChage Check else}
+end else
+    begin
+      ShowWindow(Hwnd,sw_ShowNormal);
+      Close; {exesave Check if}
+    end;
+
+end;
+
+
+procedure Tpcz1010aForm.serchClick(Sender: TObject);
+var
+   Ttop : integer;
+   NewForm : ^Tpcz1011aForm;
+begin
+   Ttop  := Top;
+   Top   := 45;
+
+   if DataCheck = 0 then
+      Gubun.SetFocus
+   else Mark1.SetFocus;
+
+   if MemAvail < Sizeof(Tpcz1011aForm) then
+      MessageBox(handle,'메모리가 모자랍니다..','에 러',MB_OK or $0040)
+   else
+   begin
+      GetMem(NewForm,Sizeof(Tpcz1011aForm));
+      NewForm^ := Tpcz1011aForm.Create(self);
+      try
+        NewForm^.ShowModal;
+      finally
+        NewForm^.Free;
+        FreeMem(NewForm,Sizeof(Tpcz1011aForm));
+      end;
+   end;  {if MemAvail }
+
+   {SerchData;}
+   DataCheck := 1;
+
+   Top  := Ttop;
+
+end;
+
+
+{저장 버튼을 눌렀을 경우}
+procedure Tpcz1010aForm.saveClick(Sender: TObject);
+var
+  FindOk  : integer;   {데이타 find 유.무}
+  ActiveHWnd : THandle;
+
+  procedure SaveData;
+  begin
+    with FindQuery do
+    begin
+      ParamByname('Kgubun').AsString  := gubun.Text;
+      ParamByname('Ksgubun').AsString := sgubun.Text;
+      ParamByname('Kgubun').AsString  := gubun.Text;
+      ParamByname('Ksgubun').AsString := sgubun.Text;
+      ParamByname('lmark1').AsString  := mark1.Text;
+      ParamByname('lmark2').AsString  := mark2.Text;
+      ParamByname('lmark3').AsString  := mark3.Text;
+      ParamByname('lmark4').AsString  := mark4.Text;
+      ParamByname('lmark5').AsString  := mark5.Text;
+      ParamByname('lmark6').AsString  := mark6.Text;
+      ParamByname('lmark7').AsString  := mark7.Text;
+      if leng1.Text = '' then  ParamByname('lleng1').AsFloat   := 0
+      else ParamByname('lleng1').AsFloat   := strToFloat(leng1.Text);
+      if leng2.Text = '' then  ParamByname('lleng2').AsFloat   := 0
+      else ParamByname('lleng2').AsFloat   := strToFloat(leng2.Text);
+      if leng3.Text = '' then  ParamByname('lleng3').AsFloat   := 0
+      else ParamByname('lleng3').AsFloat   := strToFloat(leng3.Text);
+      if leng4.Text = '' then  ParamByname('lleng4').AsFloat   := 0
+      else ParamByname('lleng4').AsFloat   := strToFloat(leng4.Text);
+      if leng5.Text = '' then  ParamByname('lleng5').AsFloat   := 0
+      else ParamByname('lleng5').AsFloat   := strToFloat(leng5.Text);
+      if leng6.Text = '' then  ParamByname('lleng6').AsFloat   := 0
+      else ParamByname('lleng6').AsFloat   := strToFloat(leng6.Text);
+      if leng7.Text = '' then  ParamByname('lleng7').AsFloat   := 0
+      else ParamByname('lleng7').AsFloat   := strToFloat(leng7.Text);
+
+      ParamByname('lvalue1').AsString := value1.Text;
+      ParamByname('lvalue2').AsString := value2.Text;
+      ParamByname('lvalue3').AsString := value3.Text;
+      ParamByname('lvalue4').AsString := value4.Text;
+      ParamByname('lvalue5').AsString := value5.Text;
+      ParamByname('lvalue6').AsString := value6.Text;
+      ParamByname('lvalue7').AsString := value7.Text;
+      ParamByname('lwritetime').AsString := '..';
+      ParamByname('lwriteemp').AsString  := '..';
+   end;
+  end;
+
+begin
+
+IF exesave = 1 then
+BEGIN
+  IF MessageBox(handle,'변경된 데이타를 저장하시겠습니까 ?..','확  인',MB_YESNO or $0020) = ID_NO then
+  BEGIN
+    KeyCheck := 1;
+    ClearDisp;
+    System.Exit;
+  END;
+
+  IF (gubun.text <> '') and (sgubun.text <> '') then
+  BEGIN
+  try
+     FindQuery.Close;
+     FindQuery.SQL.Clear;
+     FindQuery.SQL.Add(SQLCommand1);
+     FindQuery.SQL.Add(SQLCommand2);
+     FindQuery.SQL.Add(SQLCommand3);
+     FindQuery.ParamByName('Lgubun').AsString  := gubun.Text;
+     FindQuery.ParamByName('Lsgubun').AsString := sgubun.Text;
+     Findquery.Open;
+     FindOk := FindQuery.RecordCount;
+
+     IF FindOk > 0 then {0 >:수정, 0 :등록}
+     {......데이타 수정..........................................}
+     BEGIN
+       FindQuery.Close;
+       FindQuery.SQL.Clear;
+       FindQuery.SQL.Add('update DPER."PCMVARI" ');
+       FindQuery.SQL.Add('set MARK1 = :lmark1,MARK2 = :lmark2,MARK3 = :lmark3,');
+       FindQuery.SQL.Add('MARK4 = :lmark4,MARK5 = :lmark5,MARK6 = :lmark6,MARK7 = :lmark7,');
+       FindQuery.SQL.Add('LENG1 = :lleng1,LENG2 = :lleng2,LENG3 = :lleng3,LENG4 = :lleng4,');
+       FindQuery.SQL.Add('LENG5 = :lleng5,LENG6 = :lleng6,LENG7 = :lleng7,VALUE1 = :lvalue1,');
+       FindQuery.SQL.Add('VALUE2 = :lvalue2,VALUE3 = :lvalue3,VALUE4 = :lvalue4,VALUE5 = :lvalue5,');
+       FindQuery.SQL.Add('VALUE6 = :lvalue6,VALUE7 = :lvalue7,');
+       FindQuery.SQL.Add('WRITETIME = :lwritetime,WRITEEMP = :lwriteemp ');
+       FindQuery.SQL.Add('where "GUBUN" = :Kgubun and "SGUBUN" = :Ksgubun');
+       saveData;
+       FindQuery.EXECSQL;
+
+       DataChange := 0;
+     END {if FindOk = True}
+     ELSE
+     BEGIN
+      FindQuery.Close;
+      FindQuery.SQL.Clear;
+      FindQuery.SQL.Add('insert into DPER."PCMVARI" ("GUBUN","SGUBUN",');
+      FindQuery.SQL.Add('"MARK1","MARK2","MARK3","MARK4","MARK5","MARK6","MARK7",');
+      FindQuery.SQL.Add('"LENG1","LENG2","LENG3","LENG4","LENG5","LENG6","LENG7",');
+      FindQuery.SQL.Add('"VALUE1","VALUE2","VALUE3","VALUE4","VALUE5","VALUE6","VALUE7",');
+      FindQuery.SQL.Add('"WRITETIME","WRITEEMP") ');
+      FindQuery.Sql.Add('values(:Kgubun,:Ksgubun,');
+      FindQuery.SQL.Add(':lmark1,:lmark2,:lmark3,:lmark4,:lmark5,:lmark6,:lmark7,');
+      FindQuery.SQL.Add(':lleng1,:lleng2,:lleng3,:lleng4,:lleng5,:lleng6,:lleng7,');
+      FindQuery.SQL.Add(':lvalue1,:lvalue2,:lvalue3,:lvalue4,:lvalue5,:lvalue6,:lvalue7,');
+      FindQuery.SQL.Add(':lwritetime,:lwriteemp)');
+      saveData;
+      FindQuery.EXECSQL;
+
+      DataChange := 0;
+     END;
+
+  except
+  on EDataBaseError do
+     MessageBox(handle,'서버연결 실패.','에  러',MB_OK or $0040);
+  else
+     MessageBox(handle,'서버연결 실패.','에  러',MB_OK or $0040);
+  end;
+
+  END;  {if space checking}
+
+  KeyCheck := 1;
+  ClearDisp;
+
+END {if exesave}
+
+ELSE
+BEGIN
+  IF (gubun.text = '') or (sgubun.text = '') then
+      gubun.SetFocus
+  ELSE
+  BEGIN
+      SerchData;
+      DataChange := 0;
+      Mark1.SetFocus;
+  END;
+END;
+
+end;
+
+
+procedure Tpcz1010aForm.cancelClick(Sender: TObject);
+begin
+   SerchData;
+   DataChange := 0;
+   Mark1.SetFocus;
+end;
+
+procedure Tpcz1010aForm.delClick(Sender: TObject);
+begin
+
+IF MessageBox(handle,'삭제하시겠습니까 ?..','확  인',MB_YESNO or $0020) = ID_NO then
+BEGIN
+   KeyCheck := 1;
+   Mark1.SetFocus;
+   System.Exit;
+END;
+
+try
+   FindQuery.Close;
+   FindQuery.SQL.Clear;
+   FindQuery.SQL.Add(SQLCommand4);
+   FindQuery.SQL.Add(SQLCommand5);
+   FindQuery.SQL.Add(SQLCommand6);
+   FindQuery.ParamByName('Lgubun').AsString  := gubun.Text;
+   FindQuery.ParamByName('Lsgubun').AsString := sgubun.Text;
+   Findquery.EXECSQL;
+
+except
+on EDataBaseError do
+   MessageBox(handle,'서버연결 실패.','에  러',MB_OK or $0040);
+else
+   MessageBox(handle,'서버연결 실패.','에  러',MB_OK or $0040);
+end;
+KeyCheck := 1;
+ClearDisp;
+
+end;
+
+{.....................................................................}
+{............키정의 부분..............................................}
+{.....................................................................}
+
+procedure Tpcz1010aForm.FormKeyPress(Sender: TObject; var Key: Char);
+begin
+   if key = chr(vk_return) then
+      key := chr(0);
+
+   KeyCheck := 0;
+end;
+
+procedure Tpcz1010aForm.Mark1KeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+{설명부에서의 상하 이동}
+begin
+
+if key = vk_Down then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : Mark2.SetFocus;
+  2 : Mark3.SetFocus;
+  3 : Mark4.SetFocus;
+  4 : Mark5.SetFocus;
+  5 : Mark6.SetFocus;
+  6 : Mark7.SetFocus;
+  7 : Mark1.SetFocus;
+end;
+
+if key = vk_Up then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : Mark7.SetFocus;
+  2 : Mark1.SetFocus;
+  3 : Mark2.SetFocus;
+  4 : Mark3.SetFocus;
+  5 : Mark4.SetFocus;
+  6 : Mark5.SetFocus;
+  7 : Mark6.SetFocus;
+end;
+
+
+end;
+
+procedure Tpcz1010aForm.leng1KeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if key = vk_Down then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : leng2.SetFocus;
+  2 : Leng3.SetFocus;
+  3 : Leng4.SetFocus;
+  4 : Leng5.SetFocus;
+  5 : Leng6.SetFocus;
+  6 : Leng7.SetFocus;
+  7 : Leng1.SetFocus;
+end;
+if key = vk_Up then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : Leng7.SetFocus;
+  2 : Leng1.SetFocus;
+  3 : Leng2.SetFocus;
+  4 : Leng3.SetFocus;
+  5 : Leng4.SetFocus;
+  6 : Leng5.SetFocus;
+  7 : Leng6.SetFocus;
+end;
+
+end;
+
+procedure Tpcz1010aForm.value1KeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+case key of
+vk_down :
+  case strToint(copy(TEdit(Sender).Name,6,1)) of
+    1 : Value2.SetFocus;
+    2 : Value3.SetFocus;
+    3 : Value4.SetFocus;
+    4 : Value5.SetFocus;
+    5 : Value6.SetFocus;
+    6 : Value7.SetFocus;
+    7 : Value1.SetFocus;
+  end;
+
+vk_Up :
+  case strToint(copy(TEdit(Sender).Name,6,1)) of
+    1 : Value7.SetFocus;
+    2 : Value1.SetFocus;
+    3 : Value2.SetFocus;
+    4 : Value3.SetFocus;
+    5 : Value4.SetFocus;
+    6 : Value5.SetFocus;
+    7 : Value6.SetFocus;
+  end;
+end;
+
+end;
+
+procedure Tpcz1010aForm.mark1KeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if not (ssShift in Shift) then
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : begin
+      if KeyCheck = 0 then
+         Leng1.SetFocus;
+      KeyCheck := 0;
+      end;
+  2 : Leng2.SetFocus;
+  3 : Leng3.SetFocus;
+  4 : Leng4.SetFocus;
+  5 : Leng5.SetFocus;
+  6 : Leng6.SetFocus;
+  7 : Leng7.SetFocus;
+end;
+end
+
+else   {if shift}
+
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : Value7.SetFocus;
+  2 : Value1.SetFocus;
+  3 : Value2.SetFocus;
+  4 : Value3.SetFocus;
+  5 : Value4.SetFocus;
+  6 : Value5.SetFocus;
+  7 : Value6.SetFocus;
+end;
+
+end;
+
+end;
+
+procedure Tpcz1010aForm.leng1KeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if not (ssShift in Shift) then
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+    1 : Value1.SetFocus;
+    2 : Value2.SetFocus;
+    3 : Value3.SetFocus;
+    4 : Value4.SetFocus;
+    5 : Value5.SetFocus;
+    6 : Value6.SetFocus;
+    7 : Value7.SetFocus;
+end;
+end
+
+else {if shift}
+
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,5,1)) of
+  1 : Mark1.SetFocus;
+  2 : Mark2.SetFocus;
+  3 : Mark3.SetFocus;
+  4 : Mark4.SetFocus;
+  5 : Mark5.SetFocus;
+  6 : Mark6.SetFocus;
+  7 : Mark7.SetFocus;
+end;
+
+end;
+
+end;
+
+procedure Tpcz1010aForm.value1KeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if not (ssShift in Shift) then
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,6,1)) of
+  1 : Mark2.SetFocus;
+  2 : Mark3.SetFocus;
+  3 : Mark4.SetFocus;
+  4 : Mark5.SetFocus;
+  5 : Mark6.SetFocus;
+  6 : Mark7.SetFocus;
+  7 : Mark1.SetFocus;
+end;
+end
+
+else  {if shift}
+
+begin
+if (key = vk_Tab) or (key = vk_return) then
+case strToint(copy(TEdit(Sender).Name,6,1)) of
+  1 : Leng1.SetFocus;
+  2 : Leng2.SetFocus;
+  3 : Leng3.SetFocus;
+  4 : Leng4.SetFocus;
+  5 : Leng5.SetFocus;
+  6 : Leng6.SetFocus;
+  7 : Leng7.SetFocus;
+end;
+
+end;
+
+end;
+
+procedure Tpcz1010aForm.gubunKeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if not (ssShift in Shift) then
+begin
+ if (key = vk_Tab) or (key = vk_return) then
+ begin
+    if KeyCheck = 0 then
+       sGubun.SetFocus;
+    KeyCheck := 0;
+ end;
+end
+else
+begin
+if key = vk_Tab then
+   sGubun.SetFocus;
+end;
+DataCheck := 0;
+
+end;
+
+procedure Tpcz1010aForm.sgubunKeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+
+if not (ssShift in Shift) then
+begin
+if key = vk_Tab then
+   Gubun.SetFocus;
+end
+else
+begin
+if key = vk_Tab then
+   Gubun.SetFocus;
+end;
+
+ DataCheck := 0;
+
+end;
+
+
+procedure Tpcz1010aForm.sgubunKeyPress(Sender: TObject; var Key: Char);
+begin
+ if key = chr(13) then
+ begin
+    key := chr(0);
+    if (gubun.text = '') or (sgubun.text = '') then
+        sgubun.SetFocus
+    else
+        SerchData;
+ end;
+ DataCheck := 1;
+ DataChange := 0;
+end;
+
+
+procedure Tpcz1010aForm.gubunClick(Sender: TObject);
+begin
+  save.Caption := '실행';
+  exesave := 0;
+  DataCheck := 0;
+  del.Enabled := False;
+  cancel.Enabled := False;
+end;
+
+
+procedure Tpcz1010aForm.mark1Change(Sender: TObject);
+begin
+  DataChange := 1;
+end;
+
+procedure Tpcz1010aForm.DataFieldClick(Sender: TObject);
+begin
+
+IF DataCheck = 0 then
+BEGIN
+  IF (gubun.text = '') or (sgubun.text = '') then
+  begin DataCheck := 0;   gubun.SetFocus; end
+  ELSE
+  BEGIN
+      SerchData;
+      Mark1.SetFocus;
+  END;
+
+END;
+ DataCheck  := 1;
+ DataChange := 0;
+end;
+
+end.
