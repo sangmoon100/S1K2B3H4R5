@@ -1,0 +1,693 @@
+/* -------------------------------------------------------------------------------
+ PROGRAM-NAME   : 단기계약직 근태집계(pkw1100g)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 단기계약직 근태집계
+ Programmer     : 
+ Version        : 
+ Date           : 
+
+Update Contents
+  버전    수정일      수정자          관련근거       수정내용
+  10.01  2004.02.24  강륜종          Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.    
+  20.00  2004.12.29  강륜종(dsa2000)    Rexec 대체서비스를 위한 수정작업.  
+------------------------------------------------------------------------------- */
+#include <stdio.h>
+/* Dsa2000  추가.. 2004.02.24.*/
+#include <stdlib.h>
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+
+#define  FAIL        -2
+#define   MAXPERSON  9000
+
+/*** 함수 Prototype 선언  ***/
+void   print_errmsg(int errcode, char *errmsg);
+
+EXEC SQL INCLUDE sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+     struct 
+     {
+          char   duyymm[7];    /* 기준년월   */
+          char   empno[5];   /* 사번     */ 
+          char   korname[10];
+          char   ducode[32];   /* 일일근태   */
+          int    ymdedcnt;   /* 연월차 공제일수   */ 
+          int    count;
+     } knte[MAXPERSON];
+     
+     struct 
+     {
+          char   dukind[3];
+          char   duname[13];
+          char   dufldnm[13];
+          char   yemonyn[2]; 
+          char   maxkind[2];
+          int   maxcnt1;
+          int   maxcnt2;
+     } kntecode[100];
+     
+     char  sqlstr[1024];  
+     char  tempdate[8+1];
+     char  workyymmdd[8+1];
+     char  workyymm[6+1];   
+      
+     int   hidukind  ;     
+     char  hdukind[3] ;     
+     char  hduname[13] ;     
+     char  hdufldnm[13];     
+     char  hmaxkind[2];     
+     int   hmaxcnt1;     
+     int   hmaxcnt2;     
+     char  hyemonyn[2];     
+     
+     char  jobempno[5];
+     char  mondate1[8+1] ;
+     
+     char  hempno[5] ;
+     char  duempno[5] ;
+     char  wweek1[3] ;
+     char  siw[3] ;
+     char  enddd[3] ;
+
+EXEC SQL END   DECLARE SECTION;
+ 
+int  cnt=0;
+int  id;
+int  wwcnt   = 0 ;
+int  hducode = 0 ;
+int  hcount  = 0 ; 
+
+/*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =============*/
+char log_rundate[16]     = ""; 
+char log_progid[16]      = "";
+char log_writeman[5]     = "";
+char log_buff[100]       = "";
+int  seqno = 0; 
+
+void main(argc,argv)
+int  argc;
+char *argv[];
+{        
+     char FL_file[255];
+     
+     if (argc != 6) { /*  /hper8/HINSA/proc/bin/Kbin/pkw1100g 200401 Y D006 pkw1100g 2004110100000 */
+              printf("[Usage] : pkw1100g 1.작업월[YYYYMM] 2.월마감여부[Y/N] 3.작업자 4.프로그램ID  5.시작시간  \n");
+              exit(1);
+     }
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkw1100g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     /* Dsa2000  2004.02.24.  **********************************/  
+     /*DB_connect(id,0); */
+     hinsa_log_print(0,"단기계약직 근태집계 시작...[pkw1100g]");
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /* Dsa2000  수정 End......................................*/
+     
+     /*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[3]);
+     strcpy(log_progid,   argv[4]);
+     strcpy(log_rundate,  argv[5]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     sprintf(workyymm,"%6s",argv[1]);
+     sprintf(jobempno, "%s",argv[3]);   
+      
+     EXEC SQL
+     SELECT  TO_CHAR(last_day(TO_DATE(:workyymm,'YYYYMM')) ,'YYYYMMDD')
+       INTO  :workyymmdd
+       FROM  DUAL;
+     
+     if (strcmp(argv[2],"Y")==0)  /* 월마감 여부가 Y이면 */
+     
+     MonthEnd();                
+           
+     KnteInsert();
+     
+     KnteJibge();  
+     
+          /*  일단 당월 모든 자료를 만근여부를 'N' */
+     EXEC SQL
+     UPDATE  PKHILDUSUM
+        SET  fullyn    = 'N',
+             writetime = TO_CHAR(SYSDATE,'YYYYMMDDHH24MISSD'),
+             writeman  = :jobempno
+      WHERE  duyymm   = :workyymm;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"만근여부 UPDATE ERROR 1");
+          Write_batlog(seqno++, "만근여부 UPDATE ERROR 1");   /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");  
+     }
+      
+     
+     /*  연월제외근태사용=0 이면 당월 자료를 만근여부를 'Y' */
+     EXEC SQL
+     UPDATE  PKHILDUSUM
+        SET  fullyn = 'Y'
+      WHERE  ymdedcnt = 0 and duyymm = :workyymm
+        and  empno in ( select  empno 
+                          from  pkhilhis 
+                         where  confrdate <= :workyymm||'01'
+                           and  contodate >= to_char(last_day(to_date(:workyymm, 'YYYYMM')), 'YYYYMMDD' )) ;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"만근여부 UPDATE ERROR 2");
+          Write_batlog(seqno++, "만근여부 UPDATE ERROR 2");   /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");  
+     }
+           
+     /* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====");
+          Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+          error_quit("ERROR ====== [작업 실패] =====\n");
+     }
+     else
+     {
+          sprintf(log_buff, "OK ====== [단기계약직 근태집계 작업성공] =====\n");
+          Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체*/
+          hinsa_exit(0,"OK ====== [단기계약직 근태집계 작업성공] =====\n");   
+     }
+  
+}
+
+MonthEnd()
+{
+     EXEC SQL
+     UPDATE  PKCPBAS
+        SET  ilfixmon = :workyymmdd;
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"월 마감 작업 ERROR");
+          error_quit("작업실패...");  
+     } 
+}
+
+
+KnteInsert()
+{
+  
+     EXEC SQL
+     DELETE FROM PKHILDUSUM
+      WHERE  duyymm=:workyymm ;           
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 )
+     {  
+          print_errmsg(sqlca.sqlcode,"PKHILDUSUM 삭제 ERROR");
+          Write_batlog(seqno++, "PKHILDUSUM 삭제 ERROR");   /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");  
+     }   
+     
+     EXEC SQL
+     INSERT INTO PKHILDUSUM
+     (  DUYYMM     ,             /*기준년도            */
+        EMPNO      ,             /*사번                */
+        KORNAME    ,             /*성명                */
+        ORGNUM     ,             /*조직차수            */
+        DEPTCODE  )              /*부서코드            */   
+     SELECT   :workyymm, A.empno,A.korname  , orgnum, deptcode  
+      FROM   PKHILHIS  A
+     WHERE   upper(a.batchpayyn) = 'Y'
+       and   a.empno in (select empno from pkhilduty where substr(dufrdate,1,6) = :workyymm and upper(conyn) ='Y') ;  
+                        
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"INSERT INTO PKHILDUSUM ERROR");
+          Write_batlog(seqno++, "INSERT INTO PKHILDUSUM ERROR");   /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");  
+     }
+}
+
+
+KnteJibge()
+{
+
+     ReadKnteCode();  
+     
+     ReadKnteData();  
+     
+     KnteGongje();
+     
+     GetStartDate(); 
+     
+     GetWeekcnt(); 
+}
+
+
+ReadKnteCode()
+{
+     EXEC  SQL
+     DECLARE c0 CURSOR  FOR
+     SELECT  dukind, duname, dufldnm, maxkind, maxcnt1, maxcnt2, yemonyn
+       FROM  PKHILDUCOD;
+     
+     EXEC  SQL open C0;
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+     {  
+          print_errmsg(sqlca.sqlcode,"PKHILDUCOD READ ERROR");
+          Write_batlog(seqno++, "PKHILDUCOD READ ERROR");   /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");  
+     }
+     
+     while(1)
+     {
+          EXEC SQL FETCH C0 INTO
+          :hdukind,  :hduname,
+          :hdufldnm, 
+          :hmaxkind, :hmaxcnt1, 
+          :hmaxcnt2, :hyemonyn;
+          
+             
+          if(sqlca.sqlcode == 1403)
+          {
+            EXEC SQL close C0;     
+            break;
+          }
+          
+          hidukind = atoi(hdukind) ;
+          
+          sprintf(kntecode[hidukind].dukind,"%s", hdukind ) ;       
+          sprintf(kntecode[hidukind].duname,  "%s" , hduname ) ; 
+          sprintf(kntecode[hidukind].dufldnm, "%s" , hdufldnm) ; 
+          sprintf(kntecode[hidukind].maxkind, "%s" , hmaxkind) ;
+          sprintf(kntecode[hidukind].yemonyn, "%s" , hyemonyn);
+          
+          kntecode[hidukind].maxcnt1 =  hmaxcnt1 ; 
+          kntecode[hidukind].maxcnt2 =  hmaxcnt2 ; 
+      
+     }     
+}
+
+ReadKnteData()
+{                       
+     char  tmpstr[512];
+     char  maxstr[512];
+     int     checksum = 0 ;
+     
+     memset(hempno,'\0',sizeof(hempno));
+     memset(sqlstr,'\0',sizeof(sqlstr));
+     memset(tmpstr,'\0',sizeof(tmpstr));   
+     memset(maxstr,'\0',sizeof(maxstr));   
+                
+        
+     EXEC   SQL
+     DECLARE c1 CURSOR  FOR
+     select  empno, korname, ducode, count(*) from pkhilduty 
+      where  dufrdate like :workyymm||'%'  
+        and  upper(conyn) ='Y'
+      group  by empno, korname, ducode;
+           
+     EXEC  SQL  open c1;
+     
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+     {  print_errmsg(sqlca.sqlcode,"PKHILDUTY READ ERROR");
+      /*Write_batlog(seqno++, "PKHILDUTY READ ERROR");   dsa2000 Rexec 대체*/
+      error_quit("작업실패...");  
+     }
+     
+     while(1)
+     {
+          EXEC SQL FETCH c1 INTO
+          :knte[cnt].empno,  :knte[cnt].korname,
+          :knte[cnt].ducode, :knte[cnt].count ;
+                       
+          
+          if  (cnt > MAXPERSON)
+          {
+               printf("작업건이 %d건을 초과합니다. \n",MAXPERSON);
+               sprintf(log_buff, "작업건이 %d건을 초과합니다. \n",MAXPERSON);
+               /*Write_batlog(seqno++, log_buff);   dsa2000 Rexec 대체*/
+               exit(0);
+          }
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c1;
+               cnt--;
+               break;     
+          } 
+          
+          hducode = atoi(knte[cnt].ducode) ;  
+          hcount  = knte[cnt].count;   
+                                    
+          sprintf (hempno,"%s", knte[cnt].empno ) ;
+             
+          sprintf(sqlstr,"%s","update pkhildusum set ");
+          sprintf(tmpstr,"%s=%d",kntecode[hducode].dufldnm, hcount ) ;         
+          strcat(sqlstr,tmpstr);
+          
+          sprintf(tmpstr," where empno = '%s' and duyymm = '%s'",
+                  hempno, workyymm);
+          strcat(sqlstr,tmpstr);
+                       
+                       
+          EXEC  SQL EXECUTE IMMEDIATE :sqlstr;
+                
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+          {
+               print_errmsg(sqlca.sqlcode,"UPDATE PKHILDUSUM ERROR");
+               /*Write_batlog(seqno++, "UPDATE PKHILDUSUM ERROR");   dsa2000 Rexec 대체*/
+               error_quit("작업실패...");  
+          }
+             
+          /*max 값 check start */
+          if  (kntecode[hducode].maxkind[0] == 'M')              
+          {    if  (kntecode[hducode].maxcnt1< hcount)
+                    printf("%-12s 오류 : %s %s   사용 개수 -> %d\n",
+                            kntecode[hducode].duname, knte[cnt].empno, knte[cnt].korname, hcount);
+          }   
+             
+             
+          if  (kntecode[hducode].maxkind[0] == 'Y')                 
+          {      
+               sprintf(maxstr, "select sum(%s) into :checksum from pkhildusum where empno='%s' and duyymm like '%.4s%c'",
+                                kntecode[hducode].dufldnm, knte[cnt].empno,workyymm,'%');
+               
+               EXEC  SQL EXECUTE IMMEDIATE :maxstr;                
+                            
+               if  (checksum > kntecode[hducode].maxcnt1)
+                    printf("%-12s 오류 : %s %s   사용 개수 -> %d\n",
+                            kntecode[hducode].duname, knte[cnt].empno, knte[cnt].korname, checksum);
+          }
+                 /*max 값 check end */             
+          cnt++;     
+     }
+}
+
+KnteGongje()
+{
+     char gempno[5]   ;
+     char gkorname[11] ;
+     char gducode[3]  ;
+     int  gcount = 0 ;
+     int  cnt_month = 0;
+                     
+     sprintf(enddd, "%2s", workyymmdd+6);         
+     cnt_month = atoi(enddd);
+        
+      /*printf("%s", enddd); */
+        
+      /*EXEC   SQL
+        DECLARE c5 CURSOR  FOR
+        select a.empno, a.korname, a.ducode, count(*)  
+                from pkhilduty a, pkhilducod b , pkhilhis c
+               where dufrdate like :workyymm||'%'
+                 and   upper(a.conyn) ='Y'
+           and   a.ducode = b.dukind
+           and   a.empno = c.empno
+           and   b.YEMONYN ='Y'
+           and   c.confrdate <= :workyymm||'01'
+           and   c.contodate >= to_char(last_day(to_date(:workyymm, 'YYYYMM')), 'YYYYMMDD' )
+        group by a.empno, a.korname, a.ducode;   */
+        
+     EXEC   SQL
+     DECLARE c5 CURSOR  FOR        
+      select  a.empno, a.korname, count(*)  
+        from  pkhilduty a, pkhilducod b , pkhilhis c
+       where  dufrdate like :workyymm||'%'
+         and  upper(a.conyn) ='Y'
+         and  a.ducode = b.dukind
+         and  a.empno = c.empno
+         and  b.YEMONYN ='N'
+         and  c.confrdate <= :workyymm||'01'
+         and  c.contodate >= to_char(last_day(to_date(:workyymm, 'YYYYMM')), 'YYYYMMDD' )
+       group  by a.empno, a.korname ;
+   
+
+     EXEC  SQL  open c5;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+     {  
+          print_errmsg(sqlca.sqlcode,"월차공제 READ ERROR");
+          Write_batlog(seqno++, "월차공제 READ ERROR");   /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");  
+     }  
+     
+     while(1)
+     {
+          EXEC SQL FETCH c5 INTO
+          :gempno,  :gkorname, :gcount ;
+                        
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c5;     
+               break;     
+          } 
+          
+          
+          EXEC SQL          
+          update  pkhildusum                
+             set  ymdedcnt  =  :cnt_month - :gcount
+           where  empno     =  :gempno
+             and  duyymm    =  :workyymm ;
+          
+          
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+          {  
+               print_errmsg(sqlca.sqlcode,"월차 공제 갱신 ERROR");
+               /*Write_batlog(seqno++, "월차공제 갱신 ERROR");   dsa2000 Rexec 대체*/
+               error_quit("작업실패...");  
+          }
+          
+          
+     } /*WHILE END*/
+}
+
+/*주휴 시작일 구하기*/
+GetStartDate()
+{
+     int i = 0  ;
+     
+     EXEC SQL
+     update pkhildusum
+        set weekcnt = 0 
+      where duyymm = :workyymm ;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"주휴 갯수 0 SETTING ERROR");
+          Write_batlog(seqno++, "주휴 갯수 0 SETTING ERROR");   /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");  
+     }
+             
+     EXEC SQL
+     select TO_CHAR(TO_DATE(:workyymm||'01','YYYYMMDD') - 6, 'YYYYMMDD') 
+     into :tempdate
+     from dual;
+     
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"TEMP DATE READ ERROR");
+          Write_batlog(seqno++, "TEMP DATE READ ERROR");   /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");  
+     }
+     
+     EXEC SQL
+     select  TO_CHAR(TO_DATE(:workyymm||'01','YYYYMMDD'), 'iw') 
+       into  :siw
+       from  dual;
+     
+                   
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"SIW READ ERROR");
+          Write_batlog(seqno++, "SIW READ ERROR");   /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");  
+     }       
+           
+     
+     for (i = 0 ; i < 10 ; i++ ) 
+     {
+          EXEC SQL
+          select TO_CHAR(TO_DATE(:tempdate,'YYYYMMDD'), 'iw') 
+            into :wweek1
+            from dual;
+                
+                    
+          if  (strcmp(siw , wweek1) == 0 )
+          { 
+               sprintf(mondate1,"%s", tempdate) ;
+               break;
+          }
+          
+          
+           EXEC SQL
+           SELECT  TO_CHAR(TO_DATE(:tempdate,'YYYYMMDD') + 1,'YYYYMMDD')
+             INTO  :tempdate
+             FROM  DUAL;
+                
+     }
+}
+
+
+GetWeekcnt()
+{
+       
+     printf("\n 주휴 count 시작일 : %s \n", mondate1 ) ;
+     EXEC SQL
+     DECLARE c9 CURSOR  FOR
+      select EMPNO
+        from PKHILDUSUM
+       where DUYYMM = :workyymm ;     
+       
+     EXEC  SQL  open c9;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+     {  
+          print_errmsg(sqlca.sqlcode,"주휴 READ ERROR");
+          printf("2 log_rundate:%s, log_progid:%s, seqno:%d, log_writeman:%s, message:%s",
+                    log_rundate, log_progid, seqno, log_writeman);
+          Write_batlog(seqno++, "주휴 READ ERROR");   /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");  
+     }
+       
+     while(1)
+     {
+          EXEC SQL FETCH c9 INTO
+          :duempno;
+                        
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c9;     
+               break;     
+          } 
+                 
+          GipgyeWeekcnt () ;   
+          
+          exec sql
+          update pkhildusum
+             set weekcnt  = :wwcnt
+           where duyymm =:workyymm
+             and empno  =:duempno;
+          
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {  
+               print_errmsg(sqlca.sqlcode,"주휴 갯수 SETTING ERROR");
+               /*Write_batlog(seqno++, "주휴 갯수 SETTING ERROR");   dsa2000 Rexec 대체*/
+               error_quit("작업실패...");  
+          }
+      
+     }
+
+}
+
+GipgyeWeekcnt()
+{ 
+     char  wiw[3] ;
+     char  biw[3] ;
+     char  wweekyn[2] ;
+     char  wducode[3];
+     char  wdufrdate[9];
+     char  wempno[5] ; 
+     int   wdcnt = 0;
+     
+     wwcnt = 0 ;
+     
+     EXEC SQL
+     DECLARE c10 CURSOR  FOR
+     select  EMPNO, DUFRDATE, DUCODE, WEEKYN, TO_CHAR(TO_DATE(DUFRDATE,'YYYYMMDD'), 'iw') 
+       from  PKHILDUTY A, PKHILDUCOD B 
+      where  dufrdate BETWEEN :mondate1 AND :workyymmdd
+        and  upper(conyn) ='Y'
+        AND  DUCODE = DUKIND               
+        AND  EMPNO = :duempno
+      ORDER  BY DUFRDATE ;
+       
+                   
+     EXEC  SQL  open c10;
+   
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+     {  
+          print_errmsg(sqlca.sqlcode,"주휴 READ ERROR");
+          /*Write_batlog(seqno++, "주휴 READ ERROR");   dsa2000 Rexec 대체*/
+          error_quit("작업실패...");  
+     }
+         
+     sprintf(biw, "%s", siw) ;
+                  
+     while(1)
+     {
+          EXEC SQL FETCH c10 INTO
+          :wempno,  :wdufrdate, :wducode, :wweekyn, :wiw ;                
+                        
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c10;         
+               break;     
+          } 
+          
+          if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {  
+               print_errmsg(sqlca.sqlcode,"FETCH c10 ERROR 1");
+               /*Write_batlog(seqno++, "FETCH c10 ERROR 1");   dsa2000 Rexec 대체*/
+               error_quit("작업실패...");  
+          }
+          
+          if  (strncmp(wweekyn,"Y",1) == 0 )
+          {
+               if  (strcmp(biw , wiw) == 0 ) 
+               {
+                    wdcnt++;     
+                     /*   printf("\n 1 empno[%s], wdcnt1[%d]", wempno, wdcnt);       */
+                    
+                    if  (wdcnt == 7) /* 일주일단위*/
+                    { 
+                         wwcnt ++; 
+                         /*    printf("\n 3 empno[%s], wdcnt1[%d]", wempno, wdcnt);   */
+                    }
+               }              
+               else 
+               {
+                   sprintf(biw, "%s", wiw) ;                  
+                   wdcnt = 1 ;
+               }   
+          }
+     } /*WHILE END*/
+           
+}
+  
+
+
+/***************************************************************************
+  print_errmsg  Function.
+****************************************************************************/
+void print_errmsg(int errcode, char *errmsg)
+{
+     printf("[ERRCODE : %d] %s\n", errcode,errmsg);
+}
+
+/*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAIL);
+     }                        
+                           
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

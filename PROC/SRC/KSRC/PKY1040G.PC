@@ -1,0 +1,769 @@
+/* -------------------------------------------------------------------------------
+ PROGRAM-NAME   : pky1040g(파견직 근태집계) - 사원범위 지정
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 파견용역비
+ Programmer     : 지순미
+ Version        : 1.0
+ Date           : 2017.02.17
+
+Update Contents
+  버전    수정일      수정자   관련근거       수정내용
+   1.00   2017.02.17  지순미   pka4060g.pc(근태집계)에서 파견직 분리
+------------------------------------------------------------------------------- */
+#include <stdio.h>
+
+/*dsa2000  추가.. 2004.02.03.*/
+#include <stdlib.h>
+/*#include <sqlca.h>
+#include <sqlda.h>
+#include <sqlcpr.h> */
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+/*dsa2000  추가..End.......*/
+
+#define  MAXPERSON   4000
+
+/*** 함수 Prototype 선언  ***/
+/*int Get_mcYN(char *workyymm,int dd);*/
+
+EXEC SQL INCLUDE sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+     struct 
+     {
+          char  duyymm[7];     /* 기준년월               */
+          char  empno[5];      /* 사번                   */ 
+          char  paycl[4];      /* BAND INFRA             */
+          char  korname[10];                             
+          char  dd[32][3];     /* 일일근태               */
+          int   gubun[100];                              
+          int   gubun2[100];   /* 반월차 사용시          */ 
+          int   ymdedcnt;      /* 연월차 공제일수        */
+          int   mcardedcnt;    /* 식교비 공제일수        */
+          int   conmcardedcnt; /* 계약직 식교비 공제일수 */ 
+     } knte[MAXPERSON];
+     
+     struct 
+     {
+          char   dukind[3];
+          char   duname[13];
+          char   dufldnm[13];
+          char   yemonyn[2];
+          char   mcaryn[2];
+          char   conmcaryn[2];
+          char   maxkind[2];
+          int    maxcnt1;
+          int    maxcnt2;
+     } kntecode[100];
+     
+     char  sqlstr[1024];
+     char  sqlstr1[1024];
+     char  DayOfWeek[10];
+     char  tempdate[9];
+     char  knteyymm[7];
+     char  workyymm[7];
+     char  LastDay[3];
+     char  HoliDate[9];
+     char  duyy[5];
+     int   checksum;
+     char  sstime[15];
+     char  empno[5];
+     char  frempno[5];
+     char  toempno[5];
+     char  pname[20];
+     /*int  pid; */
+EXEC SQL END   DECLARE SECTION;
+
+FILE *fp = stdout;
+
+enum  { WEEKDAY=0, SAT=1, SUN=2 } day[33];
+
+int   cnt=0;
+int   codecnt=0;
+int   id;
+char  dir[80];
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char  log_rundate[16]     = ""; 
+char  log_progid[16]      = "";
+char  log_writeman[5]     = "";
+char  log_buff[100]       = "";
+int   seqno = 0; 
+
+void main(argc,argv)
+int  argc;
+char *argv[];
+{
+     char time[50];
+     char FL_file[255];
+       
+     if  (argc != 9) {  /* /hper/insa/HINSA/proc/bin/Kbin/pky1040g 200801 Y N 2141 pky1040g 2004110100000 0000 Z999*/
+          printf("[Usage] : pky1040g 1.작업월 2.월마감여부[Y/N] 3.연간집계여부[Y/N] \n");
+          printf("[Usage] :          4.작업자 5.progid 6.시작시간[YYYYMMDDHHMISS]  \n");
+          exit(1);
+     }
+  
+     /*로그 디렉토리 생성 및 로그작업*/
+     STRINIT(FL_file);
+     strcpy(FL_file,"pky1040g");
+
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          sprintf(log_buff, " 로그파일 생성에러로 인한 프로그램 종료..."); 
+          Write_batlog(seqno++, log_buff);                                 
+          error_quit("로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+
+     memset(dir,'\0',sizeof(dir));
+     hinsa_log_print(0,"근태집계 프로그램 시작...");
+     hinsa_db_connect();  /*DB Connect 실시..*/
+          
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[4]);
+     strcpy(log_progid,   argv[5]);
+     strcpy(log_rundate,  argv[6]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+  
+     sprintf(empno  , "%s",argv[4]);
+     sprintf(pname  , "%s",argv[5]);
+     sprintf(sstime , "%s",argv[6]);
+     sprintf(frempno, "%s",argv[7]);
+     sprintf(toempno, "%s",argv[8]);
+     
+     /*pid = getpid();*/ 
+     /*EXEC SQL
+     SELECT pid
+     INTO   :pid
+     FROM   pkcproc
+     WHERE  pname=:pname and stime=:sstime and empno=:empno;
+     if (sqlca.sqlcode == 0)
+     {   error_quit("다른사용자가 이미 작업을 수행하고 있습니다."); 
+           }
+     
+     EXEC SQL
+     INSERT INTO PKCPROC (pname,stime,empno,pid)
+     values (:pname,:sstime,:empno,:pid);  
+     if (sqlca.sqlcode != 0)   
+     {   error_quit("PID 정보 삽입 ERROR");
+     } */
+
+     
+     DPsys_date(time,0);
+     sprintf(workyymm,"%6s",argv[1]);
+
+     /* 2016.09.26 eyha 근태 결재 Y처리 */     
+     EXEC SQL
+     UPDATE PKHDUTY
+        SET conyn   = 'Y',
+            contime = to_char(sysdate,'yyyymmddhh24mi'),
+            conman = 'admi'
+     WHERE duyymm = :workyymm 
+     	AND  EMPNO between :frempno and :toempno 
+      AND  nvl(conyn,'N') <>'Y'		
+      ;
+     	
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {   error_quit("근태 자동 결재처리 ERROR."); 
+     }
+                    
+     KnteJibge();                    /***    근태집계     ***/
+     
+     /* 2016.10.17 eyha 델파이에서 처리로 주석 처리  */
+     /* if  (strcmp(argv[2],"Y")==0)   월마감 여부가 Y이면 */
+     /*     MonthEnd();   */
+           
+     if  (strcmp(argv[3],"Y")==0)  /* 년간집계여부가 Y이면 */
+          KnteYearSum();
+     
+     /* Dsa2000   2003.07.10. 막음
+     EXEC SQL DELETE FROM pkcproc    
+     WHERE  pname=:pname and stime=:sstime and empno=:empno;
+     EXEC SQL commit;
+     sys_date(time,0);*/
+     
+     /* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, " 집계 ERROR "); 
+          Write_batlog(seqno++, log_buff);   
+          error_quit(" 집계 ERROR ");
+     }
+     else  
+     {
+          sprintf(log_buff, "OK!! 작업성공.");
+          Write_batlog(seqno++, log_buff);     
+          hinsa_exit(0,"OK 작업이 완료되었습니다.");
+     }
+}
+
+
+MonthEnd()
+{
+          EXEC SQL
+          UPDATE  PKCPBAS
+             SET  Y_KNTEYYMM = :workyymm;
+          if ( sqlca.sqlcode != 0)
+          {    err_print(sqlca.sqlcode,"월 마감 작업 ERROR");
+               exit(1);
+          }  
+}
+
+
+KnteYearSum()
+{
+     memset(duyy,'\0',sizeof(duyy));	
+     sprintf(duyy,"%.4s",workyymm);
+
+     EXEC SQL
+     DELETE FROM PKHDUSUM
+      WHERE  duyy=:duyy
+        and EMPNO between :frempno and :toempno; /*2013.06.24.hjku. 누락분 추가*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"근태연간집계 삭제 ERROR");
+          Write_batlog(seqno++, "근태연간집계 삭제  ERROR");   
+          exit(1);
+     }
+     
+     EXEC SQL
+     INSERT INTO PKHDUSUM
+            (duyy,empno,korname,
+             normal,late,earleave,repoff,
+             speoff,satoff,domtour,seatour,
+             corpdisp,domdisp,seadisp,
+             edu,lodge,special,longwork,
+             pubvac,pubsick,childbirth,unpaid,
+             bear,celeb,birth,health,
+             half,month,year,sick,absence,
+             /* 10.01       1998.05.16         이랑교          수정            전(1998.05.14) */
+             yearhalf,                             
+             pubrest,sickrest,babyrest,milrest,
+             stayrest,studyrest,genrest,etcrest,
+             etc1,etc2,etc3,etc4,etc5,
+             holiday,noinput,edupat,
+             /* 2007.03.14 근태코드추가 by JS*/
+             workstop, before, temporary,
+             ymdedcnt,mcardedcnt,nopaycnt,realdd,
+             monthcnt,lsummm,
+             writetime, writeman )
+     SELECT  :duyy, A.empno,max(A.korname) korname,     /* 2016.09.27 eyha 사번만 체크 A.korname -> max(A.korname) */
+             sum(normal),sum(late),sum(earleave),sum(repoff),
+             sum(speoff),sum(satoff),sum(domtour),sum(seatour),
+             sum(corpdisp),sum(domdisp),sum(seadisp),
+             sum(edu),sum(lodge),sum(special),sum(longwork),
+             sum(pubvac),sum(pubsick),sum(childbirth),sum(unpaid),
+             sum(bear),sum(celeb),sum(birth),sum(health),
+             sum(half),sum(month),sum(year),sum(sick),sum(absence),
+             /* 10.01       1998.05.16         이랑교          수정            전(1998.05.14) */
+             sum(yearhalf),
+             sum(pubrest),sum(sickrest),sum(babyrest),sum(milrest),
+             sum(stayrest),sum(studyrest),sum(genrest),sum(etcrest),
+             sum(etc1),sum(etc2),sum(etc3),sum(etc4),sum(etc5),
+             sum(holiday),sum(noinput),sum(edupat),    /* edupat 교육파견 생성 2009,02 kth*/
+             /* 2007.03.14 근태코드추가 by JS*/
+             sum(workstop),sum(before),sum(temporary),
+             sum(ymdedcnt),sum(mcardedcnt),sum(nopaycnt),sum(realdd),
+             count(A.empno),substr(max(duyymm),5,2),
+             to_char(sysdate,'yyyymmddhh24mi'), :empno 
+       FROM  PKHDUTY A
+      WHERE  A.duyymm like :duyy||'%' 
+      	AND  EMPNO between :frempno and :toempno /*2013.06.24.hjku. 누락분 추가*/
+        AND  (A.conyn ='Y' AND A.duyymm > '200209' or A.duyymm <= '200209' )                /*parksh 2002. 11. 21. 2002.10월부터 결재한 근태자료만 집계에 포함시킨다. */
+      /* 2016.09.27 eyha 사번만 체크  */
+      /* GROUP  BY A.empno,A.korname;  */
+      GROUP  BY A.empno;  
+
+     
+     if  (sqlca.sqlcode != 0)
+     {    err_print(sqlca.sqlcode,"근태연간집계  ERROR");
+          Write_batlog(seqno++, "근태연간집계  ERROR");   
+          exit(1);
+     }
+     
+     EXEC SQL
+     UPDATE  PKHDUSUM a
+        SET   (korname, deptcode, orgnum) 
+             =(select korname, jobdept,  orgnum
+                 from pimpmas b
+                where a.empno=b.empno)
+      WHERE  duyy = :duyy
+      	AND  EMPNO between :frempno and :toempno; /*2013.06.24.hjku. 누락분 추가*/
+}
+
+err_print(errcode,str)
+int errcode;
+char *str;
+{
+     fprintf(fp,"[ERRCODE : %d] %s\n",errcode,str);
+}
+
+/* 근태집계... */
+KnteJibge()
+{    
+     printf("CheckDate\n");
+     CheckDate();
+     
+     printf("SetCalendar\n");
+     SetCalendar();
+     
+     printf("ReadKnteCode\n");
+     ReadKnteCode();
+     
+     printf("ReadKnteData\n");
+     ReadKnteData();
+     
+     printf("KnteSumAndCheck\n");
+     KnteSumAndCheck();  /* 4분정도 소요.*/
+}
+
+
+CheckDate()
+{
+     char  tmpstr[512];
+     char  tempyymm[7];
+     
+     memset(tmpstr,'\0',sizeof(tmpstr));
+     memset(tempyymm,'\0',sizeof(tempyymm));
+     
+     EXEC SQL
+          SELECT  nvl(Y_KNTEYYMM,'000000')
+            INTO  :knteyymm
+            FROM  PKCPBAS;
+     
+     if  (sqlca.sqlcode != 0)
+     {    
+          err_print(sqlca.sqlcode,"1. 최종근태마감월 read ERROR");
+          Write_batlog(seqno++, "1. 최종근태마감월 read ERROR");   
+          exit(1);
+     }
+     
+     strcpy(tempyymm,knteyymm);
+     
+     EXEC SQL
+     SELECT  TO_CHAR(ADD_MONTHS(TO_DATE(:knteyymm,'YYYYMM'),1),'YYYYMM')
+       INTO  :knteyymm
+       FROM  DUAL;
+
+
+     
+     if  (strcmp(knteyymm,workyymm) < 0 )
+     {  
+       /* printf("[debug] : workyymm=%s  \n",workyymm);  */
+
+          sprintf(tmpstr,"아직 마감하지 않은 년월이 존재합니다.\n최종근태 마감월 : -%4s-%.2s",tempyymm,tempyymm+4);   
+          err_print(sqlca.sqlcode,tmpstr);
+          Write_batlog(seqno++, tmpstr);   
+          exit(1);  
+     }  
+}
+
+SetCalendar()
+{
+     int i;
+     
+     for( i=0 ; i< 33 ; ++i)
+          day[i] = WEEKDAY;
+
+     memset(tempdate,'\0',sizeof(tempdate));
+     memset(DayOfWeek,'\0',sizeof(DayOfWeek));
+     memset(LastDay,'\0',sizeof(LastDay));
+     sprintf(tempdate,"%.6s%02d",workyymm,1);
+     
+     EXEC   SQL
+     SELECT   to_char(last_day(to_date(:tempdate,'YYYYMMDD')),'DD') 
+     INTO   :LastDay
+     FROM  DUAL;
+     
+     for( i = 1 ; i <= atoi(LastDay) ; ++i)
+     {
+          sprintf(tempdate,"%.6s%02d",knteyymm,i);
+          EXEC   SQL
+          SELECT   to_char(to_date(:tempdate,'YYYYMMDD'),'DY')
+            INTO   :DayOfWeek
+            FROM  DUAL;
+          if (strcmp(DayOfWeek,"SUN")==0) 
+            day[i] = SUN;
+          else if(strcmp(DayOfWeek,"SAT")==0)
+            day[i] = SAT;
+          
+          EXEC   SQL
+          SELECT  holidate
+            INTO  :HoliDate
+            FROM  PKCHOLI
+           WHERE  holidate = :tempdate;
+          
+          if  (sqlca.sqlcode == 0)
+               day[i] = SUN;   
+     } 
+}
+
+ReadKnteCode()
+{
+     EXEC  SQL
+     DECLARE c0 CURSOR  FOR
+     SELECT   dukind, duname, dufldnm, maxkind, maxcnt1, maxcnt2, yemonyn,
+              mcaryn, conmcaryn 
+     FROM  PKCDUCOD;
+     
+     EXEC  SQL open C0;
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+     {  
+          err_print(sqlca.sqlcode," 근태구분 코드 read ERROR");
+          Write_batlog(seqno++, " 근태구분 코드 read ERROR");   
+          exit(1);     
+     }
+     
+     while(1)
+     {
+          EXEC SQL FETCH C0 INTO
+          :kntecode[codecnt].dukind, :kntecode[codecnt].duname, 
+          :kntecode[codecnt].dufldnm, 
+          :kntecode[codecnt].maxkind, :kntecode[codecnt].maxcnt1, 
+          :kntecode[codecnt].maxcnt2, :kntecode[codecnt].yemonyn,
+          :kntecode[codecnt].mcaryn,  :kntecode[codecnt].conmcaryn;
+          codecnt++;
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close C0;
+               codecnt--;
+               break;
+          }
+     }     
+}
+
+ReadKnteData()
+{
+     EXEC   SQL
+     DECLARE c1 CURSOR  FOR
+     SELECT  A.empno,A.korname,b.paycl,
+             dd1 ,dd2 ,dd3 ,dd4,dd5,dd6,dd7,dd8,dd9,dd10,
+             dd11,dd12,dd13,dd14,dd15,dd16,dd17,dd18,dd19,dd20,
+             dd21,dd22,dd23,dd24,dd25,dd26,dd27,dd28,dd29,dd30,dd31
+       FROM  PKHDUTY a, PIMPMAS b
+      WHERE  duyymm = :workyymm  
+        and  a.empno = b.empno 
+        AND  A.EMPNO between :frempno and :toempno 
+        AND  ((A.conyn ='Y' AND A.duyymm > '200209') or A.duyymm <= '200209' ); /* parksh 2002.10월부터는 결재된 근태만 인정 */
+                  
+     
+     EXEC SQL open c1;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+     {  
+          err_print(sqlca.sqlcode," 개인근태자료 read ERROR");
+          Write_batlog(seqno++, " 개인근태자료 read ERROR");   
+          exit(1);
+     }
+     
+     while(1)
+     {
+          EXEC SQL FETCH c1 INTO
+          :knte[cnt].empno, :knte[cnt].korname,:knte[cnt].paycl,
+          :knte[cnt].dd[1], :knte[cnt].dd[2],
+          :knte[cnt].dd[3], :knte[cnt].dd[4], :knte[cnt].dd[5],
+          :knte[cnt].dd[6], :knte[cnt].dd[7], :knte[cnt].dd[8],
+          :knte[cnt].dd[9], :knte[cnt].dd[10],:knte[cnt].dd[11],
+          :knte[cnt].dd[12],:knte[cnt].dd[13],:knte[cnt].dd[14],
+          :knte[cnt].dd[15],:knte[cnt].dd[16],:knte[cnt].dd[17],
+          :knte[cnt].dd[18],:knte[cnt].dd[19],:knte[cnt].dd[20],
+          :knte[cnt].dd[21],:knte[cnt].dd[22],:knte[cnt].dd[23],
+          :knte[cnt].dd[24],:knte[cnt].dd[25],:knte[cnt].dd[26],
+          :knte[cnt].dd[27],:knte[cnt].dd[28],:knte[cnt].dd[29],
+          :knte[cnt].dd[30],:knte[cnt].dd[31];
+          
+          cnt++;
+          
+          if  (cnt > MAXPERSON)
+          {
+               printf("작업인원이 %d명을 초과합니다. \n",MAXPERSON);
+               sprintf(log_buff, "작업인원이 %d명을 초과합니다. \n",MAXPERSON); 
+               Write_batlog(seqno++, log_buff);                                
+               exit(0);  
+          }
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c1;
+               cnt--;
+               break;     
+          }
+     }
+}
+
+KnteSumAndCheck()
+{
+     char  tmpstr[512];
+     int  i, j, k, k2,m;
+     
+     /*** 개인별 근태 집계 ***/
+     
+     for (i=0 ; i< cnt ; ++i)
+     {
+          k2 =0;
+     
+          for (j=1 ; j<= atoi(LastDay); ++j)
+          {     
+               k = atoi(knte[i].dd[j]);              /* 한달치 사용근태 집계 */
+               knte[i].gubun[k]++;  
+     
+               /* ***********************************************************************  
+                 1998.05.16  이랑교 수정            전(1998.05.14)
+                         평일       : 식교비공제안함    1
+                         토요일,휴일: 식교비공제함      0
+               * *********************************************************************** */
+               m = Get_mcYN(workyymm,j);  
+               
+
+               if ((k == 61) && ( m == 1 )) k2++;  /*식교 공제안함 반월차*/                   
+
+               /* ***********************************************************************  
+                 2001.11.15  유효성                  반연차 평일사용시 식교비공제 안함
+               * *********************************************************************** */                   
+               if ((k == 64) && ( m == 1 )) k2++;  /*식교 공제안함 반연차*/
+	
+          }  /* end of month loop */
+
+
+          for ( j=0 ; j< codecnt ; ++j)
+          {
+                k = atoi(kntecode[j].dukind);
+                
+                if ( kntecode[j].yemonyn[0] == 'Y') /* 연월차 공제일수 */
+                     knte[i].ymdedcnt += knte[i].gubun[k];
+          
+                /*  식교비 공제일수  */
+                if  (kntecode[j].mcaryn[0] == 'Y' )
+                     knte[i].mcardedcnt += knte[i].gubun[k];
+          
+                /*  계약직 식교비 공제일수  */       
+                if  (kntecode[j].conmcaryn[0] == 'Y' )
+                     knte[i].conmcardedcnt += knte[i].gubun[k];
+
+           }  /* end of code loop */
+
+           /* **************************************************************************
+              10.02       1999.07.06         이랑교          수정            전(1999.06.25)
+                          1년 계약직 사원 식교비 공제 근태 항목 추가
+           * *************************************************************************** */
+           /* infra           if (knte[i].paycl == "Z1")
+                              knte[i].mcardedcnt = knte[i].conmcardedcnt; */
+           
+           /* **************************************************************************
+              10.01       1998.05.16         이랑교          수정            전(1998.05.14)
+                          총식교비 공제일 - 식교비공제 안하는 일수
+           * *************************************************************************** */
+                      
+           knte[i].mcardedcnt = knte[i].mcardedcnt - k2;
+           
+           /*printf("[debug in before2] : empno=%s,mcardedcnt=%f,k2=%d  \n",knte[i].empno,knte[i].mcardedcnt,k2);  */           
+           
+           
+           EXEC SQL
+           UPDATE PKHDUTY
+              SET ymdedcnt   = :knte[i].ymdedcnt,
+                  mcardedcnt = :knte[i].mcardedcnt
+            WHERE duyymm = :workyymm and empno = :knte[i].empno;
+           
+           memset(sqlstr,'\0',sizeof(sqlstr));
+           memset(tmpstr,'\0',sizeof(tmpstr));
+           sprintf(sqlstr,"%s","update pkhduty set ");
+           
+           for (j=0 ; j< codecnt-1 ; ++j)
+           {
+                k = atoi(kntecode[j].dukind);
+                sprintf(tmpstr,"%s=%d,",kntecode[j].dufldnm,knte[i].gubun[k]);
+                strcat(sqlstr,tmpstr);
+           }
+           
+           k = atoi(kntecode[j].dukind);
+           sprintf(tmpstr,"%s=%d",kntecode[j].dufldnm,knte[i].gubun[k]);
+           strcat(sqlstr,tmpstr);
+           
+           sprintf(tmpstr," where empno = '%s' and duyymm = '%s'",
+           knte[i].empno,workyymm);
+           strcat(sqlstr,tmpstr);
+           
+           EXEC  SQL EXECUTE IMMEDIATE :sqlstr;
+           
+           if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+           {  
+                err_print(sqlca.sqlcode," 개인근태자료 갱신 ERROR");
+                Write_batlog(seqno++, " 개인근태자료 갱신 ERROR");   
+                exit(1);
+           }
+     }
+
+     for (i = 0 ; i < cnt ; ++i)
+          for (j=0 ; j< codecnt ; ++j)
+          {    k = atoi(kntecode[j].dukind);
+               if  (kntecode[j].maxkind[0] == 'M')
+                    MonthlyCheck(i,j,k);
+               if  (kntecode[j].maxkind[0] == 'Y')
+                    YearlyCheck(i,j,k);
+          }
+     
+     EXEC SQL
+     UPDATE PKHDUTY p
+        SET        (korname, orgnum, deptcode, boncode) = 
+            (SELECT korname, orgnum, jobdept,  boncode
+               FROM PIMPMAS r
+              WHERE p.empno=r.empno)
+      WHERE duyymm = :workyymm
+        and empno between :frempno and :toempno;
+     
+     
+     /*  당월 모든 자료를 만근여부를 'N' */
+     EXEC SQL
+     UPDATE  PKHDUTY
+        SET  fullyn = 'N'
+      WHERE  duyymm = :workyymm
+        AND  (conyn ='Y' AND duyymm > '200209' or duyymm <= '200209' )  /* parksh 2002.10월부터 결재한 근태만 인정  */
+        and  empno between :frempno and :toempno;
+     
+     /*  연월제외근태사용=0 이면 당월 자료를 만근여부를 'Y' */
+     EXEC SQL
+     UPDATE  PKHDUTY
+        SET  fullyn = 'Y'
+      WHERE  ymdedcnt = 0 and duyymm = :workyymm
+        AND  (conyn ='Y' AND duyymm > '200209' or duyymm <= '200209' )  /* parksh 2002.10월부터 결재한 근태만 인정  */
+        and  empno between :frempno and :toempno;
+
+}
+
+MonthlyCheck(i,j,k)
+int  i; int  j; int  k;
+{
+     if  (kntecode[j].maxcnt1<knte[i].gubun[k])
+     {
+          printf("%-12s 오류 : %s %s   사용 개수 -> %d\n",
+          kntecode[j].duname, knte[i].empno, knte[i].korname, knte[i].gubun[k]);
+            
+          sprintf(log_buff, "%-12s 오류 : %s %s   사용 개수 -> %d\n",
+                            kntecode[j].duname, knte[i].empno, knte[i].korname, knte[i].gubun[k]);  
+                            Write_batlog(seqno++, log_buff);                                        
+     }
+}
+
+YearlyCheck(i,j,k)
+int  i; int  j; int  k;
+{
+  
+     if  (knte[i].gubun[k] > 0)
+     {
+          sprintf(sqlstr1,"select sum(%s) from pkhduty where empno='%s' and duyymm like '%.4s%c'",
+          kntecode[j].dufldnm, knte[i].empno,workyymm,'%');
+          EXEC SQL PREPARE s1 FROM :sqlstr1;
+          EXEC SQL DECLARE c2 CURSOR for s1;
+          
+          EXEC SQL OPEN c2;
+          
+          if  (sqlca.sqlcode == 1403)
+               checksum = 0;
+          else if (sqlca.sqlcode != 0)
+          {  
+               printf(" 개인별 연제한횟수 check ERROR \n" );  
+               sprintf(log_buff, " 개인별 연제한횟수 check ERROR "); 
+               Write_batlog(seqno++, log_buff);                      
+               exit(0);
+          }
+          
+          EXEC SQL FETCH c2 INTO :checksum;
+               
+          if  (checksum>kntecode[j].maxcnt1)
+          {
+               printf("%-12s 오류 : %s %s   사용 개수 -> %d\n",
+               kntecode[j].duname, knte[i].empno, knte[i].korname, knte[i].gubun[k]);
+               sprintf(log_buff,"%-12s 오류 : %s %s   사용 개수 -> %d\n",  
+               kntecode[j].duname, knte[i].empno, knte[i].korname, knte[i].gubun[k]); 
+               Write_batlog(seqno++, log_buff);          
+          }
+     } 
+}
+
+/* ****************************************************************************  
+  function name : Get_mcYN
+  parameter     : 작업월,일자
+  result        : int 식교비공제여부
+
+   10.01       1998.05.16         이랑교          수정            전(1998.05.14)
+                    평일       : 식교비공제안함    1
+                    토요일,휴일: 식교비공제함      0
+* *************************************************************************** */
+int Get_mcYN(workyymm,dd)
+char *workyymm;
+int dd; 
+{  
+     char  t_date[8+1];
+     int   mcarpayyn = 0;
+      
+     sprintf(t_date,"%s%.02d",workyymm,dd);
+     
+     EXEC SQL
+     SELECT  DECODE ( NVL(COUNT(*),0), 1,0,
+                      DECODE (TO_CHAR(TO_DATE(:t_date, 'YYYYMMDD'),'d'),
+                              '1',0,'7',0,
+                              1)
+                      )
+       INTO  :mcarpayyn
+       FROM  PKCHOLI
+      WHERE  HOLIDATE =:t_date ;
+     
+     return(mcarpayyn);
+}
+
+/*=== dsa2000 2004.10. Rexec대체 서비스를 위한 Write_batlog()  ===================*/
+int Write_batlog(int seqno, char *message)
+{
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);
+          return(-1);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}
+/*=================================================================================*/
+
+
+/* ******************************************************************
+ * 참고사항 : 식교비 공제 코드입니다.
+ * ******************************************************************
+U DUNAME       DUFLDNM      M
+-- ------------ ------------ -
+55 산휴         bear         Y
+56 경휴         celeb        Y
+57 생일         birth        Y
+58 보건         health       Y
+61 반차         half         Y
+62 월차         month        Y
+63 연차         year         Y
+64 반연차       yearhalf    Y
+71 병가         sick         Y
+72 결근         absence      Y
+
+82 병상         sickrest     Y
+83 육아         babyrest     Y
+84 병역         milrest      Y
+85 기소         stayrest     Y
+86 유학         studyrest    Y
+87 일반         genrest      Y
+89 기타         etcrest      Y
+select bear+celeb+birth+health+half+month+year+yearhalf+sick+absence+
+       sickrest+babyrest+milrest+stayrest+studyrest+genrest+
+       etcrest mcarded,mcardedcnt
+from   pkhduty
+where  duyymm ='199804'
+* ***************************************************************** */

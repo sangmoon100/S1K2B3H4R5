@@ -1,0 +1,631 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : pksendmsg
+ SYSTEM-NAME    : 종합인사관리.
+ SUBSYSTEM-NAME : 연차발생 전일 MAIL/SMS 전송
+ Programmer     : 구해자
+ Version        : 1.00
+ Date           : 2013.07.01
+ 
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description   
+   1.00       2013.07.01         hjku            최초개발본    
+============================================================================= */
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <math.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+#define  FAIL        -2
+
+EXEC SQL INCLUDE sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+     char  vCurrDate[8+1];
+     char  CurrYYYY1[4+1];
+     char  CurrMM[2+1];
+     char  CurrDD[2+1];
+          
+     char  vNextDate1[8+1];
+     char  NextYYYY1[4+1];
+     char  NextMM1[2+1];
+     char  NextDD1[2+1];
+               
+     char  vNextDate2[8+1];
+     char  NextYYYY2[4+1];    
+     char  NextMM2[2+1];
+     char  NextDD2[2+1];
+     
+     float vYearly_cnt;
+
+     char  vEmpno[4+1];
+     char  vKorname[20+1];
+     char  vJobCode[3+1];
+     char  vJobName[20+1];
+     char  vConJobCode[3+1];
+     char  vConJobName[20+1];     
+     char  vConEmpno[4+1];
+     char  vHandTel[24+1];
+     char  vSendTel[24+1];
+     char  vMobile[24+1];
+     char  vConMobile[24+1];
+     char  vFlag[10+1];
+     char  vSmsSubject[200+1];
+     char  vSmsBody[1024+1];
+
+     char  sql_stmt[5000+1];
+     char  SendProgID[16];
+     char  SendEmpno[16]; 
+     char  RcveEmpno[16]; 
+     char  MailBody[1024+1];
+     char  MailSubject[200+1];
+     char  ReceiveYN[16];   
+     
+     float vSend_cnt; 
+     char  sqlstr[1024];
+EXEC SQL END  DECLARE SECTION;
+
+FILE *fp = stdout;
+
+char  log_progid[16]  = "pksendmsg";
+char  log_writeman[5] = "CRON";
+char  log_rundate[16] = ""; 
+char  log_buff[100]   = "";
+int   seqno   = 0;
+int   rcount  = 0;
+
+
+void main(argc,argv)
+int argc;
+char *argv[];
+{       
+     char FL_file[255];
+             
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,log_progid);
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     /*========================================================*/     
+     hinsa_log_print(0,"SMS SEND 시작...0");
+     hinsa_db_connect();  /*DB Connect 실시..*/
+          
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     
+
+     process_message();       
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====\n");
+          Write_batlog(seqno++, log_buff);   
+          error_quit("ERROR ====== [작업 실패] =====\n");
+     }
+     else  
+	     {
+          sprintf(log_buff, "OK ====== [연차발생 MAIL/SMS 전송 성공] =====\n");
+          Write_batlog(seqno++, log_buff); 
+          hinsa_exit(0,"OK ====== [연차발생 MAIL/SMS 전송 성공] =====\n");
+     }
+}
+
+Send_MAIL()
+{
+     sprintf(SendProgID,"%s",log_progid);   
+     sprintf(SendEmpno, "adm"); 
+     sprintf(RcveEmpno, "%s",vConEmpno);  
+     
+     sprintf(MailSubject, "[구성원 연차휴가 사용안내]");         
+     sprintf(MailBody,  "%s%s의 연차휴가 사용 계획일은 %s월 %s일부터 %s월 %s일(%0.1f일)까지 입니다.\n계획된 휴가일에 대상자가 연차휴가를 사용함으로써 충분한 Refresh의 기회로 활용할 수 있도록 각별한 관심과 배려를 당부드립니다. "
+     ,hinsa_trim(vKorname),hinsa_trim(vJobName),NextMM1,NextDD1,NextMM2,NextDD2,vYearly_cnt);    
+     sprintf(ReceiveYN, "N");   
+     
+     EXEC SQL 
+            insert into PZHMAIL                         
+            values (to_char(sysdate,'YYYYMMDDHHMISS'),
+                    :SendProgID         ,
+                    :SendEmpno          ,
+                    :RcveEmpno          ,
+                    ''                  ,
+                    :MailSubject        ,
+                    ''                  ,
+                    :MailBody           ,
+                    ''                  ,
+                    'N'                 ,
+                    'N'                 ,
+                    ''                  );
+      
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(log_buff, "ERROR ====== [MAIL SEND 실패] ORA-%05d - \n",sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);             
+          error_quit("ERROR ====== [MAIL SEND 실패] =====\n");
+          return (FAIL);
+     }
+     else
+          return(SUCCESS);
+}
+
+int send_SMS(char *sendtel, char *rcvtel, char *flag)
+{
+     sprintf(vHandTel, "%s",rcvtel);         
+     sprintf(vSendTel, "%s",sendtel);   
+        
+     if (strcmp(flag,"1") == 0) {      /*팀장*/
+         sprintf(vSmsSubject, "[구성원 연차휴가 사용안내]");            
+         sprintf(vSmsBody, "%s월 %s일부터 %s월 %s일(%0.1f일)까지 %s%s의 연차휴가 사용 계획일입니다.\n대상자가 연차휴가를 사용할 수 있도록 리더의 적극적인 관심과 배려를 당부드립니다.",
+                           NextMM1,NextDD1,NextMM2,NextDD2,vYearly_cnt,hinsa_trim(vKorname),hinsa_trim(vJobName));
+     }else if (strcmp(flag,"2") == 0) {/*팀원*/
+         sprintf(vSmsSubject, "[구성원 연차휴가 사용안내]");            
+         sprintf(vSmsBody, "%s월 %s일부터 %s월 %s일(%0.1f일)까지 %s%s의 연차휴가 사용 계획일입니다.\n 즐거운 휴가 보내시기 바랍니다.",
+                           NextMM1,NextDD1,NextMM2,NextDD2,vYearly_cnt,hinsa_trim(vKorname),hinsa_trim(vJobName));
+     }
+     
+     /*sprintf(log_buff, "HPER.SENDSMS ...[%s][%s][%s][%s][%s][%s]",vEmpno,hinsa_trim(vJobName),vConEmpno,flag,vHandTel,vSendTel);
+     //Write_batlog(seqno++, log_buff);
+     printf("DEBUG:%s\n",log_buff);*/
+     
+     /*장비변경으로 SMS전송 실행로직 변경 : 2014.11.05. dsa2000*/
+     /*EXEC SQL EXECUTE
+     BEGIN 
+          HPER.SENDSMS(trim(:vHandTel), trim(:vSendTel), :vSmsBody, :vSmsSubject);
+     END;
+     END-EXEC; */
+
+     sprintf(sqlstr,"Call HPER.SENDSMS(trim('%s'), trim('%s'), '%s', '%s')", vHandTel,vSendTel,vSmsBody,vSmsSubject);
+     EXEC SQL EXECUTE IMMEDIATE :sqlstr;
+
+                                       
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(log_buff, "ERROR ====== [SMS SEND 실패] ORA-%05d - \n",sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);             
+          error_quit("ERROR ====== [SMS SEND 실패] =====\n");
+          return (FAIL);
+     }
+     else
+          return(SUCCESS);
+}
+
+Send_Message()
+{
+    char  temp_empno[2];    
+        
+    memset(vMobile    ,'\0',sizeof(vMobile));          
+    memset(vJobCode   ,'\0',sizeof(vJobCode));          
+    memset(vJobName   ,'\0',sizeof(vJobName));
+    memset(vConEmpno  ,'\0',sizeof(vConEmpno));          
+    memset(vConMobile ,'\0',sizeof(vConMobile));          
+    memset(vConJobCode,'\0',sizeof(vConJobCode));          
+    memset(vConJobName,'\0',sizeof(vConJobName));
+          
+    EXEC SQL    
+            SELECT TRANSLATE(B.RETCONT,'0123456789'||B.RETCONT,'0123456789') SENDTEL,
+                   A.PAYRA JOBCODE,
+                   CASE WHEN A.PAYRA IN ('C11','C18')                         THEN '팀장'
+                        WHEN A.PAYRA IN ('D11')                               THEN '매니저'
+                        WHEN A.PAYRA IN ('D41')                               THEN '비상계획관'
+                        WHEN A.PAYRA IN ('D91','H10','H41')                   THEN '팀원'                       
+                        WHEN A.PAYRA IN ('D51','D61','H11','K11','O31')       THEN '사원'       
+                        ELSE D.CODENAME END JOBNAME,                                         
+                   EEMPNO,
+                   TRANSLATE(C.RETCONT,'0123456789'||C.RETCONT,'0123456789') CONSENDTEL,
+                   A.EPAYRA CONJOBCODE,
+                   E.CODENAME CONJOBNAME                   
+              INTO :vMobile, :vJobCode, :vJobName,:vConEmpno, :vConMobile,:vConJobCode,:vConJobName                                             
+              FROM  PIMEEMP  A, PIMPMAS B, PIMPMAS C, PYCCODE D, PYCCODE E                
+             WHERE  A.EMPNO  = :vEmpno 
+               AND  A.EMPNO  = B.EMPNO
+               AND  A.EEMPNO = C.EMPNO
+               AND  D.CODEID ='I113'
+               AND  A.PAYRA  = D.CODENO
+               AND  E.CODEID ='I113'
+               AND  A.EPAYRA = E.CODENO;
+               
+
+     hinsa_trim(vMobile);               
+     hinsa_trim(vJobCode);               
+     hinsa_trim(vJobName);               
+     hinsa_trim(vConEmpno);               
+     hinsa_trim(vConMobile);               
+     hinsa_trim(vConJobCode);               
+     hinsa_trim(vConJobName);                                             
+
+             
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(log_buff, "Send_Message 오류...SQLCODE[%s]\n", sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);           
+          return(FAIL);
+     }
+
+     memset(temp_empno,'\0',sizeof(temp_empno));
+     strncpy(temp_empno,vEmpno,1);
+               
+     /*if ((strcmp(vJobCode,"D11")==0)||
+         (strcmp(vJobCode,"D91")==0)||
+         (strcmp(vJobCode,"H10")==0)||
+         (strcmp(vJobCode,"H11")==0)||
+         (strcmp(vJobCode,"K11")==0))
+     {
+        memset(vJobName   ,'\0',sizeof(vJobName));       
+        
+        if((strcmp(temp_empno,"P")==0)||
+           (strcmp(temp_empno,"Q")==0)|| 
+           (strcmp(temp_empno,"Y")==0)) {
+              sprintf(vJobName,"사원");
+        }else{
+            sprintf(vJobName,"M");
+        }
+     } */    
+
+     if ((Send_MAIL() == SUCCESS) &&
+         (send_SMS("0262663035",vConMobile,"1") == SUCCESS)&&
+         (send_SMS("0262663035",vMobile   ,"2") == SUCCESS) )        
+          return(SUCCESS);
+     else return(FAIL);    
+}
+
+get_next_yearly_date()
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+         char  vStrtDate[8+1];
+         char  vEndDate[8+1];
+         char  vTempDate[8+1];
+    EXEC SQL END  DECLARE SECTION;
+    
+    memset(vStrtDate,  '\0',sizeof(vStrtDate));
+    memset(vEndDate,   '\0',sizeof(vEndDate));
+    memset(vTempDate,  '\0',sizeof(vTempDate));
+    
+    strcpy(vStrtDate, vNextDate1);
+    
+    EXEC SQL     
+            SELECT TO_CHAR(add_months(to_date(:vStrtDate,'YYYYMMDD'),+1),'YYYYMMDD') 
+              INTO :vEndDate
+              FROM DUAL;
+
+    hinsa_trim(vEndDate);          
+
+    EXEC SQL    
+            SELECT MIN(YYYYMMDD)  
+              INTO :vTempDate                                                                                                                                                    
+              FROM (SELECT                                                                                                                                                    
+                          A.YYYYMMDD,                                                                                                                                         
+                          EMPNO,                                                                                                                                              
+                          CASE WHEN A.DAYCODE IN ('1','7') OR B.HOLIDATE IS NOT NULL                                                                                          
+                               THEN '0'                                                                                                                      
+                               ELSE '1' END DAYCODE,                                                                                                               
+                          CASE WHEN DUTYCODE IS NULL                                                                                                                          
+                               THEN (CASE WHEN A.DAYCODE IN ('1','7') OR B.HOLIDATE IS NOT NULL                                                                               
+                               THEN '49'                                                                                                             
+                               ELSE '99' END)                                                                                                             
+                               ELSE DUTYCODE END DUTYCODE                                                                                                                     
+                      FROM                                                                                                                                                    
+                          PKHCALDAYS A,                                                                                                                                       
+                          PKCHOLI B,                                                                                                                                          
+                          (SELECT DUYYMM||'01' DUTYYYMMDD, EMPNO,  DD1 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'02' DUTYYYMMDD, EMPNO,  DD2 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'03' DUTYYYMMDD, EMPNO,  DD3 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'04' DUTYYYMMDD, EMPNO,  DD4 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'05' DUTYYYMMDD, EMPNO,  DD5 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'06' DUTYYYMMDD, EMPNO,  DD6 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'07' DUTYYYMMDD, EMPNO,  DD7 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'08' DUTYYYMMDD, EMPNO,  DD8 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'09' DUTYYYMMDD, EMPNO,  DD9 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'10' DUTYYYMMDD, EMPNO, DD10 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'11' DUTYYYMMDD, EMPNO, DD11 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'12' DUTYYYMMDD, EMPNO, DD12 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'13' DUTYYYMMDD, EMPNO, DD13 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'14' DUTYYYMMDD, EMPNO, DD14 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'15' DUTYYYMMDD, EMPNO, DD15 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'16' DUTYYYMMDD, EMPNO, DD16 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'17' DUTYYYMMDD, EMPNO, DD17 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'18' DUTYYYMMDD, EMPNO, DD18 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'19' DUTYYYMMDD, EMPNO, DD19 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'20' DUTYYYMMDD, EMPNO, DD20 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'21' DUTYYYMMDD, EMPNO, DD21 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'22' DUTYYYMMDD, EMPNO, DD22 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'23' DUTYYYMMDD, EMPNO, DD23 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'24' DUTYYYMMDD, EMPNO, DD24 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'25' DUTYYYMMDD, EMPNO, DD25 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'26' DUTYYYMMDD, EMPNO, DD26 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'27' DUTYYYMMDD, EMPNO, DD27 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'28' DUTYYYMMDD, EMPNO, DD28 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'29' DUTYYYMMDD, EMPNO, DD29 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'30' DUTYYYMMDD, EMPNO, DD30 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                           SELECT DUYYMM||'31' DUTYYYMMDD, EMPNO, DD31 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vEndDate,1,6) AND EMPNO = :vEmpno         
+                          )C                                                                                                                                                  
+                       WHERE A.YYYYMMDD BETWEEN :vStrtDate AND :vEndDate                                                                                                    
+                         AND A.YYYYMMDD = B.HOLIDATE(+)                                                                                                                       
+                         AND A.YYYYMMDD = C.DUTYYYMMDD(+)                                                                                                                     
+              )A 
+              WHERE DAYCODE ='1'
+                AND DUTYCODE IN ('00','99');
+
+    hinsa_trim(vTempDate);          
+             
+    EXEC SQL    
+            SELECT MAX(YYYYMMDD)  
+            INTO :vNextDate2                                                                                                                                                    
+            FROM (                                                                                                                                                        
+                SELECT                                                                                                                                                    
+                      A.YYYYMMDD,                                                                                                                                         
+                      EMPNO,                                                                                                                                              
+                      CASE WHEN A.DAYCODE IN ('1','7') OR B.HOLIDATE IS NOT NULL                                                                                          
+                           THEN '0'                                                                                                                      
+                           ELSE '1' END DAYCODE,                                                                                                               
+                      CASE WHEN DUTYCODE IS NULL                                                                                                                          
+                           THEN (CASE WHEN A.DAYCODE IN ('1','7') OR B.HOLIDATE IS NOT NULL                                                                               
+                           THEN '49'                                                                                                             
+                           ELSE '99' END)                                                                                                             
+                           ELSE DUTYCODE END DUTYCODE                                                                                                                     
+                  FROM                                                                                                                                                    
+                      PKHCALDAYS A,                                                                                                                                       
+                      PKCHOLI B,                                                                                                                                          
+                      (SELECT DUYYMM||'01' DUTYYYMMDD, EMPNO,  DD1 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'02' DUTYYYMMDD, EMPNO,  DD2 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'03' DUTYYYMMDD, EMPNO,  DD3 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'04' DUTYYYMMDD, EMPNO,  DD4 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'05' DUTYYYMMDD, EMPNO,  DD5 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'06' DUTYYYMMDD, EMPNO,  DD6 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'07' DUTYYYMMDD, EMPNO,  DD7 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'08' DUTYYYMMDD, EMPNO,  DD8 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'09' DUTYYYMMDD, EMPNO,  DD9 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'10' DUTYYYMMDD, EMPNO, DD10 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'11' DUTYYYMMDD, EMPNO, DD11 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'12' DUTYYYMMDD, EMPNO, DD12 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'13' DUTYYYMMDD, EMPNO, DD13 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'14' DUTYYYMMDD, EMPNO, DD14 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'15' DUTYYYMMDD, EMPNO, DD15 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'16' DUTYYYMMDD, EMPNO, DD16 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'17' DUTYYYMMDD, EMPNO, DD17 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'18' DUTYYYMMDD, EMPNO, DD18 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'19' DUTYYYMMDD, EMPNO, DD19 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'20' DUTYYYMMDD, EMPNO, DD20 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'21' DUTYYYMMDD, EMPNO, DD21 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'22' DUTYYYMMDD, EMPNO, DD22 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'23' DUTYYYMMDD, EMPNO, DD23 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'24' DUTYYYMMDD, EMPNO, DD24 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'25' DUTYYYMMDD, EMPNO, DD25 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'26' DUTYYYMMDD, EMPNO, DD26 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'27' DUTYYYMMDD, EMPNO, DD27 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'28' DUTYYYMMDD, EMPNO, DD28 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'29' DUTYYYMMDD, EMPNO, DD29 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'30' DUTYYYMMDD, EMPNO, DD30 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno UNION ALL
+                       SELECT DUYYMM||'31' DUTYYYMMDD, EMPNO, DD31 DUTYCODE FROM PKHDUTY WHERE DUYYMM BETWEEN SUBSTR(:vStrtDate,1,6) AND SUBSTR(:vTempDate,1,6) AND EMPNO = :vEmpno
+                      )C                                                                                                                                                  
+                   WHERE A.YYYYMMDD BETWEEN :vStrtDate AND :vTempDate                                                                                                    
+                     AND A.YYYYMMDD = B.HOLIDATE(+)                                                                                                                       
+                     AND A.YYYYMMDD = C.DUTYYYMMDD(+)                                                                                                                     
+            )A 
+            WHERE DAYCODE ='1'
+              AND DUTYCODE IN ('63','64');
+              
+    hinsa_trim(vNextDate2);          
+                  
+    EXEC SQL     
+            SELECT PAYUTIL.GET_DUTY_CNT(:vEmpno,:vNextDate1,:vNextDate2,'1') USED_YEARLY_CN
+              INTO :vYearly_cnt
+              FROM DUAL;              
+
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+        sprintf(log_buff, "ERROR ====== [get_next_yearly_date] ORA-%05d - \n",sqlca.sqlcode);
+        Write_batlog(seqno++, log_buff);             
+        error_quit("ERROR ====== [get_next_yearly_date] =====\n");
+        return (FAIL);
+     };    
+
+     return(SUCCESS);
+}
+
+int process_message()
+{
+    int   daycode;
+    char  curryymm[6+1];
+    char  nextyymm[6+1];
+
+    
+    memset(CurrMM,     '\0',sizeof(CurrMM));
+    memset(CurrDD,     '\0',sizeof(CurrDD));
+    memset(curryymm,   '\0',sizeof(curryymm));
+    
+    memset(NextYYYY1,  '\0',sizeof(NextYYYY1));
+    memset(NextMM1,    '\0',sizeof(NextMM1));
+    memset(NextDD1,    '\0',sizeof(NextDD1));
+    memset(nextyymm,   '\0',sizeof(nextyymm));
+
+
+     /* 0. 현재시간 체크 */
+    EXEC SQL     
+            SELECT TO_CHAR(SYSDATE,'YYYYMMDDHH24mmss'),TO_CHAR(SYSDATE,'YYYYMMDD')  
+              INTO :log_rundate, :vCurrDate
+              FROM DUAL;     
+
+    hinsa_trim(log_rundate);          
+    hinsa_trim(vCurrDate);                            
+
+    EXEC SQL 
+            SELECT COUNT(*) 
+              INTO :vSend_cnt
+              FROM PYBATLOG
+             WHERE RUNDATE LIKE :vCurrDate||'%'
+               AND PROGID  =    :log_progid                          
+               AND RESULT  LIKE '%OK%';   
+               
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+    {
+        sprintf(log_buff, "ERROR ====== [기전송여부체크] ORA-%05d - \n",sqlca.sqlcode);
+        Write_batlog(seqno++, log_buff);             
+        error_quit("ERROR ====== [기전송여부체크 실패] =====\n");
+    };    
+	                
+	if( vSend_cnt > 0 ) {
+        sprintf(log_buff, "====== [금일자로 전송된 자료가 존재합니다.]\n");
+        Write_batlog(seqno++, log_buff);             
+        return(SUCCESS);
+	}
+     
+     /* 1. 금일 평일여부 체크 */
+     EXEC SQL     
+             SELECT CASE WHEN A.DAYCODE IN ('1','7') OR B.HOLIDATE IS NOT NULL 
+                         THEN 0 
+                         ELSE 1 END DAYCODE
+               INTO :daycode
+               FROM PKHCALDAYS A,
+                    PKCHOLI B
+              WHERE A.YYYYMMDD = B.HOLIDATE(+)
+                AND YYYYMMDD   = TO_CHAR(SYSDATE,'YYYYMMDD');
+              
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+        sprintf(log_buff, "ERROR ====== [평일여부체크] ORA-%05d - \n",sqlca.sqlcode);
+        Write_batlog(seqno++, log_buff);             
+        error_quit("ERROR ====== [평일여부체크 실패] =====\n");
+     };    
+     
+     /*휴일은 문자전송하지 않음*/
+     if(daycode == 0 ) return 0;
+         
+     /* 2. 다음 평일 조회 */
+     EXEC SQL     
+             SELECT MIN(YYYYMMDD) 
+               INTO :vNextDate1            
+               FROM (SELECT A.YYYYMMDD, CASE WHEN A.DAYCODE IN ('1','7') OR B.HOLIDATE IS NOT NULL 
+                                             THEN 0 
+                                             ELSE 1 END DAYCODE
+                       FROM PKHCALDAYS A,
+                            PKCHOLI B
+                      WHERE A.YYYYMMDD = B.HOLIDATE(+)
+                        AND A.YYYYMMDD BETWEEN TO_CHAR(ADD_MONTHS(SYSDATE,-1),'YYYYMMDD') AND TO_CHAR(ADD_MONTHS(SYSDATE,+1),'YYYYMMDD')
+                    )
+              WHERE DAYCODE =1
+                AND YYYYMMDD > TO_CHAR(SYSDATE,'YYYYMMDD')   ;
+
+     hinsa_trim(vNextDate1);
+   
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+         sprintf(log_buff, "ERROR ====== [다음 평일 조회] ORA-%05d - \n",sqlca.sqlcode);
+         Write_batlog(seqno++, log_buff);             
+         error_quit("ERROR ====== [다음 평일 조회 실패] =====\n");
+     };         
+     
+     strncpy(curryymm,vCurrDate,6);     
+     strncpy(CurrMM,vCurrDate+4,2);          
+     strncpy(CurrDD,vCurrDate+6,2);
+     
+     strncpy(NextYYYY1,vNextDate1,4);
+     strncpy(NextMM1,vNextDate1+4,2);
+     strncpy(NextDD1,vNextDate1+6,2);
+     strncpy(nextyymm,vNextDate1,6);
+     
+
+     
+      /* 3. 메시지 전송 대상자 조회 */
+      /*2015.05.06.hjku.. 메시지 전송대상자 추출시 연차 전일 모든 근태에 대해 전송.. 이명노M 요청
+      sprintf(sql_stmt,"select a.empno,a.korname from pkhduty a,pimpmas b where a.empno = b.empno and b.pstate < '80' and duyymm = '%s' and nvl(dd%d,'99') in ('97','98','99','00') and exists(select 1 from pimeemp where a.empno = empno) and exists(select 1 from pkhduty where duyymm ='%s' and a.empno = empno and nvl(dd%d,'99') in ('63','64'))",
+                      curryymm,atoi(CurrDD),nextyymm,atoi(NextDD1));
+      */
+     sprintf(sql_stmt,"select a.empno,a.korname "
+                      "  from pkhduty a,pimpmas b "
+                      " where a.empno = b.empno and b.pstate < '80' "
+                      "   and duyymm = '%s' "
+                      "   and nvl(dd%d,'99') not in ('63','64') "
+                      "   and exists(select 1 from pimeemp where a.empno = empno) "
+                      "   and exists(select 1 from pkhduty where duyymm ='%s' and a.empno = empno and nvl(dd%d,'99') in ('63','64'))",
+                      curryymm,atoi(CurrDD),nextyymm,atoi(NextDD1));
+
+     EXEC SQL PREPARE S FROM :sql_stmt;
+     EXEC SQL DECLARE cursor1 CURSOR FOR S;
+        
+     EXEC SQL OPEN cursor1;
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != 1405))
+     {
+          sprintf(log_buff, "Cursor cursor1 Open Error .....");
+          Write_batlog(seqno++, log_buff);
+          EXEC SQL CLOSE cursor1;
+          error_quit("작업실패...");
+     }
+   
+     rcount = 0;
+     
+     while(1)
+     {
+          memset(vEmpno,  '\0',sizeof(vEmpno));
+          memset(vKorname,'\0',sizeof(vKorname));
+        
+          EXEC SQL FETCH  cursor1 INTO  :vEmpno, :vKorname;
+          
+          hinsa_trim(vEmpno);
+          hinsa_trim(vKorname);      
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE cursor1; 
+               sprintf(log_buff, "처리된 작업대상자 : [%d] 명 \n",rcount);
+               Write_batlog(seqno++, log_buff);               
+               return;
+          }
+          
+          if  (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor cursor1 Data Fetch Error 1...");
+               EXEC SQL CLOSE cursor1;
+               error_quit("작업실패...");
+          }   
+          
+          get_next_yearly_date();
+          
+          memset(NextYYYY2,  '\0',sizeof(NextYYYY2));
+          memset(NextMM2,    '\0',sizeof(NextMM2));
+          memset(NextDD2,    '\0',sizeof(NextDD2));
+
+          strncpy(NextYYYY2,vNextDate2,4);
+          strncpy(NextMM2,vNextDate2+4,2);
+          strncpy(NextDD2,vNextDate2+6,2);
+
+/*printf("DEBUG : vEmpno[%s],vKorname[%s],vNextDate1[%s],vNextDate2[%s]\n",vEmpno,vKorname,vNextDate1,vNextDate2);             */
+          if(Send_Message() == SUCCESS) rcount++;
+/*          else
+          {
+           EXEC SQL CLOSE cursor1;
+           error_quit("작업실패...");
+          }
+*/          
+     }
+
+     return 0;
+}
+
+
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

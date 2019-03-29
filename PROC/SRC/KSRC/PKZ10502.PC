@@ -1,0 +1,827 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : pkz10502(임원 급여계산)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 급여계산
+ Programmer     : 강륜종
+ Version        : 1.00
+ Date           : 2008.05.
+
+Update Contents
+  Version   date(yy.mm.dd)   programmer   description        relevant doc.no
+   1.00     2008.05.         강륜종       pkc10802.pc를 기준으로 임원용 개발
+ ============================================================================= */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+#define  FAIL        -2
+
+/********* Function Prototype 정의 ************/
+int   Get_TaxRate(double taxlevel, double *taxrate, double *yearded);
+void  Process_TaxCalc();
+void  print_errmsg(int errcode, char *errmsg);
+
+/*********************************************
+  Global Variable
+**********************************************/
+EXEC SQL BEGIN DECLARE SECTION;
+     char    empno[5]        = "";   /* 사    번      */
+     char    korname[13]      = "";  /* 성    명      */
+     char    juminid[13+1]    = "";  /* 주민등록번호    */
+     char    paydate[9]      = "";   /* 급 여 지 급 월       */         
+     char    frempno[5]         = "";
+     char    toempno[5]         = "";
+          
+     double  totpay;                 /* 연봉              */
+     double  taxpaysum;              /* 과세급여총액          */
+     double  notaxpaysum;            /* 비과세급여총액       */
+     double  fixpay;                 /* 월정급여    */
+     double  paysum;                 /* 지급총액          */
+     double  taxpay1;                /* 과세급여          */
+     double  taxpay2;                /* 과세급여          */
+     double  taxpay3;                /* 과세급여          */
+     double  taxpay4;                /* 과세급여          */
+     double  taxpay5;                /* 과세급여          */
+     double  taxpay6;                /* 과세급여          */
+     double  taxpay7;                /* 과세급여          */
+     double  taxpay8;                /* 과세급여          */
+     
+     double  sbonamt;                /* 특별상여금(총액)     */
+     double  aidamt3;                /* 유치수수료          */
+     double  mcaramt;                /* 식대교통비           */
+     double  mcartaxamt;             /* 식대교통비(과세)  */
+     double  selfeduamt;             /* 학자금(복지기금)     */
+     double  bokjisupamt;            /* 복지연금          */
+     double  medsupamt;              /* 의료비지원금          */
+     double  trainsupamt;
+     
+     double  labinded;               /* 근로소득공제액       */
+     double  labneedded;             /* 근로소득필요경비계   */
+     double  labinamt;               /* 근로소득금액         */
+     double  inded;                  /* 소득공제액          */
+     double  basicded;               /* 기초공제액          */
+     double  mateded;                /* 배우자공제액          */
+     double  famided;                /* 부양자공제액          */
+     double  anuded;                 /* 국민연금보험료 공제액*/
+     double  standded;               /* 표준공제액 */
+     double  speded;                 /* 특별공제액 */  
+     double  obsded;                 /* 장애자공제액          */
+     double  silverded;              /* 경로우대장애액       */
+     double  womanded;               /* 부녀자공제액         */
+     double  eduded;                 /* 자녀양육비공제액     */
+     double  spededamt;              /* 특별공제액           */  
+     double  etcded1;                /* 기타공제액1          */
+     double  etcded2;                /* 기타공제액2          */     
+     double  taxinamt;               /* 과세표준금액          */
+     double  calctax;                /* 산촐세액             */  
+     double  labtaxded;              /* 근로소득세액공제     */
+     double  intax;                  /* 소득세               */
+     double  jutax;                  /* 주민세               */
+     double  intax1;                 /* 소득세               */
+     double  intax2;                 /* 소득세               */
+     double  intax3;                 /* 소득세               */
+     double  intax4;                 /* 소득세               */
+     double  intax5;                 /* 소득세               */
+     double  intax6;                 /* 소득세               */  
+     double  intax7;                 /* 소득세               */  
+     double  intax8;                 /* 소득세               */  
+     double  intax9;                 /* 소득세               */  
+     double  taxrate1;               /* 소득세율(기본-계산값)*/
+     double  taxrate2;               /* 소득세율(상여금)     */
+     double  taxrate3;               /* 소득세율(유치수수료) */
+     double  taxrate4;               /* 소득세율(복리후생A)   */
+     double  taxrate5;               /* 소득세율(복리후생B)  */
+     double  taxrate6;               /* 소득세율(기타급여1)  */
+     double  taxrate7;               /* 소득세율(기타급여2)  */
+     double  taxrate8;               /* 소득세율(기타급여3)  */
+     double  taxrate9;               /* 소득세율(기타급여4)  */
+     double  dedsum;                 /* 공제액계             */
+     double  realpay;                /* 실지급액          */
+     double  taxgross;               /* 당년과세수입누계     */
+     double  notaxgross;             /* 당년비과세수입누계   */
+     double  intaxsum;               /* 당년소득세누계       */
+     char    writeman[5]    = "";    /* 최종작업자           */  
+     
+     double  tmp_taxgross;
+     double  tmp_notaxgross;
+     double  tmp_intaxsum;
+          
+     /*  급여마스터  (PKMPMAS) 참조 변수               */
+     double  matedcnt;                /* 배우자공제수       */
+     double  famidcnt;                /* 부양자공제수       */
+     double  obscnt;                  /* 장애자공제수       */
+     double  silverdcnt;              /* 경로우대공제수     */
+     
+     /*  급여지급기준(PKCPBAS) 참조 변수               */
+     double  bonusmon;                /* 상여금분할개월수   */
+     char    bonusyn[2] = "";         /* 상역금지급여부     */  
+     double  stdded;                  /* 표준공제액        */
+     double  proprate;                /* 재형저축기금율     */
+     double  jutaxrate;               /* 주민세율        */
+     double  indedbasic;              /* 소득공제기본액     */
+     double  indedbrate;              /* 소득공제기본율     */
+     double  indedorate;              /* 소득공제초과율     */
+     double  indedlimit;              /* 소득공제한도액     */
+     double  indedorate2;             /* 소득공제초과율2    */
+     double  indedlimit2;             /* 소득공제한도액2    */
+     double  indedorate3;             /* 소득공제초과율3    */
+     double  indedlimit3;             /* 소득공제한도액3    */
+     double  indedorate4;             /* 소득공제초과율4    */
+     double  indedlimit4;             /* 소득공제한도액4    */  
+     double  taxdedbasic;             /* 세액공제기본액     */
+     double  taxdedbrate;             /* 세액공제기본율     */
+     double  taxdedorate;             /* 세액공제초과율     */
+     double  taxdedlimit;             /* 세액공제한도액     */
+     double  avgodamt;                /* 평균자가운전지원금 */
+     char    incentiveyn[2];          /* 상여만 따로 지급여부*/
+     double  specialded2;             /* 특별공제액2인이하   dsa2000 2004.05.10. 추가 */
+     double  specialded3;             /* 특별공제액3인이상   dsa2000 2004.05.10. 추가 */
+          
+     double yuedunotax         = 0;   /* 유치원학자금 비과세금액 추가 dsa2000  2006.07.*/  
+     double childded           = 0;   /*dsa2000 2007.01 Add  다자녀추가공제 */     
+EXEC SQL END   DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+
+int     rcount       = 0;
+int     i            = 0;
+
+double  YY_TaxPay       = 0;    /* 년간 급여소득추정치   */ 
+double  YY_TaxInAmt     = 0;    /* 년과세표준금액       */
+
+double  YY_LabInDed     = 0;    /* 년근로소득공제액      */
+double  YY_LabNeedDed   = 0;    /* 년근로소득필요경비계   */
+double  YY_LabInAmt     = 0;    /* 년근로소득금액   */
+double  YY_InDed        = 0;    /* 년소득공제액     */
+double  YY_CalcTax      = 0;    
+
+char    log_rundate[16] = ""; 
+char    log_progid[16]  = "";
+char    log_writeman[5] = "";
+char    log_buff[100]   = "";
+int     seqno = 0; 
+
+
+void  main(int argc,char *argv[] )
+{
+     char FL_file[255];
+                  
+     if (argc != 7) 
+     {     /* pkz10502 200805 M000 Q018 D006 pkz10502 200805000000 */
+           printf("[Usage] : pkz10502 1.급여년월 2.사번fr 3.사번to 4.작업자 5.프로그램ID 6.시작시간 \n");
+           exit(1);
+     }
+       
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkz10502");
+     
+     hinsa_get_filename(1, FL_file);
+     if (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     sprintf(paydate,"%8s",argv[1]);
+     sprintf(frempno,"%4s",argv[2]);
+     sprintf(toempno,"%4s",argv[3]);
+     sprintf(writeman,"%4s",argv[4]);
+     
+     /* DB Connect 실시.. */
+     hinsa_log_print(0,"급여계산 프로그램 시작...[pkz10502]");
+     hinsa_db_connect(); 
+       
+     strcpy(log_writeman, argv[4]);
+     strcpy(log_progid,   argv[5]);
+     strcpy(log_rundate,  argv[6]);
+       
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     
+     EXEC SQL 
+     lock table pkmpcalc in exclusive mode nowait;
+     
+     sprintf(log_buff, " [세금 및 공제금 계산... ] ");
+     Write_batlog(seqno++, log_buff);       
+                 
+     Process_TaxCalc();
+     
+     /* hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====");
+          Write_batlog(seqno++, log_buff);                     
+          error_quit("ERROR ====== [작업 실패] =====");
+     }
+     else  
+     {
+          sprintf(log_buff, "OK ====== [월급여 세금계산 성공] =====");
+          Write_batlog(seqno++, log_buff);                           
+          hinsa_exit(0,"OK ====== [월급여 세금계산 성공] =====");
+     }     
+}
+
+
+/*****************************************************************************
+    세금계산을 하는 Function.
+*****************************************************************************/
+void Process_TaxCalc()
+{
+     EXEC SQL 
+     SELECT  NVL(BONUSYN,' '),     BONUSMON,            NVL(PROPRATE,0),      NVL(JUTAXRATE,0),    NVL(STDDED,0),
+             NVL(INDEDBASIC,0),    NVL(INDEDBRATE,0),   NVL(INDEDORATE,0),    NVL(INDEDLIMIT,0),
+             NVL(INDEDORATE2,0),   NVL(INDEDLIMIT2,0),  
+             NVL(TAXDEDBASIC,0),   NVL(TAXDEDBRATE,0),  NVL(TAXDEDORATE,0),   NVL(TAXDEDLIMIT,0),
+             NVL(AVGODAMT,0),                           
+             NVL(INDEDLIMIT3,0),   NVL(INDEDORATE3,0),  NVL(INDEDLIMIT4,0),   NVL(INDEDORATE4,0),
+             NVL(CHILDNOTAX,0),    NVL(SPECIALDED2,0),  NVL(SPECIALDED3,0)
+       into :bonusyn,             :bonusmon,           :proprate,           :jutaxrate,         :stdded, 
+            :indedbasic,          :indedbrate,         :indedorate,         :indedlimit,
+            :indedorate2,         :indedlimit2,                            
+            :taxdedbasic,         :taxdedbrate,        :taxdedorate,        :taxdedlimit,
+            :avgodamt,                                                     
+            :indedlimit3,         :indedorate3,        :indedlimit4,        :indedorate4,
+            :yuedunotax,          :specialded2,        :specialded3
+       from  pkcpbas;
+     
+     if (sqlca.sqlcode != 0)
+     {    
+          print_errmsg(sqlca.sqlcode,"급여지급기준 읽기오류1...");
+          sprintf(log_buff, "급여지급기준 읽기오류1..");
+          Write_batlog(seqno++, log_buff);              
+          error_quit("작업실패...");
+     }
+     
+     Exec SQL
+     Select  incentive
+       Into :incentiveyn
+       From  Pkzcpbas;
+       
+     bonusyn[1] = '\0';
+     
+     EXEC SQL DECLARE cursor1 CURSOR FOR 
+     select  nvl(empno,     '*'), replace(nvl(juminid,'####'),' ',''), 
+             nvl(matedcnt    ,0), nvl(famidcnt   ,0),            
+             nvl(sbonamt     ,0), nvl(aidamt3    ,0),  
+             nvl(bokjisupamt ,0), nvl(medsupamt  ,0),  
+             nvl(selfeduamt  ,0), nvl(trainsupamt,0),  
+             nvl(taxpay1     ,0), nvl(taxpay2    ,0),  
+             nvl(taxpay3     ,0), nvl(taxpay4    ,0),  
+             nvl(taxpay5     ,0), nvl(taxpay6    ,0),
+             nvl(taxpay7     ,0), nvl(taxpay8    ,0),                                                    
+             nvl(paysum      ,0), nvl(totpay     ,0),
+             nvl(taxpaysum   ,0), nvl(notaxpaysum,0), 
+             nvl(basicded    ,0), nvl(mateded    ,0),  nvl(famided,    0), 
+             nvl(obsded      ,0), nvl(silverded  ,0),  nvl(womanded,   0), 
+             nvl(eduded      ,0), nvl(childded   ,0),  nvl(speded,     0),
+             nvl(anuded      ,0),                 
+            (nvl(anudamt     ,0) + nvl(meddamt,   0) + nvl(longmtamt,0) + nvl(empamt,    0) +   /* longmtamt 추가 */
+             nvl(hsorgamt    ,0) + nvl(hsintamt,  0) +  
+             nvl(sacorpcp    ,0) + nvl(sacorpamt, 0) + nvl(sabankcp ,0) + nvl(sabankamt, 0) +   /* sacorpcp,sabankcp 추가 */
+             nvl(sangamt     ,0) + nvl(nbamt,     0) +
+             nvl(saveamt3    ,0) + nvl(ticketamt, 0) + 
+             nvl(sauamt      ,0) + nvl(igamt,     0) + 
+             nvl(meddedamt   ,0) +                                  /* 2015.01 jissi 의료비대출 공제항목 추가. 손필영M 한정미 요청*/
+             nvl(dedamt0     ,0) +                                   /* 기타공제0(차량대여료)항목추가 */
+             nvl(dedamt1     ,0) + nvl(dedamt2,   0) + 
+             nvl(dedamt3     ,0) + nvl(dedamt4,   0) +
+             nvl(dedamt5     ,0) + nvl(dedamt6,   0) +
+             nvl(dedamt7     ,0) + nvl(dedamt8,   0)   ) dedsum,
+             nvl(taxrate1    ,0),  nvl(taxrate2  ,0),   nvl(taxrate3,0),    
+             nvl(taxrate4    ,0),  nvl(taxrate5  ,0),   nvl(taxrate6,0),
+             nvl(taxrate7    ,0),  nvl(taxrate8  ,0),   nvl(taxrate9,0),
+             nvl(mcartaxamt  ,0),  nvl(fixpay    ,0)
+       from  pkzmpmas a
+      where  empno >= :frempno and empno <= :toempno
+        and  payyn = 'Y';   
+     
+     EXEC SQL OPEN cursor1;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != 1405))
+     {
+          print_errmsg(sqlca.sqlcode,"Cursor cursor1 Open Error...");
+          sprintf(log_buff, "Cursor cursor1 Open Error 2.....");
+          Write_batlog(seqno++, log_buff);                       
+          EXEC SQL CLOSE cursor1;
+          error_quit("작업실패...");
+     }
+     
+     rcount = 0;
+     
+     while(1)
+     {
+           EXEC SQL FETCH  cursor1 INTO  
+                :empno,       :juminid,     
+                :matedcnt,    :famidcnt,
+                :sbonamt,     :aidamt3,
+                :bokjisupamt, :medsupamt,
+                :selfeduamt,  :trainsupamt,
+                :taxpay1,     :taxpay2,
+                :taxpay3,     :taxpay4,     
+                :taxpay5,     :taxpay6,
+                :taxpay7,     :taxpay8,
+                :paysum,      :totpay,
+                :taxpaysum,   :notaxpaysum,
+                :basicded,    :mateded,    
+                :famided,     :obsded,    
+                :silverded,   :womanded,   
+                :eduded,      :childded,   
+                :speded,      :anuded,      
+                :dedsum,
+                :taxrate1,    :taxrate2,   :taxrate3, 
+                :taxrate4,    :taxrate5,   :taxrate6,
+                :taxrate7,    :taxrate8,   :taxrate9,
+                :mcartaxamt,  :fixpay;
+           
+           if (sqlca.sqlcode == 1403)
+           {
+                EXEC SQL CLOSE cursor1;
+                printf("처리된 작업대상자 : [%d] 명 \n",rcount);
+                return;
+           }       
+           
+           if (sqlca.sqlcode != 0)
+           {
+                print_errmsg(sqlca.sqlcode,"Cursor cursor1 Data Fetch Error 1...");
+                EXEC SQL CLOSE cursor1;
+                error_quit("작업실패...");
+           }
+           
+           if ((Calc_TaxStep1() == SUCCESS) && 
+               (Calc_TaxStep_new() == SUCCESS) && 
+/*
+               (Calc_TaxStep2() == SUCCESS) && 
+               (Calc_TaxStep3() == SUCCESS) && 
+*/
+               (Get_RealPay()   == SUCCESS))
+           {
+                if (Update_Record() == SUCCESS) 
+                    rcount++;
+                else
+                {
+                    EXEC SQL CLOSE cursor1;
+                    error_quit("작업실패...");
+                }
+           }
+           else
+           {
+                EXEC SQL CLOSE cursor1;
+                error_quit("작업실패...");
+           }
+     }
+}
+
+/*****************************************************************************
+    연과세급여 추정치를 구하는 함수.
+*****************************************************************************/
+Calc_TaxStep1()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+       char  year[5]   = "";
+     EXEC SQL END DECLARE SECTION;
+       
+     char emp2[2] = "";
+     
+     if (Get_AccuSums() == FAIL)      /* 전월누계읽기  */
+        return(FAIL);
+   
+     /*if      (strcmp(empno,"M912" )==0) YY_TaxPay = totpay;                
+     else if (strcmp(empno,"M913" )==0) YY_TaxPay = totpay;                고문은 연봉 그대로*/
+     
+     YY_TaxPay = totpay + (totpay * 0.1);  /*연과세액추정치 = 연봉+연봉10%, 사외이사,고문포함 */
+     
+     /*2013.03.22 박찬일 손필영 매니저 요청 총과세액 추정치를 높여서 세금을 많이 떼어놓게 함
+
+     M151 안승윤 374,400,000원  M152 이인찬 342,000,000원  M154 이종봉 312,000,000원  M157 이방렬 218,400,000원
+     이상 연봉의 20% 가산되는 분들(4분)
+
+     다음은 연봉의 15% 가산되는 분들(3분)
+     M932 이승석 184,000,000  M933 방찬점 178,480,000  M931 홍성균 133,407,360
+     */
+     
+     /* 2014.01.23 손필영 매니저 요청으로 삭제 
+     if ((strcmp(empno,"M151")==0) || (strcmp(empno,"M152")==0) || (strcmp(empno,"M154")==0) || (strcmp(empno,"M157")==0)) 
+         YY_TaxPay = totpay + (totpay * 0.2);  //총년봉 + 20%추가.
+     if ((strcmp(empno,"M932")==0) || (strcmp(empno,"M933")==0) || (strcmp(empno,"M931")==0))      
+         YY_TaxPay = totpay + (totpay * 0.15); //총년봉 + 15%추가.
+     */
+     
+     /*dsa2000  2018.03. 항상 세금공제토록 주석처리
+     if (strcmp(incentiveyn, "Y") == 0 ) 상여만 지급시에는 기본세금 나오지 않도록. 
+     {
+         YY_TaxPay = 0;
+     }*/
+     
+   /*YY_TaxPay = totpay + (totpay * 0.1);         2010년 (모든 임원)
+     YY_TaxPay = totpay + (totpay * 0.1);         2009년 (M9 사번은 연봉 그대로.)
+     YY_TaxPay = totpay + mcartaxamt*12 -3000000; 2008년 연봉에 포함된 중식비 300만원 제외.*/
+   /*sprintf(emp2,"%.2s",empno);  if  (strcmp(emp2 ,"M9" )==0) YY_TaxPay = totpay; */
+
+     /*비과세급여만 있을 경우에는 세금 나오지 않도록 하기 위하여 추가 2012.02.22*/
+     if ((paysum - notaxpaysum) == 0 )
+         YY_TaxPay = 0;
+      
+     return(SUCCESS);
+}
+
+
+Get_AccuSums()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+       char  year[5]     = "";
+       char  basedate[9] = "";
+     EXEC SQL END DECLARE SECTION;
+     
+     char buf[3] = "";
+     
+     sprintf(year,"%.4s",paydate);
+     sprintf(buf ,"%.2s",paydate+4);
+     if (strcmp(buf,"01") == 0)
+     {
+         tmp_taxgross   = 0;
+         tmp_notaxgross = 0; 
+         tmp_intaxsum   = 0;
+         return(SUCCESS);
+     }
+     
+     EXEC SQL 
+     select  sum(taxpaysum),  sum(notaxpaysum),  
+             sum(intax),      nvl(max(paydate),'#') 
+       into :tmp_taxgross,  :tmp_notaxgross, 
+            :tmp_intaxsum,  :basedate
+       from  pkzhphis
+      where  empno   = :empno
+        and  paydate > :year
+        and  paydate < :paydate;
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {
+          printf("basedate : [%s], empno : [%s] \n",basedate, empno);
+          print_errmsg(sqlca.sqlcode,"급여이력화일 읽기오류2...");
+          sprintf(log_buff, "급여이력화일 읽기오류2..."); 
+          Write_batlog(seqno++, log_buff);               
+          return(FAIL);
+     }
+     
+     if (basedate[0] == '#') 
+     {  
+          printf("basedate : [%s], empno : [%s] \n",basedate, empno);
+          tmp_taxgross   = 0;
+          tmp_notaxgross = 0; 
+          tmp_intaxsum   = 0;
+          return(SUCCESS);
+     }
+         
+     return(SUCCESS);
+}
+
+/*****************************************************************************
+    연간근로소득금액을 구하는 루틴.
+*****************************************************************************/
+Calc_TaxStep2()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+       char  year[5]   = "";
+     EXEC SQL END DECLARE SECTION;
+     
+     double  t1, t2, t3, t4, t5 ;
+     t1 = t2 = t3 = t4 = t5 = 0;
+     
+     t1 = indedbasic * indedbrate / 100; 
+     
+     if ((YY_TaxPay > indedbasic) && (YY_TaxPay <= indedlimit2))
+     {
+         t2 = (YY_TaxPay   - indedbasic)  * indedorate  / 100;
+     }  
+     else if ((YY_TaxPay > indedlimit2) && (YY_TaxPay <= indedlimit3))
+     {
+         t2 = (indedlimit2 - indedbasic)  * indedorate  / 100;
+         t3 = (YY_TaxPay   - indedlimit2) * indedorate2 / 100;
+     }  
+     else if ((YY_TaxPay > indedlimit3) && (YY_TaxPay <= indedlimit4))
+     {
+         t2 = (indedlimit2 - indedbasic)  * indedorate  / 100;
+         t3 = (indedlimit3 - indedlimit2) * indedorate2 / 100;
+         t4 = (YY_TaxPay   - indedlimit3) * indedorate3 / 100;
+     }  
+     else if (YY_TaxPay > indedlimit4)
+     {
+         t2 = (indedlimit2 - indedbasic)  * indedorate  / 100;
+         t3 = (indedlimit3 - indedlimit2) * indedorate2 / 100;
+         t4 = (indedlimit4 - indedlimit3) * indedorate3 / 100;  
+         t5 = (YY_TaxPay   - indedlimit4) * indedorate4 / 100;  
+     }   
+     
+     YY_LabInDed = t1+t2+t3+t4+t5 ;
+       
+     YY_LabInDed = floor(YY_LabInDed);
+     
+     YY_LabNeedDed = YY_LabInDed;
+     
+     YY_LabInAmt   = YY_TaxPay - YY_LabNeedDed;
+     
+     if (YY_LabInAmt < 0)  YY_LabInAmt = 0;
+
+     /* ===== 특별공제액 변경에 따른 추가                     ====================
+       ○ 부양가족 2인 이하  120만원 → 120만원 +연간 총급여액의 2.5% 공제 → 110만원 +연간 총급여액의 2.5% 공제(2009년세법)
+       ○ 부양가족 3인 이상  240만원 → 240만원 +연간 총급여액의 5.0% 공제 → 250만원 +연간 총급여액의 5.0% 공제(2009년세법)
+                                                                                   +연간 총급여액중 4천만원 초과분의 5%(미반영)
+       ○ 부양가족 2인 이하 → 210만원 +연간 총급여액의 4.0% 공제(2012년세법)
+       ○ 부양가족 3인 이상 → 350만원 +연간 총급여액의 7.0% 공제(2012년세법)
+                                     +연간 총급여액중 4천만원 초과분의 5%(미반영)
+     ============================================================================= */    
+     if ( (matedcnt + famidcnt + 1) <= 2 )  /*본인포함+1*/
+           speded = specialded2 + (YY_TaxPay * 4.0 / 100);
+     else  speded = specialded3 + (YY_TaxPay * 7.0 / 100);  
+     /*============================================================================= */              
+     
+     YY_InDed = basicded + mateded + famided + obsded   + silverded + 
+                womanded + eduded  + speded  + childded + anuded;
+     
+     return(SUCCESS);  
+}
+
+/*****************************************************************************
+    연과세표준을 구하는 함수.
+*****************************************************************************/
+Calc_TaxStep3()
+{
+     double  taxrate;
+     double  yearded;
+     double  YY_Intax;
+     double  YY_Jutax;
+     char    emp2[2] = "";
+     char    buf[3]  = "";
+     
+     YY_TaxInAmt = YY_TaxPay - YY_LabNeedDed - YY_InDed ;    
+     
+     /* 사외이사 과세표준금액 고정.(실지급액을 특정금액으로 하기위해 .) 2008.07.14 김미진 요청. */
+     if  (strcmp(empno,"M904") == 0)  YY_TaxInAmt = 70500000;
+     
+     if (YY_TaxInAmt < 0)  YY_TaxInAmt = 0;
+     
+     /* 연세율 구하기.. */
+     if (Get_TaxRate(YY_TaxInAmt,&taxrate,&yearded) == FAIL)
+         return(FAIL);   
+     
+     /* 사외이사 최고세율로 고정. 정미정 요청   2011.02.23*/
+     if   (strcmp(empno,"M905") == 0)
+     {
+       taxrate = 35;
+       yearded = 0;
+     }
+          
+     taxrate1    = taxrate;
+     
+     /* 산출세액 */
+     YY_CalcTax  = (YY_TaxInAmt * taxrate / 100) - yearded; 
+     
+     YY_CalcTax  = floor(YY_CalcTax); 
+     
+     if (YY_CalcTax < taxdedbasic)
+     {
+         labtaxded = YY_CalcTax * taxdedbrate / 100;
+     }  
+     else
+     {
+         labtaxded = (taxdedbasic * taxdedbrate / 100) + ((YY_CalcTax - taxdedbasic) * taxdedorate / 100); 
+               
+         if (labtaxded > taxdedlimit)  labtaxded = taxdedlimit;
+     }
+     
+     labtaxded = floor(labtaxded);
+       
+     YY_Intax  = YY_CalcTax - labtaxded;
+     
+     intax1    = floor(YY_Intax / 12 / 10) * 10;  
+     
+     if (YY_Intax < 0) YY_Intax = 0;
+         
+     /*SK Networks 전임자 : 당월급여의 기본급+중식비에 대해서만 단일세율 지정.
+     if (strcmp(empno,"M138") == 0)   intax1 = floor( (fixpay + mcartaxamt) * 16 / 100 / 10 ) * 10;
+     if (strcmp(empno,"M139") == 0)   intax1 = floor( (fixpay + mcartaxamt) * 18 / 100 / 10 ) * 10;
+     if (strcmp(empno,"M140") == 0)   intax1 = floor( (fixpay + mcartaxamt) * 10 / 100 / 10 ) * 10;     */
+       
+     intax2 = floor( taxrate2 / 100 *  sbonamt     / 10) * 10;
+     intax3 = floor( taxrate3 / 100 *  aidamt3     / 10) * 10;
+     intax4 = floor( taxrate4 / 100 *  bokjisupamt / 10) * 10;
+     intax5 = floor( taxrate5 / 100 * (medsupamt +
+                                       selfeduamt )/ 10) * 10;                 /*trainsupamt 2008.09 폐지*/       
+     intax6 = floor( taxrate6 / 100 *  taxpay1     / 10) * 10;
+     intax7 = floor( taxrate7 / 100 *  taxpay2     / 10) * 10;
+     intax8 = floor( taxrate8 / 100 *  taxpay3     / 10) * 10;
+     intax9 = floor( taxrate9 / 100 *  taxpay4     / 10) * 10;
+             
+     intax  = intax1 + intax2 + intax3 + intax4 + intax5 + intax6 + intax7 + intax8 + intax9;  
+     
+     /* intax  = floor(intax / 10) * 10;
+     
+     if (strcmp(empno,"M035") == 0)
+     { printf("%f\n",intax);
+       printf("%f\n",intax1);
+       printf("%f\n",intax2);
+       printf("%f\n",intax3);
+       printf("%f\n",intax4);
+       printf("%f\n",intax5);
+       printf("%f\n",intax6);
+       printf("%f\n",intax7);
+       printf("%f\n",intax8);
+       printf("%f\n",intax9);
+     }     */
+       
+     if (intax < 0) intax = 0;
+     
+     /* 주민세 */
+     jutax  = floor( intax * jutaxrate / 100 / 10 ) * 10;
+     
+     return(SUCCESS);
+}
+
+/*****************************************************************************
+    연간근로소득금액을 구하는 루틴.
+*****************************************************************************/
+Calc_TaxStep_new()
+{
+     YY_LabInDed   = 0;
+     YY_LabNeedDed = 0;
+     YY_LabInAmt   = 0;
+     speded        = 0;  
+     YY_InDed      = 0;    
+     YY_TaxInAmt   = 0;    
+     YY_CalcTax    = 0; 
+     
+     labtaxded     = 0;   
+     
+     intax1        = trunc(taxpaysum * taxrate1 / 100 / 10) * 10;  
+     
+     if (intax1 < 0) intax1 = 0;
+                
+     intax2 = floor( taxrate2 / 100 *  sbonamt     / 10) * 10;
+     intax3 = floor( taxrate3 / 100 *  aidamt3     / 10) * 10;
+     intax4 = floor( taxrate4 / 100 *  bokjisupamt / 10) * 10;
+     intax5 = floor( taxrate5 / 100 * (medsupamt +
+                                       selfeduamt )/ 10) * 10;                 /*trainsupamt 2008.09 폐지*/       
+     intax6 = floor( taxrate6 / 100 *  taxpay1     / 10) * 10;
+     intax7 = floor( taxrate7 / 100 *  taxpay2     / 10) * 10;
+     intax8 = floor( taxrate8 / 100 *  taxpay3     / 10) * 10;
+     intax9 = floor( taxrate9 / 100 *  taxpay4     / 10) * 10;
+             
+     intax  = intax1 + intax2 + intax3 + intax4 + intax5 + intax6 + intax7 + intax8 + intax9;  
+     
+     /* intax  = floor(intax / 10) * 10;
+     
+     if (strcmp(empno,"M035") == 0)
+     { printf("%f\n",intax);
+       printf("%f\n",intax1);
+       printf("%f\n",intax2);
+       printf("%f\n",intax3);
+       printf("%f\n",intax4);
+       printf("%f\n",intax5);
+       printf("%f\n",intax6);
+       printf("%f\n",intax7);
+       printf("%f\n",intax8);
+       printf("%f\n",intax9);
+     }     */
+       
+     if (intax < 0) intax = 0;
+     
+     /* 주민세 */
+     jutax  = floor( intax * jutaxrate / 100 / 10 ) * 10;
+     
+     return(SUCCESS);
+}
+
+/****************************************************************************
+  Get_TaxRate  Function.
+*****************************************************************************/
+Get_TaxRate(double taxlevel, double *taxrate, double *yearded)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+       double  t_rate;
+       double  t_yearded;
+       double  t_taxlevel;
+     EXEC SQL END DECLARE SECTION;
+     
+     t_taxlevel = taxlevel;
+     
+     EXEC SQL
+     select  nvl(taxrate,0), nvl(yearded,0)
+       into  :t_rate,       :t_yearded
+       from  pkcpbas, pkcptax
+      where (:t_taxlevel >= taxpayfr and :t_taxlevel < taxpayto) 
+        and  taxnum = (select ctaxnum from  pkcpbas);
+     
+     if (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"연세율표 읽기오류...");
+          sprintf(log_buff, "연세율표 읽기오류....");
+          Write_batlog(seqno++, log_buff);           
+          return(FAIL);
+     }
+     
+     *taxrate = t_rate;
+     
+     *yearded = t_yearded;
+     
+     return(SUCCESS);
+}
+
+/*****************************************************************************
+         실지급액을 계산하는 루틴. 
+*****************************************************************************/
+Get_RealPay()
+{  
+     char buf[3] = "";
+     
+     taxgross   = tmp_taxgross   + taxpaysum;
+     notaxgross = tmp_notaxgross + notaxpaysum;
+     intaxsum   = tmp_intaxsum   + intax;     
+     dedsum     = dedsum  + intax + jutax;
+     realpay    = paysum - dedsum;
+     
+     return(SUCCESS);
+}
+
+/***************************************************************************
+  Update_Record()  Function.
+****************************************************************************/
+Update_Record()
+{
+     labinded   = YY_LabInDed;
+     labneedded = YY_LabNeedDed;
+     labinamt   = YY_LabInAmt;
+     inded      = YY_InDed;
+     taxinamt   = YY_TaxInAmt;
+     calctax    = YY_CalcTax;
+     
+     EXEC SQL 
+     update  pkzmpmas
+        set  yytaxpaysum = :YY_TaxPay,
+             speded      = :speded,
+             labinded    = :labinded, 
+             labinamt    = :labinamt, 
+             taxinamt    = :taxinamt, 
+             calctax     = :calctax,
+             labtaxded   = :labtaxded, 
+             intax1      = :intax1, 
+             intax2      = :intax2, 
+             intax3      = :intax3, 
+             intax4      = :intax4, 
+             intax5      = :intax5, 
+             intax6      = :intax6, 
+             intax7      = :intax7, 
+             intax8      = :intax8, 
+             intax9      = :intax9, 
+             intax       = :intax, 
+             jutax       = :jutax, 
+             taxrate1    = :taxrate1,
+             dedsum      = :dedsum,
+             realpay     = :realpay, 
+             intaxsum    = :tmp_intaxsum,
+             writeman    = :writeman,
+             writetime   = to_char(sysdate,'YYYYMMDDHH24MISSD')
+      where  empno       = :empno;
+   
+     if (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 쓰기오류...");
+          sprintf(log_buff, "월급여화일 쓰기오류...SQLCODE[%s]\n", sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);            
+          return(FAIL);
+     }
+     else  return(SUCCESS);
+}
+
+/***************************************************************************
+  print_errmsg  Function.
+****************************************************************************/
+void   print_errmsg(int errcode, char *errmsg)
+{
+     printf("[ERRCODE : %d] %s\n", errcode,errmsg);
+}
+
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);    
+          return(FAIL);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}                     
+/*hinsacc pkz10502
+mv pkz10502 ~/HINSA/proc/bin/Kbin*/
