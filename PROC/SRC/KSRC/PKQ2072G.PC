@@ -1,0 +1,957 @@
+ /*================= Program Header ==========================================
+ PROGRAM-NAME   : pkq2072g(퇴직월 상여금 계산 )
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 퇴직금
+ Programmer     : 이랑교
+ Version        : 30.01
+ Date           : 1999.03.19
+ 임시테이블 :pkmgbmas_rt
+
+Update Contents
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  1.00     1997.12.31      허철행     최초개발본             설계명세서
+  2.00     1998.06.11      김승회     수정본             전산처리요청
+  10.01    1998.08.14      이랑교     평균임금변경,상여금 일할계산
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+  30.01    1999.03.19      이랑교     지급일이 설정되어 있어도 퇴직일과 비교하여
+            퇴직일이 지급일보다 작을 경우는 bonyn을 "N"로 setting
+  30.50    2001.03.14      유효성     임원 연봉제에 따른 수정
+  30.51    2004.02.24      강륜종     Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.     
+  30.10    2004.11.    강륜종(dsa2000) Rexec대체 서비스를 위한 수정작업.  
+============================================================================= */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define  SUCCESS -1*/
+#define  FAIL    -2
+
+/* ===========================================================================
+  Function Prototype 정의
+   ========================================================================= */
+int    get_gbbas(char *);
+void   del_mas();
+void   calc_bonamt(char *);
+float  get_days(char *,char *);
+void   print_errmsg(int errcode, char *errmsg);
+
+/* ===========================================================================
+  Global Variable
+   ========================================================================= */
+
+EXEC SQL BEGIN DECLARE SECTION;
+
+  /* ----------------------------------------------------
+   상여금 마스터 관련변수
+     ---------------------------------------------------- */
+
+     char   empno[4+1]      = "";   /* 사번    */
+     char   korname[12+1]   = "";   /* 성명    */
+     char   empdate[8+1]    = "";   /* 입사일   */
+     char   paynum[2+1]     = "";   /* 급여차수   */
+     char   paycl[4]        = "";   /* 직급    */
+     float  paygr           = 0;    /* 호봉    */
+     char   orgnum[3+1]     = "";   /* 조직차수   */
+     char   deptcode[6+1]   = "";   /* 부서코드   */
+                            
+     char   bonyn[1+1]      = "";   /* 상여금 지급여부  */
+                                    /* <특이사항>   */
+     char   spkind[3+1]     = "";   /* 특이구분(인사상태)  */
+     char   spfrdate[8+1]   = "";   /* 특이기간 from  */
+     char   sptodate[8+1]   = "";   /* 특이기간 to   */
+     float  spdd            = 0;    /* 특이일   */
+                            
+     float  bonkidd         = 0;    /* 상여기준일수   */
+     char   kifrdate[8+1]   = "";   /* 근속기준일From  */
+     char   kitodate[8+1]   = "";   /* 근속기준일To   */
+     float  bongivedd       = 0;    /* 상여지급일수   */
+     char   sufrdate[8+1]   = "";   /* 수습기간From   */
+     char   sutodate[8+1]   = "";   /* 수습기간To   */
+     float  sudd            = 0;    /* 수습일수   */
+
+     char   basicyn[1+1]    = "";   /* 기본급 포함여부  */
+     char   infoyn[1+1]     = "";   /* 정보통신수당 포함여부*/
+     char   dutyyn[1+1]     = "";   /* 직무수당 포함여부  */
+     char   promyn[1+1]     = "";   /* 업무추진비 포함여부  */
+     float  standamt        = 0;    /* 기준임금   */
+
+     float  kiamt           = 0;    /* 기준지급액   */
+     float  kirate          = 0;    /* 기준지급율   */
+     float  fixamt          = 0;    /* 정액지급액   */
+     float  giveamt         = 0;    /* 총지급액   */
+
+     float  holdrate        = 0;    /* 유보율   */
+     float  holdamt         = 0;    /* 유보액   */
+     float  realamt         = 0;    /* 실지급액   */
+
+
+  /* ----------------------------------------------------
+   상여금 지급기준
+     ---------------------------------------------------- */
+
+     char   bonkind[1+1]    = "";   /* 상여구분   */
+     char   bonyymm[6+1]    = "";   /* 지급년월   */
+     char   paytype[1+1]    = "";   /* 지급방식   */
+                                    
+     char   regyn[1+1]      = "";   /* 상여지급여부(정규)  */
+     char   staffyn[1+1]    = "";   /* 상여지급여부(임원)  */
+     char   tempyn[1+1]     = "";   /* 상여지급여부(임시)  */
+                                    
+     float  r_kirate        = 0;    /* 상여기준지급율(정규) */
+     float  s_kirate        = 0;    /* 상여기준지급율(임원) */
+     float  t_kirate        = 0;    /* 상여기준지급율(임시) */
+                                    
+     float  r_kiamt         = 0;    /* 상여정액지급액(정규) */
+     float  s_kiamt         = 0;    /* 상여정액지급액(임원) */
+     float  t_kiamt         = 0;    /* 상여정액지급액(임시) */
+                                    
+     char   r_kidate[8+1]   = "";   /* 지급기준근속일(정규) */
+     char   s_kidate[8+1]   = "";   /* 지급기준근속일(임원) */
+     char   t_kidate[8+1]   = "";   /* 지급기준근속일(임시) */
+                                    
+                                    
+     char   r_basic[1+1]    = "";   /* 기본급포함여부(정규) */
+     char   s_basic[1+1]    = "";   /* 기본급포함여부(임원) */
+     char   t_basic[1+1]    = "";   /* 기본급포함여부(임시) */
+                                    
+     char   r_info[1+1]     = "";   /* 정보수당포함여부-정규*/
+     char   s_info[1+1]     = "";   /* 정보수당포함여부-임원*/
+     char   t_info[1+1]     = "";   /* 정보수당포함여부-임시*/
+                                    
+     char   r_duty[1+1]     = "";   /* 직무수당포함여부-정규*/
+     char   s_duty[1+1]     = "";   /* 직무수당포함여부-임원*/
+     char   t_duty[1+1]     = "";   /* 직무수당포함여부-임시*/
+                                    
+     char   r_prom[1+1]     = "";   /* 추진비포함여부-정규   */
+     char   s_prom[1+1]     = "";   /* 추진비포함여부-임원  */
+     char   t_prom[1+1]     = "";   /* 추진비포함여부-임시   */
+                                    
+     char   givekind[1+1]   = "";   /* 지급율 구분   */
+     float  giverate  = 0;          /* 일괄지급율   */
+                                    
+     char   holdkind[1+1]   = "";   /* 유보율 구분   */
+     float  b_holdrate      = 0;    /* 일괄유보율   */
+     float  b_holdamt       = 0;    /* 일괄유보액   */
+                                    
+     char   b_kifrdate[8+1] = "";   /* 근속기준일From  */
+     char   b_kitodate[8+1] = "";   /* 근속기준일To   */
+     float  kidd            = 0;    /* 상여기준일수   */
+                                    
+     char   fixmonthyn[1+1] = "";   /* 정액제근속개월적용  */
+     char   fixrateyn[1+1]  = "";   /* 정액제지급율적용  */
+
+ /*===========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련항목추가     하나로재개발
+============================================================================= */
+     char     fixpay[1+1]    = "";  /* 월정급여포함여부  */
+     char     bondate[8+1]   = "";  /* 상여지급일자   */
+     char     t_bondate[8+1] = "";  /* 상여지급일자   */
+     char     retdate[8+1]   = "";  /* 퇴직일자   */
+     char     retdate1[8+1]  = "";  /* 퇴직일자1   */
+                               
+     char     anfrdate[8+1]  = "";  /* 발령일From   */
+     char     antodate[8+1]  = "";  /* 발령일To    */
+     char     exfrdate[8+1]  = "";  /* 근속제외From   */
+     char     extodate[8+1]  = "";  /* 근속제외To    */
+     varchar  exkind[3+1];
+     
+     char     jobempno[4+1]  = "";  /* 작업자사번   */
+              
+     float    t_term;
+     char     t_frdate[8+1];
+     char     t_todate[8+1];
+              
+     char     retyy[4+1]  ="";
+     char     retyymm[6+1]="";
+
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+
+char  msg[300+1]  = "";
+int   id;
+char  delkind[1+1]  = "";
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char  log_rundate[16]     = ""; 
+char  log_progid[16]      = "";
+char  log_writeman[5]     = "";
+char  log_buff[100]       = "";
+int   seqno = 0; 
+
+void main(int argc, char *argv[])
+{  
+     int     i =0;
+     char FL_file[255];
+     
+     if  (argc != 5) {  /* /hper8/HINSA/proc/bin/Kbin/pkq2072g 200411 D006 pkq2072g 2004110100000 */
+          printf("[Usage] : pkq2072g  1.퇴직년월 2.작업자 3.프로그램ID 4.시작시간 \n");  
+          exit(1);
+     }  
+      
+     sprintf(retyymm,"%.6s",argv[1]);
+     sprintf(retyy  ,"%.4s",argv[1]);
+     sprintf(jobempno,"%.4s",argv[2]);
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkq2072g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     /* Dsa2000  2004.02.24.  **********************************/
+     /* DB_connect(id,0); */
+     hinsa_log_print(0,"퇴직월 상여금 계산 시작...");         
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /*dsa2000  수정..End......................................*/
+     
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[2]);
+     strcpy(log_progid,   argv[3]);
+     strcpy(log_rundate,  argv[4]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+           del_mas();
+     
+     for(i= 1 ;i<= 8 ;i++)
+     {
+          memset(bonkind,0x00,sizeof(bonkind));
+          sprintf(bonkind,"%d",i);
+          if  (get_gbbas(bonkind) == -1)
+               calc_bonamt(bonkind);
+     }
+     
+     /* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====\n");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/  
+          error_quit("ERROR ====== [작업 실패] =====\n");
+     }
+     else 
+     {
+          sprintf(log_buff, "OK ====== [상여금 추출/계산작업 작업성공] =====\n");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          hinsa_exit(0,"OK ====== [상여금 추출/계산작업 작업성공] =====\n");
+     }           
+
+}
+
+
+/* *******************************************************************
+  퇴직일에 해당하는 상여의 종류를 구합니다.
+   1. 정기상여 : 최종지급다음월"01" ~ 퇴직일
+   2. 능률제고 : 상반기,하반기
+   3. 체력단련 : 상반기(7월10일지급),
+    10일 이전 : 1월 ~ 6월 + 잔여일수
+    하반기(11월10일지급)
+    10일 이전 : 7월 ~ 퇴직일까지
+    10일 이후 : - (12월 - 퇴직일까지)
+* ****************************************************************** */
+ /*===========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      상여금지급기준 bondate추가
+============================================================================= */
+/* 1. 상여지급기준읽기   */
+int  get_gbbas(char *binkind)
+{
+     EXEC SQL
+     SELECT  BONYYMM,BONKIND,PAYTYPE, 
+             UPPER(REGYN),UPPER(STAFFYN), UPPER(TEMPYN),
+             NVL(R_KIRATE,0), NVL(S_KIRATE,0), 
+             NVL(R_KIAMT ,0), NVL(S_KIAMT ,0),
+             NVL(R_KIDATE,0), NVL(S_KIDATE,0), 
+             UPPER(NVL(R_BASIC,'N')), UPPER(NVL(S_BASIC,'N')),
+             UPPER(NVL(R_INFO ,'N')), UPPER(NVL(S_INFO ,'N')),
+             UPPER(NVL(R_DUTY ,'N')), UPPER(NVL(S_DUTY ,'N')),
+             UPPER(NVL(R_PROM ,'N')), UPPER(NVL(S_PROM ,'N')),   
+             NVL(GIVEKIND  ,'*'), NVL(GIVERATE ,  0), NVL(HOLDKIND, ' '),NVL(HOLDRATE,0),
+             NVL(HOLDAMT   ,  0), NVL(KIFRDATE ,' '), NVL(KITODATE, ' '), NVL(KIDD,0),
+             NVL(FIXMONTHYN,'N'), NVL(FIXRATEYN,'N'), NVL(BONDATE,'99999999'),
+             UPPER(NVL(R_FIXPAY,'N'))
+       INTO  :bonyymm,  :bonkind,  :paytype,  :regyn,
+             :staffyn,  :tempyn,
+             :r_kirate, :s_kirate, :r_kiamt, :s_kiamt,
+             :r_kidate, :s_kidate, 
+             :r_basic,  :s_basic,
+             :r_info,   :s_info,
+             :r_duty,   :s_duty,
+             :r_prom,   :s_prom,
+             :givekind, :giverate,   :holdkind,   :b_holdrate,
+             :b_holdamt,:b_kifrdate, :b_kitodate, :kidd,
+             :fixmonthyn, :fixrateyn, :bondate, :fixpay
+       FROM  PKCGBBAS
+      WHERE  substr(kifrdate,1,6) <= :retyymm
+        and  substr(kitodate,1,6) >= :retyymm
+        and  bonkind  = :bonkind;
+
+/* debug ***************************
+      printf(" ========bonkind=%s [%d]\n",bonkind,sqlca.sqlcode);
+* ************************** */
+
+     if ((sqlca.sqlcode == 1403) )
+     {
+          /* debug ================================
+           printf(" 상여구분[%s] 해당사항 없슴\n",bonkind);
+          *  debug ================================ */
+          return (FAIL) ;
+     }
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405))
+     {
+          print_errmsg(sqlca.sqlcode,"1. 상여지급기준읽기");
+          sprintf(log_buff, "1. 상여지급기준읽기");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+     return (SUCCESS) ;
+
+}
+
+void del_mas()
+{
+     EXEC SQL
+     DELETE  PKMGBMAS_RT;
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          print_errmsg(sqlca.sqlcode,"상여금 임시테이블 자료 삭제.");
+          sprintf(log_buff, "상여금 임시테이블 자료 삭제.");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+}
+
+
+void calc_bonamt(char *binkind)
+{
+     int cnt = 0 ;
+
+     /* 2.1 상여금 대상자 추출 */
+     EXEC SQL
+     INSERT INTO PKMGBMAS_RT (
+     EMPNO, KORNAME, EMPDATE, PAYNUM, PAYCL, PAYGR, ORGNUM, DEPTCODE,
+     BONKIND, BONYYMM, BONYN, WRITETIME, WRITEMAN
+     )
+     SELECT  EMPNO, KORNAME, EMPDATE, PAYNUM, PAYCL, PAYGR, ORGNUM, DEPTCODE,
+             :bonkind, :bonyymm, 'Y', to_char(sysdate,'YYYYMMDDHH24MISS'),
+             :jobempno
+     FROM    PKMRTMAS;
+
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          print_errmsg(sqlca.sqlcode,"2.1 상여금 대상자 추출");
+          sprintf(log_buff, "2.1 상여금 대상자 추출");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+
+ /*===========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      임원,정규직상여종류만 제외하고 모두 삭제
+  30.50    2001.03.14      유효성     임원 연봉제에 따른 수정 
+============================================================================= */
+     EXEC SQL
+     DELETE  PKMGBMAS_RT
+       /*        WHERE (PAYCL BETWEEN '01' AND '08' AND BONKIND BETWEEN '7' AND '8') OR
+       **              (PAYCL BETWEEN '09' AND '99' AND BONKIND BETWEEN '1' AND '6');
+       */
+      WHERE BONKIND BETWEEN '1' AND '6' ;
+   
+      if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+      {
+           print_errmsg(sqlca.sqlcode,"상여금 임시테이블 자료 삭제.");
+           sprintf(log_buff, "상여금 임시테이블 자료 삭제.");
+           Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+           error_quit("작업실패...");
+      }
+   
+ /*===========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      bondate가 null이면 bonyn = 'N'으로 설정
+
+  30.01    1999.03.19     이랑교     지급일이 설정되어 있어도 퇴직일과 비교하여
+        퇴직일이 지급일보다 작을 경우는 bonyn을 "N"로 setting
+============================================================================= */
+        /* --------------------------------
+   3.1.0 bonyn설정 
+  -------------------------------- */
+     EXEC SQL
+     UPDATE  PKMGBMAS_RT
+        SET  bonyn  = 'N'
+      WHERE  BONYYMM  = :bonyymm
+        AND  BONKIND  = :bonkind
+        AND  EMPNO IN ( SELECT EMPNO FROM PKMRTMAS WHERE RETDATE  < :bondate );
+
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          print_errmsg(sqlca.sqlcode,"3.1.0 bonyn설정 ");
+          sprintf(log_buff,"3.1.0 bonyn설정 ");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+
+ /*===========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+  1. bonyn이 Y/N에 따라 kifrdate,kitodate설정
+  2. bonyn 'N'이면 kifrdate ~ retdate   만큼 지급
+  3. bonyn 'Y'이면 retdate+1 ~ kitodate 만큼 추징
+============================================================================= *
+
+  30.01    1999.03.19     이랑교     주어진 상여지급기준에 부합되는 퇴직자가
+        있는지 먼저 체크하여 없으면 탈출한다.
+============================================================================= */
+     EXEC SQL 
+     SELECT COUNT(*) CNT
+       INTO  :cnt
+       FROM PKMGBMAS_RT A,PKMRTMAS B
+      WHERE A.EMPNO    = B.EMPNO
+        AND A.BONYYMM  = :bonyymm
+        AND A.BONKIND   = :bonkind;
+     
+     if (cnt == 0 ) return;
+     
+     
+     EXEC SQL DECLARE c1 CURSOR FOR
+     SELECT A.EMPNO, A.KORNAME, RETDATE, TO_CHAR(TO_DATE(RETDATE,'YYYYMMDD')+1,'YYYYMMDD') RETDATE1
+       FROM PKMGBMAS_RT A,PKMRTMAS B
+      WHERE A.EMPNO     = B.EMPNO
+        AND A.BONYYMM   = :bonyymm
+        AND A.BONKIND   = :bonkind
+      ORDER BY A.EMPNO;
+     
+     
+     EXEC SQL OPEN c1;
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405))
+     {
+          print_errmsg(sqlca.sqlcode,"Cursor c1 Open Error...");
+          sprintf(log_buff, "Cursor c1 Open Error...");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          EXEC SQL CLOSE c1;
+          error_quit("작업실패...");
+     }
+     
+     while(1)
+     {
+          EXEC SQL FETCH   c1 INTO
+          :empno, :korname, :retdate, :retdate1;
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE c1;
+               break;
+          }
+          
+          if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405))
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor c1 Data Fetch Error...");
+               sprintf(log_buff, "Cursor c1 Data Fetch Error...");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               EXEC SQL CLOSE c1;
+               error_quit("작업실패...");
+          }
+          
+          EXEC SQL
+          UPDATE  PKMGBMAS_RT
+             SET  KIFRDATE = :retdate1,
+                  KITODATE = :b_kitodate
+           WHERE  bonyymm  = :bonyymm
+             AND  bonkind  = :bonkind
+             AND  empno    = :empno
+             AND  bonyn = 'Y';
+          
+          if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403) )
+          {
+               print_errmsg(sqlca.sqlcode,"3.1.1 기준일설정(지급Y)");
+               sprintf(log_buff, "3.1.1 기준일설정(지급Y)");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               error_quit("작업실패...");
+          }
+          
+          EXEC SQL
+          UPDATE  PKMGBMAS_RT
+          SET     KIFRDATE = :b_kifrdate,
+                  KITODATE = :retdate
+          WHERE   bonyymm  = :bonyymm
+          AND     bonkind  = :bonkind
+          AND     empno    = :empno
+          AND     bonyn = 'N';
+          
+          if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+          {
+               print_errmsg(sqlca.sqlcode,"3.1.2 기준일설정(지급N)");
+               sprintf(log_buff, "3.1.2 기준일설정(지급N)");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               error_quit("작업실패...");
+          }
+     }
+          
+               /* 3.1.3 bonkidd 설정 */
+     EXEC SQL
+     UPDATE  PKMGBMAS_RT
+        SET  bonkidd  = :kidd,
+             bongivedd= (to_date(kitodate,'YYYYMMDD') -
+             to_date(kifrdate,'YYYYMMDD') + 1)
+      WHERE  bonyymm = :bonyymm
+        AND  bonkind  = :bonkind;
+     
+     /* 3.1.3.1 수습 설정 */
+     EXEC SQL 
+     UPDATE  PKMGBMAS_RT B
+        SET  (SUFRDATE,SUTODATE,SUDD )=
+             (SELECT  DECODE( GREATEST(ANFRDATE, B.KIFRDATE),B.KIFRDATE,B.KIFRDATE,ANFRDATE), 
+                      TO_CHAR(ADD_MONTHS(TO_DATE(ANFRDATE,'YYYYMMDD'),2) - 1,'YYYYMMDD') ANTODATE, 
+                      ADD_MONTHS(TO_DATE(ANFRDATE,'YYYYMMDD'),2)  - 
+                      TO_DATE( DECODE( GREATEST(ANFRDATE, B.KIFRDATE),B.KIFRDATE,B.KIFRDATE,ANFRDATE),'YYYYMMDD' ) CAL
+                FROM  PIHANNO A,  PKCGBBAS C
+               where  c.bonyymm = :bonyymm
+                 and  c.bonkind = :bonkind
+                 and  b.bonyymm = :bonyymm
+                 and  b.bonkind = :bonkind
+                 and  b.empno  = a.empno 
+                 and  ancode   = '111' 
+                 and  (a.payra = 'D51' and bpayra is null) 
+                 and  (anfrdate > to_char(add_months(to_date(c.kifrdate,'YYYYMMDD'),-1*2),'YYYYMMDD') 
+                 and  anfrdate <= c.kitodate))
+      where  bonyymm = :bonyymm
+        and  bonkind = :bonkind;
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403) )
+     {
+          print_errmsg(sqlca.sqlcode,"3.1.3.1 수습 설정");
+          sprintf(log_buff, "3.1.3.1 수습 설정");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+     
+     /* 3.1.3.2 수습기간이 마이너스인경우 보정 */
+     EXEC SQL 
+     UPDATE  PKMGBMAS_RT 
+        SET  SUFRDATE = NULL,
+             SUTODATE = NULL,
+             SUDD     = 0
+      where  bonyymm = :bonyymm
+        and  bonkind = :bonkind
+        and  nvl(sudd,0) < 0 ;
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403) )
+     {
+          print_errmsg(sqlca.sqlcode,"3.1.3.2 수습기간이 마이너스인경우 보정");
+          sprintf(log_buff, "3.1.3.2 수습기간이 마이너스인경우 보정");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+     
+     /* 3.1.3.3 수습기간이  있는 경우 bongivedd 보정 */
+     EXEC SQL
+     UPDATE  PKMGBMAS_RT 
+        SET  BONGIVEDD = BONGIVEDD - NVL(SUDD ,0)
+      WHERE  BONYYMM = :bonyymm
+        AND  BONKIND = :bonkind
+        AND  SUDD > 0 ;
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403) )
+     {
+     
+          print_errmsg(sqlca.sqlcode,"3.1.3.3  수습기간이  있는 경우 bongivedd 보정");
+          sprintf(log_buff, "3.1.3.3  수습기간이  있는 경우 bongivedd 보정");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+     
+     
+           /* 3.3.1 근속제외 */
+     EXEC SQL DECLARE c2 CURSOR FOR
+     select  A.empno, A.korname, exkind, exfrdate, B.kifrdate, extodate,
+             B.kitodate
+       from  pkhexdd A, PKMGBMAS_RT B
+      where  bonyymm = :bonyymm
+        and  bonkind = :bonkind
+        and  A.empno  = B.empno
+        and  (kifrdate is not null and kitodate is not null)
+        and ((exfrdate >= kifrdate AND exfrdate < kitodate) OR
+             (extodate >= kifrdate AND extodate < kitodate) OR
+             (exfrdate <= kifrdate AND extodate >= kitodate))
+        and  upper(exfixyn) = 'Y'
+      order  by A.empno, A.exfrdate;
+     
+     EXEC SQL OPEN c2;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+         (sqlca.sqlcode != -1405))
+     {
+          print_errmsg(sqlca.sqlcode,"Cursor c2 Open Error...");
+          sprintf(log_buff, "Cursor c2 Open Error...");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          EXEC SQL CLOSE c2;
+          error_quit("작업실패...");
+     }
+     
+     while(1)
+     {
+          EXEC SQL FETCH   c2 INTO
+          :empno, :korname, :exkind, :exfrdate, :kifrdate,
+          :extodate, :kitodate;
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE c2;
+               break;
+          }
+          
+          
+          if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405))
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor c2 Data Fetch Error...");
+               sprintf(log_buff, "Cursor c2 Data Fetch Error...");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               EXEC SQL CLOSE c2;
+               error_quit("작업실패...");
+          }
+          
+          if  (strcmp(kifrdate,exfrdate) >= 0)
+               sprintf(t_frdate,"%s",kifrdate);
+          else
+               sprintf(t_frdate,"%s",exfrdate);
+          
+          if  (strcmp(kitodate,extodate) <= 0)
+               sprintf(t_todate,"%s",kitodate);
+          else
+               sprintf(t_todate,"%s",extodate);
+          t_term = get_days(t_frdate,t_todate);
+ 
+ /*===========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+  1. bonyn이 Y/N에 따라 kifrdate,kitodate설정
+  2. bonyn 'N'이면 kifrdate ~ retdate   만큼 지급
+  3. bonyn 'Y'이면 retdate+1 ~ kitodate 만큼 추징
+============================================================================= */
+          EXEC SQL
+          UPDATE  PKMGBMAS_RT
+             SET  BONGIVEDD    = BONGIVEDD - :t_term,
+                  SPKIND    = :exkind,
+                  SPFRDATE  = :t_frdate,
+                  SPTODATE  = :t_todate,
+                  SPDD   = SPDD + :t_term
+          WHERE  bonyymm = :bonyymm
+            AND  bonkind  = :bonkind
+            AND  empno  = :empno
+            AND  bonyn = 'N';
+          
+          if  (sqlca.sqlcode != 0) 
+          {
+               print_errmsg(sqlca.sqlcode,"3.3.1 근속제외1");
+               sprintf(log_buff, "3.3.1 근속제외1");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               error_quit("작업실패...");
+          }
+     }
+
+
+        /* 잠깐 ===============================================================
+   휴직자는 휴직일도포함하여 제외하기 위해서 LEERK IMSI imsi leerk *
+  EXEC SQL
+  UPDATE  PKMGBMAS_RT
+  SET  BONGIVEDD  = NVL(BONGIVEDD,0) + 1
+  WHERE  bonyymm = :bonyymm
+  AND  bonkind  = :bonkind
+  AND     EMPNO ='0554';
+
+  if (sqlca.sqlcode != 0)
+  {
+   print_errmsg(sqlca.sqlcode,"3.1.3 bonkidd 설정");
+   error_quit("작업실패...");
+  }
+        * 잠깐 =============================================================== */
+
+ /*===========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      기준임금설정 기존루틴삭제
+============================================================================= */
+  /* 3.4 기준임금(standamt) 설정 */
+/*
+  EXEC SQL
+  UPDATE  PKMGBMAS_RT
+  SET  BASICYN = :r_basic,
+   INFOYN  = :r_info,
+   DUTYYN  = :r_duty,
+   PROMYN  = :r_prom,
+   KIRATE  = :r_kirate,
+   FIXAMT  = :r_kiamt
+  WHERE  bonyymm = :bonyymm
+  AND  bonkind  = :bonkind
+  AND  (paycl between '10' and '99');
+  if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+  {
+   print_errmsg(sqlca.sqlcode,"3.4 기준임금(standamt) 설정1");
+   error_quit("작업실패...");
+  }
+*/
+
+ /*===========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      기준임금설정항목변경
+  30.50    2001.03.14      유효성     임원 연봉제에 따른 수정 
+============================================================================= */
+/*mjs basicyn => fixpayyn */
+     EXEC SQL
+     UPDATE  PKMGBMAS_RT
+        SET  FIXPAYYN = :fixpay,
+             KIRATE   = :r_kirate,
+             FIXAMT   = :r_kiamt
+     WHERE   bonyymm = :bonyymm
+       AND   bonkind  = :bonkind ;
+/*  AND     paycl between '09' and '99';*/
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          print_errmsg(sqlca.sqlcode,"3.4 기준임금(standamt) 설정1");
+          sprintf(log_buff, "3.4 기준임금(standamt) 설정1");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+
+
+/*  EXEC SQL
+**  UPDATE  PKMGBMAS_RT
+**  SET  BASICYN = :s_basic,
+**   INFOYN  = :s_info,
+**   DUTYYN  = :s_duty,
+**   PROMYN  = :s_prom,
+**   KIRATE  = :s_kirate,
+**   FIXAMT  = :s_kiamt
+**  WHERE  bonyymm = :bonyymm
+**  AND  bonkind  = :bonkind
+**  AND  paycl between '01' and '08';
+**  if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+**  {
+**   print_errmsg(sqlca.sqlcode,"3.4 기준임금(standamt) 설정2");
+**   error_quit("작업실패...");
+**  }
+**       
+**      EXEC SQL
+**  UPDATE  PKMGBMAS_RT A
+**  SET  STANDAMT =
+**     (
+**     SELECT  DECODE(basicyn,'Y',basicamt,0)  +
+**      DECODE(infoyn,'Y',infoamt,0)  +
+**      DECODE(dutyyn,'Y',dutyamt,0)  +
+**      DECODE(promyn,'Y',promamt,0)
+**     FROM  PKMPMAS B
+**     WHERE  A.EMPNO = B.EMPNO
+**     )
+**  WHERE  bonyymm = :bonyymm
+**  AND  bonkind  = :bonkind;
+**  if (sqlca.sqlcode != 0)
+**  {
+**   print_errmsg(sqlca.sqlcode,"3.4 기준임금(standamt) 설정4");
+**   error_quit("작업실패...");
+**  }
+*/ 
+
+ /*===========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      기준임금설정항목변경
+============================================================================= */
+     EXEC SQL
+     UPDATE  PKMGBMAS_RT A
+        SET  STANDAMT =
+                       (
+                       SELECT  DECODE(fixpayyn,'Y',fixpay,0)
+                         FROM  PKMPMAS B
+                        WHERE  A.EMPNO = B.EMPNO
+                       )
+      WHERE  bonyymm = :bonyymm
+        AND  bonkind  = :bonkind;
+     
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"3.4 기준임금(standamt) 설정4");
+          sprintf(log_buff, "3.4 기준임금(standamt) 설정4");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+     
+     if ((strcmp(paytype,"1") == 0) || (strcmp(paytype,"3") == 0))
+     {
+          EXEC SQL
+          UPDATE  PKMGBMAS_RT A
+             SET  KIAMT = CEIL(STANDAMT * KIRATE / 100)
+           WHERE  bonyymm = :bonyymm
+             AND  bonkind  = :bonkind;
+          if  (sqlca.sqlcode != 0) 
+          {
+               print_errmsg(sqlca.sqlcode,"3.4 기준임금(standamt) 설정5");
+               sprintf(log_buff, "3.4 기준임금(standamt) 설정5");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               error_quit("작업실패...");
+          }
+     }
+     else
+     {
+          EXEC SQL
+          UPDATE  PKMGBMAS_RT A
+             SET  KIAMT = 0
+           WHERE  bonyymm = :bonyymm
+             AND  bonkind  = :bonkind;
+          if  (sqlca.sqlcode != 0) 
+          {
+               print_errmsg(sqlca.sqlcode,"3.4 기준임금(standamt) 설정5");
+               sprintf(log_buff, "3.4 기준임금(standamt) 설정5");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               error_quit("작업실패...");
+          }
+     }
+     
+     
+     if ((strcmp(paytype,"2") == 0) || (strcmp(paytype,"3") == 0))
+     {
+     
+          if  (strcmp(fixrateyn,"Y") == 0)
+          {
+               EXEC SQL
+               UPDATE  PKMGBMAS_RT
+                  SET  FIXAMT   = CEIL(FIXAMT * ((bongivedd+sudd)/bonkidd))
+                WHERE  bonyymm = :bonyymm
+                  AND  bonkind  = :bonkind;
+               if  (sqlca.sqlcode != 0) 
+               {
+                    print_errmsg(sqlca.sqlcode,"3.4 기준임금(standamt) 설정6");
+                    sprintf(log_buff, "3.4 기준임금(standamt) 설정6");
+                    Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+                    error_quit("작업실패...");
+               }
+          }
+     }
+     else
+     {
+          EXEC SQL
+          UPDATE  PKMGBMAS_RT
+             SET  FIXAMT = 0
+           WHERE  bonyymm = :bonyymm
+             AND  bonkind  = :bonkind;
+          if  (sqlca.sqlcode != 0) 
+          {
+               print_errmsg(sqlca.sqlcode,"3.4 기준임금(standamt) 설정6");
+               sprintf(log_buff, "3.4 기준임금(standamt) 설정6");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               error_quit("작업실패...");
+          }
+     }
+
+ /*===========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      기준임금설정항목변경
+                                      bonyn 'Y'이면 (-), bonyn 'N'이면 (+)
+============================================================================= */
+     /* 3.5 총지급액(giveamt) 설정 */
+     EXEC SQL
+     UPDATE  PKMGBMAS_RT
+        SET  giveamt = ceil(kiamt * ((bongivedd/bonkidd)+
+             decode(kitodate,NULL,1,0.8)*(nvl(sudd,0)/bonkidd))) +
+             fixamt
+     WHERE   bonyymm = :bonyymm
+       AND   bonkind  = :bonkind;
+     
+     EXEC SQL
+     UPDATE  PKMGBMAS_RT
+        SET  giveamt = giveamt*(-1)
+      WHERE  bonyymm = :bonyymm
+        AND  bonkind  = :bonkind
+        AND  bonyn = 'Y';
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403)) 
+     {
+          print_errmsg(sqlca.sqlcode,"3.5 총지급액(giveamt) 설정");
+          sprintf(log_buff, "3.5 총지급액(giveamt) 설정");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+     
+     
+     /* 3.7 실지급액 설정
+            default : 유보는 없는 걸로 */
+     
+     EXEC SQL
+     UPDATE  PKMGBMAS_RT
+        SET  realamt = giveamt
+      WHERE  bonyymm = :bonyymm
+        AND  bonkind  = :bonkind;
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"3.7 실지급액 설정");
+          sprintf(log_buff, "3.7 실지급액 설정");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+}
+
+/************************************************************
+  시작일과 종료일까지의 기간을 일단위로 구하는 함수.
+ *************************************************************/
+float get_days(char *frdate, char *todate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t1_date[8+1] = "";
+          char  t2_date[8+1] = "";
+          float  result;
+     EXEC SQL END DECLARE SECTION;
+     
+     sprintf(t1_date,"%s",frdate);
+     sprintf(t2_date,"%s",todate);
+     
+     EXEC SQL
+     SELECT  TO_DATE(:t2_date,'YYYYMMDD') - TO_DATE(:t1_date,'YYYYMMDD') + 1
+       INTO  :result
+       FROM  DUAL;
+     
+     return(result);
+}
+
+/***************************************************************************
+  print_errmsg  Function.
+ ***************************************************************************/
+void print_errmsg(int errcode, char *errmsg)
+{
+     printf(" [ERR_CODE] : (%d)\n", errcode);
+     printf(" [ERR_POSITION] : (%s)\n",errmsg);
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+                           
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

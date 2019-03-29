@@ -1,0 +1,368 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKQ2074G(퇴직자 공제금 계산)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 퇴직정산
+ Programmer     : 이랑교
+ Version        : 30.00
+ Date           : 1999.03.05
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   1.00       1997.02.16         이인환          최초개발본      설계명세서
+   30.00      1999.03.04         이랑교   신인사제도관련 변경
+         etcamt:기타대출을 퇴직월 기타공제로 전용
+   30.01      2004.02.24         강륜종         Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.          
+   31.00      2004.11.         강륜종(dsa2000)  Rexec대체 서비스를 위한 수정작업.   
+======================================================================================== */
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+EXEC SQL INCLUDE sqlca;
+EXEC SQL BEGIN DECLARE SECTION;
+     char  workyymmdd[9];
+     char  empno[5];
+     char  retdate[9];
+     int   remamt;
+     int   hsint;
+     int   days;
+     int   hstot;
+     int   hssrt;
+     int   hslong;
+     char  replyymmdd[9];
+EXEC SQL END   DECLARE SECTION;
+
+double  rate[14];
+
+FILE *fp=stdout;
+
+int  id;
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno = 0; 
+
+void main(argc,argv)
+int argc;
+char *argv[];
+{   
+     char FL_file[255];
+     
+     if  (argc != 4) {  /* /hper8/HINSA/proc/bin/Kbin/pkq2074g D006 pkq2074g 2004110100000 */
+          printf("[Usage] : pkq2074g  1.작업자사번 2.프로그램ID 3.시작시간 \n");  
+          exit(1);
+     }  
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkq2074g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     hinsa_log_print(0,"퇴직자 공제금 계산 시작...");                
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[1]);
+     strcpy(log_progid,   argv[2]);
+     strcpy(log_rundate,  argv[3]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     SetRate();
+     
+     CalcRetAmt();
+     
+     /* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====\n");
+          Write_batlog(seqno++, log_buff);   
+          error_quit("ERROR ====== [작업 실패] =====\n");
+     }
+     else  
+     {
+          sprintf(log_buff, "OK ====== [퇴직금 공제액 작업성공] =====\n");
+          Write_batlog(seqno++, log_buff); 
+          hinsa_exit(0,"OK ====== [퇴직금 공제액 작업성공] =====\n");
+     }
+}
+
+
+SetRate()
+{
+     rate[12] = 0.0;
+     rate[11] = 1.5;
+     rate[10] = 2.0;
+     rate[9]  = 2.5;
+     rate[8]  = 4.0;
+     rate[7]  = 4.5;
+     rate[6]  = 5.0;
+     rate[5]  = 6.5;
+     rate[4]  = 7.0;
+     rate[3]  = 7.5;
+     rate[2]  = 9.0;
+     rate[1]  = 9.5;
+     rate[0]  = 0.0;
+}
+
+err_print(errcode,str)
+int errcode;
+char *str;
+{
+     fprintf(fp,"[ERRCODE : %d] %s\n",errcode,str);
+}
+
+CalcRetAmt()
+{
+     int  mm;
+     char smm[3];
+     
+     EXEC  SQL DECLARE c1 CURSOR FOR
+     SELECT  empno,retdate
+       FROM  PKMRTMAS;
+     
+     EXEC SQL open  c1 ;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"1. 퇴직일 Read Error");
+          sprintf(log_buff, "1. 퇴직일 Read Error");
+          Write_batlog(seqno++, log_buff); 
+          exit(1);
+     }
+     
+     while(1)
+     {
+          EXEC   SQL FETCH c1 
+          INTO  :empno,:retdate;
+          
+          if  (sqlca.sqlcode == 1403 )
+          {
+               EXEC SQL close c1;
+               break;
+          }
+          
+          remamt = 0;
+          memset(replyymmdd,'\0',sizeof(replyymmdd));
+          memset(smm,'\0',sizeof(smm));
+          
+                       /* 설정값 초기화 */
+          EXEC  SQL
+          UPDATE  PKMRTMAS
+             SET  hsrem = 0,  hsint = 0,
+                  hssrt = 0,  hslong= 0,
+                  hsamt = 0
+           WHERE  empno = :empno;
+          
+          EXEC  SQL
+          SELECT  sum(hsamt),sum(remsum),max(repldate)
+            INTO  :hstot,:remamt,:replyymmdd
+            FROM  PKMHSMAS
+           WHERE  empno = :empno;
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 &&
+               sqlca.sqlcode != -1405)
+          {  
+               err_print(sqlca.sqlcode,"2. 주택자금 자료 read Error");
+               sprintf(log_buff, "2. 주택자금 자료 read Error");
+               Write_batlog(seqno++, log_buff); 
+               exit(1);
+          }
+          
+          if  (remamt > 0)
+          {
+               /* =================================  debug 
+               printf("~~~~~~~[%10d]%s\n",remamt,empno);
+                =================================  debug */
+               sprintf(replyymmdd,"%8s",replyymmdd);
+               memset(smm,'\0',sizeof(smm));
+               sprintf(smm,"%.2s",replyymmdd+4);
+               mm = atoi(smm);
+               
+               EXEC  SQL
+               SELECT  to_date(:retdate,'YYYYMMDD') - 
+                       to_date(:replyymmdd,'YYYYMMDD')
+                 INTO  :days
+                 FROM  dual;
+               
+               if  (days < 0)
+                    days = 0;
+               
+               hsint = remamt * days / 365 * 0.02;
+               
+               hssrt = hstot * rate[mm] / 100;
+               if (remamt - hssrt < 0 )
+               {
+                   hssrt = remamt;
+               }
+               
+               hslong = remamt - hssrt; 
+               
+               EXEC  SQL
+               UPDATE  PKMRTMAS
+                 SET   hsrem = :remamt, hsint = :hsint, 
+                       hssrt = :hssrt,  hslong= :hslong,
+                       hsamt = :remamt + :hsint
+                WHERE  empno = :empno;
+               if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+               {  
+                    err_print(sqlca.sqlcode,"3. 주택자금 setting Error");
+                    sprintf(log_buff, "3. 주택자금 setting Error");
+                    Write_batlog(seqno++, log_buff); 
+                    exit(1);
+               }
+          }   
+
+          /* ===================================== 외환대출없슴 당분간은..start
+          *   EXEC SQL
+          *   UPDATE  PKMRTMAS p
+          *   SET  fbamt = (SELECT loanamt - lrepsum
+          *       FROM   PKMFBMAS r
+          *       WHERE  r.empno = :empno)
+          *   WHERE  empno = :empno;
+          *   if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          *   {       err_print(sqlca.sqlcode,"4. 외환복지대출 seting Error");
+          *     exit(1);       
+          *   }                      
+          *===================================================  end of 4. 외환복지대출 */
+          
+          
+          /* =====================================================================================
+            .퇴직전환금 계산시 : 
+             국민연금이력에서 anuselfamt를 sum할때  '199903'까지만 포함한다.
+          ========================================================================================
+          *  변경전 :
+          *   EXEC SQL
+          *   UPDATE  PKMRTMAS p
+          *   SET  ANUAMT = (SELECT SUM(ANUSELFAMT)
+          *       FROM   PKHNPHIS R
+          *       WHERE  r.empno = :empno)
+          *   WHERE  empno = :empno;
+          *   if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          *   {  err_print(sqlca.sqlcode,"5. 국민연금 setting Error");
+          *     exit(1);
+          *   }
+          *  변경후 :
+          *   * ===============================================================
+          *   1999.04 부터 국민연금에서 퇴충부담금 부분이 없어지므로
+          *   국민연금이력에서 퇴충부담금을 공제할 경우 퇴충필드가 따로 없으므로
+          *   1999.03 까지만 합계를 낸다.
+          *   단, 중간정산 이후 금액부터
+          *   * ================================================================ */
+          
+          /*2001-01-30 중간정산이력의 기산일을 최대값을 불러온다*/   
+          EXEC SQL
+          UPDATE  PKMRTMAS p
+             SET  ANUAMT = (SELECT SUM(ANUSELFAMT)
+                              FROM    PKHNPHIS R,
+                                        (select  empno mrempno,max(mrtodate) maxmrtodate from PKHMRHIS group by empno) 
+                                          WHERE  r.empno = :empno
+                                            AND  ANUYYMM <='199903'
+                                            AND  ANUYYMM > SUBSTR(maxmrtodate,1,6)
+                                                   AND     R.EMPNO = mrempno
+                           )
+           WHERE  empno = :empno
+             AND  EMPNO IN ( SELECT EMPNO FROM PKHMRHIS B 
+                              WHERE P.EMPNO = B.EMPNO    );
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {    
+               err_print(sqlca.sqlcode,"5. 국민연금 setting Error - 중간정산 받은경우");
+               sprintf(log_buff, "5. 국민연금 setting Error - 중간정산 받은경우");
+               Write_batlog(seqno++, log_buff); 
+               exit(1);
+          }
+          
+          EXEC SQL
+          UPDATE  PKMRTMAS p
+             SET  ANUAMT = (SELECT  SUM(ANUSELFAMT)
+                              FROM  PKHNPHIS R
+                             WHERE  r.empno = :empno
+                               AND  ANUYYMM <='199903'
+                           )
+           WHERE  empno = :empno
+             AND  EMPNO NOT IN ( SELECT EMPNO FROM PKHMRHIS B  );
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {  
+               err_print(sqlca.sqlcode,"5. 국민연금 setting Error - 중간정산 안 받은 경우");
+               sprintf(log_buff, "5. 국민연금 setting Error - 중간정산 안 받은경우");
+               Write_batlog(seqno++, log_buff); 
+               exit(1);
+          }
+          
+          /* Dsa2000  2003.11.25.   사번변경자를 위하여... 중간정산을 받은 사번변경자는 국민연금전환금을 0 으로 Setting..*/
+          EXEC SQL
+          Update PKMRTMAS A 
+             Set Anuamt = 0
+           Where Juminid in (Select Juminid From Pkhrthis B where A.empdate > B.retdate)
+             and empno = :empno;
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {  
+               err_print(sqlca.sqlcode,"5. 국민연금 setting Error - 사번변경자 경우");
+               sprintf(log_buff, "5. 국민연금 setting Error - 사번변경자 경우");
+               Write_batlog(seqno++, log_buff); 
+               exit(1);
+          }
+     }
+     
+     
+     EXEC  SQL
+     UPDATE  PKMRTMAS
+        SET  HSAMT     = NVL(HSAMT,0),
+             FBAMT     = NVL(FBAMT,0),
+             NBAMT     = NVL(NBAMT,0),
+             SACORPAMT = NVL(SACORPAMT,0),
+             SABANKAMT = NVL(SABANKAMT,0),
+             SANGAMT   = NVL(SANGAMT,0),
+             ANUAMT    = NVL(ANUAMT,0);
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"6. NULL값 치환  setting Error");
+          sprintf(log_buff, "6. NULL값 치환  setting Error");
+          Write_batlog(seqno++, log_buff); 
+          exit(1);
+     }
+     
+     EXEC  SQL
+     UPDATE  PKMRTMAS
+        SET  LOANSUM = HSAMT + FBAMT + NBAMT + SACORPAMT +
+             SABANKAMT + SANGAMT + ANUAMT ;
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          err_print(sqlca.sqlcode,"6. 공제금 합  setting Error");
+          sprintf(log_buff, "6. 공제금 합  setting Error");
+          Write_batlog(seqno++, log_buff); 
+          exit(1);
+     }
+
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int  Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

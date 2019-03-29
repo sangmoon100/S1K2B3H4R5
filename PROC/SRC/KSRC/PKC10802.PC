@@ -1,0 +1,937 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKC10802(급여 세금계산_2015년 7월 이후부터 사용)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 급여계산
+ Programmer     : eyha
+ Version        : 1.00
+ Date           : 2015.07.15
+
+Update Contents
+  Version   date(yy.mm.dd)   programmer   description        relevant doc.no
+ ~                                      2015년 7월 이전 세액계산 프로그램은 pkc10803.pc에 있음
+ 1.00			2015.07.15			 eyha	        2015년 세금계산 프로세스 개선 
+ ============================================================================= */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define  SUCCESS     -1*/
+#define  FAIL        -2
+
+/********* Function Prototype 정의 ************/
+
+void  Process_Calc();
+void  Check_Existence();
+void  Get_PresidentEmpno();
+int   Get_TaxRate(double taxlevel, double *taxrate, double *yearded);
+void  Process_TaxCalc();
+void  add_months(char *,int,char *);
+void  print_errmsg(int errcode, char *errmsg);
+
+/*********************************************
+  Global Variable
+**********************************************/
+
+EXEC SQL BEGIN DECLARE SECTION;
+     char    empno[5]         = "";   /* 사   번      */
+     char    korname[13]      = "";   /* 성   명      */
+     char    juminid[13+1]    = "";   /* 주민등록번호   */
+/*     char    paydate[7]       = "";  급 여 지 급 월       */
+     char    paydate[9]       = "";   /* 급 여 지 급 일 자    */
+     char    paynum[3]        = "";   /* 급  호  차  수       */
+     char    paycl[4]         = "";   /* 직   급      */
+     float   paygr;                   /* 호   봉      */  
+     char    pstate[3]        = "";   /* 인  사  상  태       */
+     char    orgnum[4]        = "";   /* 조  직  차  수       */  
+     char    deptcode[7]      = "";   /* 부  서  코  드       */
+     char    bldcode[3]       = "";   /* 근 무 지 코 드       */
+     char    payyn[2]         = "";   /* 급여지급여부         */
+
+     double  basicded;                /* 기초공제액          */
+     double  mateded;                 /* 배우자공제액          */
+     double  famided;                 /* 부양자공제액          */
+     double  anuded;                  /* 국민연금보험료 공제액*/
+     double  standded;                /* 표준공제액 */
+     double  speded;                  /* 특별공제액 */  
+     double  obsded;                  /* 장애자공제액          */
+     double  silverded;               /* 경로우대장애액       */
+     double  womanded;                /* 부녀자공제액         */
+     double  eduded;                  /* 자녀양육비공제액     */
+     double  spededamt;               /* 특별공제액           */  
+
+     double  paysum;                  /* 지급총액          */
+     double  taxpaysum;               /* 과세급여총액          */
+     double  notaxpaysum;             /* 비과세급여총액       */
+     double  saveamt1;                /* 저축금1(재형저축)    */
+     double  saveamt2;                /* 저축금2(장기저축)    */
+     double  saveamt3;                /* 복지연금          */
+     double  saveaddamt;              /* 출연기금          */  
+     double  meddamt;                 /* 피보험자의료보험     */
+     double  empldamt;                /* 고용보험료          */
+     double  anudamt;                 /* 국민연금본인각출료   */
+     double  hsamt;                   /* 주택자금대촐          */
+     double  fbamt;                   /* 외환복지대촐          */
+     double  nbamt;                   /* 국제화재대출          */
+     double  sacorpamt;               /* 사주회사대출          */
+     double  sabankamt;               /* 사주은행대출          */
+     double  sangamt;                 /* 상조회대촐          */
+     double  loanamt1;                /* 기타대출1          */
+     double  loanamt2;                /* 기타대출2          */
+     double  loanamt3;                /* 사내근로복지기금대출_2012.07.변경사용. */
+     double  ticketamt;               /* 사용식권금액   */
+     double  nojoamt;                 /* 노조회비공제금       */
+     double  sauamt;                  /* 사우회비공제금       */
+     double  igamt;                   /* IG회비공제금         */
+     double  sobiamt;                 /* 소비조합할부금       */
+     double  parkamt;                 /* 주차비공제금         */
+     double  chollamt;                /* 천리안사용료          */
+     double  meddedamt;               /* 의료비가불공제금     */
+     double  edudedamt;               /* 교육비공제금          */
+     double  dedamt1;                 /* 기타공제1          */
+     double  dedamt2;                 /* 기타공제2          */
+     double  dedamt3;                 /* 기타공제3          */
+     double  dedamt4;                 /* 기타공제4          */
+     double  dedamt5;                 /* 기타공제5          */
+     double  bondedamt;               /* 기지급상여금   */
+     double  labinded;                /* 근로소득공제액       */
+     double  labneedded;              /* 근로소득필요경비계   */
+     double  labinamt;                /* 근로소득금액         */
+     double  inded;                   /* 소득공제액          */
+     double  taxinamt;                /* 과세표준금액          */
+     double  calctax;                 /* 산촐세액             */  
+     double  labtaxded;               /* 근로소득세액공제     */
+     double  savetaxded;              /* 저축세액공제         */
+     double  intax;                   /* 소득세               */
+     double  jutax;                   /* 주민세               */
+     double  dedsum;                  /* 공제액계             */
+     double  realpay;                 /* 실지급액          */
+     double  taxgross;                /* 당년과세수입누계     */
+     double  notaxgross;              /* 당년비과세수입누계   */
+     double  intaxsum;                /* 당년소득세누계       */
+     double  calctaxsum;              /* 당년산출세누계       */
+
+     char    cretime[16]      = "";   /* 급여생성일시         */
+     char    writetime[16]    = "";   /* 최종작업일시         */
+     char    writeman[5]      = "";   /* 최종작업자           */  
+     char    president_empno[5] = ""; /* 사장님 사번   */
+          
+     double  tmp_taxgross;
+     double  tmp_notaxgross;
+     double  tmp_intaxsum;
+     double  tmp_calctaxsum;
+     
+     /*  월급여이력화일(pkhphis)      */
+     double  qcalctax;                /* 산출세액           */
+     
+     /*  급여마스터  (PKMPMAS) 참조 변수                    */
+     double  matecnt;                 /* 가족수(배우자)     */
+     double  parentcnt;               /* 가족수(존속)       */
+     double  childcnt;                /* 가족수(비속)       */
+     double  matedcnt;                /* 배우자공제수       */
+     double  famidcnt;                /* 부양자공제수       */
+     double  obscnt;                  /* 장애자공제수       */
+     double  silverdcnt;              /* 경로우대공제수     */
+     double  womancnt;                /* 부녀자공제수       */
+     
+     /*  급여지급기준(PKCPBAS) 참조 변수                    */
+     double  stdded;                  /* 표준공제액         */
+     double  proprate;                /* 재형저축기금율     */
+     double  jutaxrate;               /* 주민세율           */
+     double  indedbasic;              /* 소득공제기본액     */
+     double  indedbrate;              /* 소득공제기본율     */
+     double  indedorate;              /* 소득공제초과율     */
+     double  indedlimit;              /* 소득공제한도액     */
+     double  indedorate2;             /* 소득공제초과율2    */
+     double  indedlimit2;             /* 소득공제한도액2    */
+     double  indedorate3;             /* 소득공제초과율3    */
+     double  indedlimit3;             /* 소득공제한도액3    */
+     double  indedorate4;             /* 소득공제초과율4    */
+     double  indedlimit4;             /* 소득공제한도액4    */  
+     double  taxdedbasic;             /* 세액공제기본액     */
+     double  taxdedbrate;             /* 세액공제기본율     */
+     double  taxdedorate;             /* 세액공제초과율     */
+     double  taxdedlimit;             /* 세액공제한도액     */
+     double  specialded1;             /* 특별공제액1인이하 추가 2015.07.22 eyha 추가*/
+     double  specialded2;             /* 특별공제액2인이하 추가 */
+     double  specialded3;             /* 특별공제액3인이상 추가 */
+     double  cstdded;                 /* 특별공제액             */     
+     double  childded          = 0;   /* 다자녀추가공제         */
+                  
+     char    month[7]          = "";  /* 월급여최종지급월   */
+     char    frempno[5]        = "";
+     char    toempno[5]        = "";
+     char    paytype[1+1]      = "";  /* 급여구분   */
+     
+     double  yy_taxsum         = 0;   /* 2015.07.15 eyha 1년 과세급여총액 추정치       */
+     double  yy_taxrate        = 0;   /* 2015.07.21 eyha 세율                          */
+     double  yy_taxamt         = 0;   /* 2015.07.22 eyha 세액                          */
+     
+     
+EXEC SQL END   DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+int    rcount  = 0;
+int    i  = 0;
+int    id  = 0;
+char   dir[80] ="";
+char   tmp_buf[101]   = "";
+char   msg[500+1]   = "";
+
+double  YY_TaxPay       = 0;
+double  YY_TaxPay_Org   = 0;
+double  YY_TaxInAmt     = 0;   /* 년과세표준금액       */
+double  YY_TaxAmt       = 0;   /* 년과세금액합          */
+double  YY_LabInDed     = 0;   /* 년근로소득공제액      */
+double  YY_LabNeedDed   = 0;   /* 년근로소득필요경비계   */
+double  YY_LabInAmt     = 0;   /* 년근로소득금액   */
+double  YY_InDed        = 0;   /* 년소득공제액    */
+double  YY_CalcTax      = 0;   
+double  labtaxdedlimit  = 0;   /* 근로소득 세액공제 한도           */
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno               = 0; 
+
+void main(int argc,char *argv[] )
+{
+     char FL_file[255];
+                                          
+     if  (argc != 8) {  /* pkc10802 200607 0000 zzzz 0 D006 pkc10802 20060719152849 */
+          printf("[Usage] : pkc10802 1.급여년월 2.사번fr 3.사번to 4.급여구분 5.작업자 6.프로그램ID 7.시작시간 \n");
+          exit(1);
+     }
+      
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkc10802");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     sprintf(paydate,"%8s",argv[1]);
+     sprintf(frempno,"%4s",argv[2]);
+     sprintf(toempno,"%4s",argv[3]);
+     sprintf(paytype,"%1s",argv[4]);     
+     sprintf(writeman,"%4s",argv[5]);
+     
+     hinsa_log_print(0,"급여계산 프로그램 시작...[pkq10802]");
+     hinsa_db_connect();  
+     
+     strcpy(log_writeman, argv[5]);
+     strcpy(log_progid,   argv[6]);
+     strcpy(log_rundate,  argv[7]);
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     EXEC SQL 
+     lock table pkmpcalc in exclusive mode nowait;
+     
+     sprintf(log_buff, " [세금 및 공제금 계산... ] ");
+     Write_batlog(seqno++, log_buff);        
+     Process_Calc();
+                
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====");
+          Write_batlog(seqno++, log_buff);                     
+          error_quit("ERROR ====== [작업 실패] =====\n");
+     }
+     else  
+     {
+          sprintf(log_buff, "OK ====== [월급여계산 작업성공] =====");
+          Write_batlog(seqno++, log_buff);                          
+          hinsa_exit(0,"OK ====== [월급여계산 작업성공] =====\n");
+     }     
+}
+
+/*****************************************************************************
+  세금계산과 공제금을 구해 실지급액을 구한다.
+*****************************************************************************/
+void Process_Calc()
+{
+     char  str[4+1] = "";
+     
+     Check_Existence();
+     Get_PresidentEmpno();
+              
+     EXEC SQL
+     update  pkcpbas
+     set  paycalctime = to_char(sysdate,'YYYYMMDDHH24MISSD');
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"급여지급기준 쓰기오류...");
+          sprintf(log_buff, "급여지급기준 쓰기오류...."); 
+          Write_batlog(seqno++, log_buff);               
+          error_quit("작업실패...");
+     }  
+     
+     Process_TaxCalc();
+}
+
+/******************************************************************************
+  Parameter로 넘겨 받은 급여지급월에 상응하는 데이타가 있는지 체크하는 루틴.
+******************************************************************************/
+void Check_Existence()
+{
+     EXEC SQL 
+     select  count(*)
+       into  :rcount
+       from  pkmpcalc
+      where  (empno >= :frempno and empno <= :toempno ) 
+        and  paydate = :paydate;
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 읽기오류1...");
+          sprintf(log_buff, "월급여화일 읽기오류1...."); 
+          Write_batlog(seqno++, log_buff);              
+          error_quit("작업실패...");
+     }
+      
+     if  (rcount == 0)
+          error_quit("해당하는 자료가 없습니다...");
+} 
+
+/****************************************************************************
+  사장님의 사번을 구하는 함수.
+*****************************************************************************/
+void Get_PresidentEmpno()
+{
+     EXEC SQL 
+     select  presempno
+       into  :president_empno
+       from  pkcpbas;
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"사장님사번을 구하는 과정에서 Error...");
+          sprintf(log_buff, "사장님사번을 구하는 과정에서 Error."); 
+          Write_batlog(seqno++, log_buff);                        
+          error_quit("작업실패...");
+     }
+}
+
+/*****************************************************************************
+   세금계산을 하는 Function.
+*****************************************************************************/
+void Process_TaxCalc()
+{
+     EXEC SQL 
+     SELECT   NVL(PROPRATE,0),      NVL(JUTAXRATE,0),  NVL(STDDED,0),
+              NVL(INDEDBASIC,0),    NVL(INDEDBRATE,0),    NVL(INDEDORATE,0),    NVL(INDEDLIMIT,0),
+              NVL(INDEDORATE2,0),   NVL(INDEDLIMIT2,0),
+              NVL(TAXDEDBASIC,0),   NVL(TAXDEDBRATE,0),   NVL(TAXDEDORATE,0),   NVL(TAXDEDLIMIT,0),
+              NVL(INDEDLIMIT3,0),   NVL(INDEDORATE3,0),   NVL(INDEDLIMIT4,0),   NVL(INDEDORATE4,0),
+              NVL(STDDED,0),        NVL(SPECIALDED1,0),   NVL(SPECIALDED2,0),   NVL(SPECIALDED3,0)   
+       into   :proprate,            :jutaxrate,           :stdded, 
+              :indedbasic,          :indedbrate,          :indedorate,          :indedlimit,
+              :indedorate2,         :indedlimit2,                               
+              :taxdedbasic,         :taxdedbrate,         :taxdedorate,         :taxdedlimit,
+              :indedlimit3,         :indedorate3,         :indedlimit4,         :indedorate4,
+              :cstdded,             :specialded1,         :specialded2,         :specialded3
+     from  pkcpbas;
+     
+     if  (sqlca.sqlcode != 0)
+     {   
+          print_errmsg(sqlca.sqlcode,"급여지급기준 읽기오류1...");
+          sprintf(log_buff, "급여지급기준 읽기오류1..");
+          Write_batlog(seqno++, log_buff);              
+          error_quit("작업실패...");
+     }
+        
+     EXEC SQL DECLARE cursor1 CURSOR FOR 
+     SELECT NVL(B.EMPNO,      '*'),   NVL(B.Paycl,       '*'),   REPLACE(NVL(A.JUMINID,'####'),' ',''), 
+            NVL(B.PAYSUM  , 0),   NVL(B.TAXPAYSUM, 0), NVL(B.NOTAXPAYSUM,0),   NVL(B.MEDDAMT,   0),
+            NVL(B.BASICDED, 0),   NVL(B.MATEDED,   0), NVL(B.FAMIDED,    0),   NVL(B.OBSDED,    0), 
+            NVL(B.SILVERDED,0),   NVL(B.WOMANDED,  0), NVL(B.SAVEAMT1,   0), 
+            NVL(B.SAVEAMT3,  0),                          
+           (
+            NVL(B.TICKETAMT,0) + NVL(B.NOJOAMT,   0) + NVL(B.SAUAMT,     0) + NVL(B.IGAMT,    0)  + 
+            NVL(B.SOBIAMT,  0) + NVL(B.PARKAMT,   0) + NVL(B.EMPLDAMT,   0) +  
+            NVL(B.CHOLLAMT, 0) + NVL(B.MEDDEDAMT, 0) + NVL(B.EDUDEDAMT,  0) + 
+            NVL(B.DEDAMT1,  0) + NVL(B.DEDAMT2,   0) + NVL(B.DEDAMT3,    0) + NVL(B.DEDAMT4,  0) + NVL(B.DEDAMT5,  0) + 
+            NVL(B.BONDEDAMT,0) + NVL(B.SAVEAMT1,  0) + NVL(B.SAVEAMT2,   0) + NVL(B.SAVEAMT3, 0) + 
+            NVL(B.HSAMT,    0) + NVL(B.FBAMT,     0) + NVL(B.NBAMT,      0) + NVL(B.SACORPAMT,0) + NVL(B.SABANKAMT,0) + 
+            NVL(B.SANGAMT,  0) + NVL(B.LOANAMT1,  0) + NVL(B.LOANAMT2,   0) + NVL(B.LOANAMT3,0)+ 
+            NVL(B.MEDDAMT,  0) + NVL(B.ANUDAMT,   0) + NVL(B.PAYHOLDAMT, 0) +
+            NVL(B.OVMCDED,  0) + NVL(B.SACORPCP,  0) + NVL(B.SABANKCP,   0) 
+            ) DEDSUM,
+            NVL(B.STANDDED, 0),  NVL(B.SPEDED,    0), NVL(B.ANUDED,     0),            
+            NVL(D.YEARTAX,0),    NVL(D.TAXRATE,   0), NVL(D.TAXAMT,     0),  /* 2015.07.15 하은영 급여세금관리자료에서 년간추정치 항목으로 대체 - 세금계산 프로세스 개선*/ 
+            NVL(B.CHILDDED,     0),                                                   
+            NVL(A.MATEDCNT,     0), NVL(A.FAMIDCNT,0)                                 
+      FROM  PKMPMAS A, PKMPCALC B, PKCPBAS C, PKYEARTAX D 
+     WHERE  (b.empno >= :frempno AND b.empno <= :toempno)  
+       AND   a.empno = b.empno
+       AND   a.empno = d.empno
+       AND   b.paydate = d.paydate
+       AND   d.paytype = :paytype;   
+     
+     EXEC SQL OPEN cursor1;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != 1405))
+     {
+          print_errmsg(sqlca.sqlcode,"Cursor cursor1 Open Error...");
+          sprintf(log_buff, "Cursor cursor1 Open Error 2.....");
+          Write_batlog(seqno++, log_buff);                       
+          EXEC SQL CLOSE cursor1;
+          error_quit("작업실패...");
+     }
+
+
+   
+     rcount = 0;
+     while(1)
+	     {
+          EXEC SQL FETCH  cursor1 INTO  
+          :empno,       :paycl,       :juminid,    :paysum,     :taxpaysum,  :notaxpaysum,
+          :meddamt,     :basicded,    :mateded,    :famided,
+          :obsded,      :silverded,   :womanded,   :saveamt1,
+          :saveamt3,    
+          :dedsum,      
+          :standded,    :speded,      :anuded, 
+          :yy_taxsum,   :yy_taxrate,  :yy_taxamt,  /* 2015.07.15 하은영 급여세금관리자료에서 년간추정치 항목으로 대체 - 세금계산 프로세스 개선*/ 
+          :childded,    :matedcnt,    :famidcnt;
+          	
+          	
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE cursor1;
+               printf("처리된 작업대상자 : [%d] 명 \n",rcount);
+               return;
+          }      
+          
+          if  (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor cursor1 Data Fetch Error 1...");
+               EXEC SQL CLOSE cursor1;
+               error_quit("작업실패...");
+          }
+          
+          if ((Calc_TaxStep1() == SUCCESS) && 
+              (Calc_TaxStep2() == SUCCESS) && 
+              (Calc_TaxStep3() == SUCCESS) && 
+              (Get_RealPay()   == SUCCESS))
+          {
+               if(Update_Record() == SUCCESS)
+                rcount++;
+               else
+               {
+                EXEC SQL CLOSE cursor1;
+                error_quit("작업실패...");
+               }
+          }
+          else
+          {
+               EXEC SQL CLOSE cursor1;
+               error_quit("작업실패...");
+          }
+     }
+}
+
+/*****************************************************************************
+   연과세급여 추정치를 구하는 함수.
+*****************************************************************************/
+Calc_TaxStep1()
+{
+     char buf[3] = "";
+     char emp[2] = "";     
+     
+     if  (Get_AccuSums() == FAIL)     /* 전월누계읽기  */
+          return(FAIL);
+     
+     sprintf(emp,"%.1s",empno);
+     sprintf(buf,"%.2s",paydate+4);
+                   
+     YY_TaxPay = yy_taxsum;  /* 2015.07.15 eyha 세금계산 자료에서 생성된 년간 추계액으로 세금계산   */ 
+          
+     return(SUCCESS);
+}
+
+/****************************************************************************
+  Get_AccuSums()  Function.
+*****************************************************************************/
+Get_AccuSums()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  year[5]   = "";
+/*          char  basedate[7]   = ""; */
+          char  basedate[9]   = "";
+     EXEC SQL END DECLARE SECTION;
+     
+     char buf[3] = "";
+     
+     sprintf(year,"%.4s",paydate);
+     sprintf(buf,"%.2s",paydate+4);
+     if  (strcmp(buf,"01") == 0)
+     {
+          tmp_taxgross   = 0;
+          tmp_notaxgross = 0; 
+          tmp_intaxsum   = 0;
+          tmp_calctaxsum = 0;
+          return(SUCCESS);
+     }
+     
+     EXEC SQL
+     select   nvl(max(paydate),'#') 
+       into  :basedate
+       from  pkhphis
+      where  empno = :empno and substr(paydate,1,4) = :year 
+        and  paydate < :paydate;
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"급여이력화일 읽기오류1...");
+          sprintf(log_buff, "급여이력화일 읽기오류1..."); 
+          Write_batlog(seqno++, log_buff);               
+          return(FAIL);
+     }
+     
+     if  (basedate[0] == '#') 
+     {
+          tmp_taxgross   = 0;
+          tmp_notaxgross = 0; 
+          tmp_intaxsum   = 0;
+          tmp_calctaxsum = 0;
+          return(SUCCESS);
+     }
+
+
+     EXEC SQL 
+     select   nvl(taxgross,0)-nvl(b.amt,0), nvl(notaxgross,0),  
+              nvl(intaxsum,0), nvl(calctaxsum,0)
+      into    :tmp_taxgross, :tmp_notaxgross, 
+              :tmp_intaxsum, :tmp_calctaxsum
+     from     pkhphis a, pkmaddtax b
+     where   a.empno     = b.empno(+)
+        and  a.empno     = :empno  
+        and  a.paydate    = :basedate
+        and  b.paydate(+) = :paydate 
+		and  b.gubun(+)  = 'T'  ;
+
+          
+     if  (sqlca.sqlcode != 0)
+     {
+          printf("basedate : [%s], empno : [%s] \n",basedate, empno);
+          print_errmsg(sqlca.sqlcode,"급여이력화일 읽기오류2...");
+          sprintf(log_buff, "급여이력화일 읽기오류2..."); 
+          Write_batlog(seqno++, log_buff);               /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+      
+        
+     return(SUCCESS);
+}
+
+/*****************************************************************************
+   연간근로소득금액을 구하는 루틴.
+*****************************************************************************/
+Calc_TaxStep2()
+{
+     double  t1, t2, t3, t4, t5 ;
+     t1 = t2 = t3 = t4 = t5 = 0;      
+
+        
+     YY_TaxPay_Org = YY_TaxPay;   /*2014.02.24.hjku. 월1000만원 이상자 세금계산 로직 적용하기 위해 start*/    
+     
+     
+     YY_TaxPay = fmin(YY_TaxPay,120000000);
+     
+     if (YY_TaxPay < indedbasic)
+           t1 = (YY_TaxPay  * indedbrate) / 100;  
+     else  t1 = (indedbasic * indedbrate) / 100;   
+     
+     if ((YY_TaxPay > indedbasic) && (YY_TaxPay <= indedlimit2))
+     {
+          t2 = (YY_TaxPay - indedbasic) * indedorate / 100;
+     }  
+     else if ((YY_TaxPay > indedlimit2) && (YY_TaxPay <= indedlimit3))
+     {
+          t2 = (indedlimit2 - indedbasic ) * indedorate  / 100;
+          t3 = (YY_TaxPay   - indedlimit2) * indedorate2 / 100;
+     }  
+     else if ((YY_TaxPay > indedlimit3) && (YY_TaxPay <= indedlimit4))
+     {
+          t2 = (indedlimit2 - indedbasic ) * indedorate  / 100;
+          t3 = (indedlimit3 - indedlimit2) * indedorate2 / 100;
+          t4 = (YY_TaxPay   - indedlimit3) * indedorate3 / 100;
+     }  
+     else if (YY_TaxPay > indedlimit4)
+     {
+          t2 = (indedlimit2 - indedbasic ) * indedorate  / 100;
+          t3 = (indedlimit3 - indedlimit2) * indedorate2 / 100;
+          t4 = (indedlimit4 - indedlimit3) * indedorate3 / 100;  
+          t5 = (YY_TaxPay   - indedlimit4) * indedorate4 / 100;  
+     }   
+     
+     YY_LabInDed = t1 + t2 + t3 + t4 + t5;
+     
+      
+     YY_LabInDed   = floor(YY_LabInDed);
+     
+     YY_LabNeedDed = YY_LabInDed;
+     
+     YY_LabInAmt   = YY_TaxPay - YY_LabNeedDed;
+     
+     if  (YY_LabInAmt < 0)
+          YY_LabInAmt = 0;
+          
+
+     /*2015.07.20 eyha 특별소득공제는 밴드구분별로 처리하게 되어 있으나 정직원 전체 통일  
+     if ( (strcmp(paycl, "H11") == 0 ) || (strcmp(paycl, "D91") == 0 ) ) *계약직, 전문계약직 표준세액공제 1백만원만 처리 *
+     {
+          speded = 0 ; 
+          standded = cstdded ;
+     }
+     else 
+     {   
+          if  (matedcnt + famidcnt + 1 <= 2 ) 
+               speded = specialded2 ;
+          else
+               speded = specialded3 ;
+             
+          standded = 0 ;         
+     } 
+     */         
+
+     if  (matedcnt + famidcnt + 1 == 1 ) 
+          speded = specialded1 ;
+     else if  (matedcnt + famidcnt + 1 <= 2 ) 
+          speded = specialded2 ;
+     else
+          speded = specialded3 ;
+        
+     standded = 0 ;     
+
+     
+     /*2015.07.22.eyha. 2015년 7월이후 특별공제*/
+     if ((matedcnt + famidcnt + 1) == 1 )  /*본인포함+1*/
+     {
+        if (YY_TaxPay <= 30000000) {
+                 speded = speded + (YY_TaxPay * 4.0 / 100);
+        }else if((YY_TaxPay >  30000000)&&(YY_TaxPay <=  45000000)) {
+                 speded = speded + (YY_TaxPay * 4.0 / 100) - ((YY_TaxPay - 30000000) * 5.0 / 100);        
+        }else if((YY_TaxPay >  45000000)&&(YY_TaxPay <=  70000000)) {
+                 speded = speded + (YY_TaxPay * 1.5 / 100);
+        }else if((YY_TaxPay >  70000000)&&(YY_TaxPay <= 120000000)) {
+                 speded = speded + (YY_TaxPay * 0.5 / 100);        
+        }
+     }else if ((matedcnt + famidcnt + 1) <= 2 )  /*본인포함+1*/
+     {
+        if (YY_TaxPay <= 30000000) {
+                 speded = speded + (YY_TaxPay * 4.0 / 100);
+        }else if((YY_TaxPay >  30000000)&&(YY_TaxPay <=  45000000)) {
+                 speded = speded + (YY_TaxPay * 4.0 / 100) - ((YY_TaxPay - 30000000) * 5.0 / 100);        
+        }else if((YY_TaxPay >  45000000)&&(YY_TaxPay <=  70000000)) {
+                 speded = speded + (YY_TaxPay * 2.0 / 100);
+        }else if((YY_TaxPay >  70000000)&&(YY_TaxPay <= 120000000)) {
+                 speded = speded + (YY_TaxPay * 1.0 / 100);        
+        }
+     }else {
+        if (YY_TaxPay <= 30000000) {
+                 speded = speded + (YY_TaxPay * 7.0 / 100);
+        }else if((YY_TaxPay >  30000000)&&(YY_TaxPay <=  45000000)) {
+                 speded = speded + (YY_TaxPay * 7.0 / 100) - ((YY_TaxPay - 30000000) * 5.0 / 100);        
+        }else if((YY_TaxPay >  45000000)&&(YY_TaxPay <=  70000000)) {
+                 speded = speded + (YY_TaxPay * 5.0 / 100);
+        }else if((YY_TaxPay >  70000000)&&(YY_TaxPay <= 120000000)) {
+                 speded = speded + (YY_TaxPay * 3.0 / 100);        
+        }
+             
+        if ((YY_TaxPay - 40000000) >  0)
+        {
+             speded = speded + ((YY_TaxPay - 40000000) * 4.0 / 100);
+        }
+     }
+
+     speded = trunc(speded);
+  
+     /* 2015.07.24 eyha 현재 자녀공제는 작업하지 않음에 뺌 */ 
+     /*YY_InDed = basicded + mateded + famided + speded + anuded + standded + childded;   */
+     YY_InDed = basicded + mateded + famided + speded + anuded + standded ;  
+
+     
+     return(SUCCESS);
+}
+/*****************************************************************************
+   연과세표준을 구하는 함수.
+*****************************************************************************/
+Calc_TaxStep3()
+{
+     double   taxrate;
+     double   yearded;
+     double   YY_Intax,YY_Intax1,YY_Intax2,YY_Intax3,YY_Intax4;
+     double   YY_Jutax;
+     double   temp_Intax;
+     double   temp_Jutax;
+     char     emp[2] = "";
+     char     buf[3] = "";
+
+     
+     YY_TaxInAmt = YY_TaxPay - YY_LabNeedDed - YY_InDed ;   
+     
+     if  (YY_TaxInAmt < 0)
+          YY_TaxInAmt = 0;
+     
+     if  (Get_TaxRate(YY_TaxInAmt,&taxrate,&yearded) == FAIL)
+          return(FAIL);
+                              
+     YY_CalcTax  = (YY_TaxInAmt*taxrate/100) - yearded; 
+     YY_CalcTax  = floor(YY_CalcTax); 
+     
+     
+     /*근로소득 세액공제*/
+     if        (YY_TaxPay <= 55000000) {
+        labtaxdedlimit = 660000;
+     }else if  (YY_TaxPay <= 70000000) {
+        labtaxdedlimit = fmax(660000-floor((YY_TaxPay-55000000)*1/2),630000);
+     }else if  (YY_TaxPay >  70000000) {
+        labtaxdedlimit = fmax(630000-floor((YY_TaxPay-70000000)*1/2),taxdedlimit  );
+     }
+     
+     if (YY_CalcTax < taxdedbasic) {
+          labtaxded = YY_CalcTax * taxdedbrate / 100;
+     }else {
+          labtaxded = (taxdedbasic * taxdedbrate / 100) +
+                                      (YY_CalcTax - taxdedbasic) * taxdedorate /100 ;
+     }
+     labtaxded  = fmin(labtaxdedlimit,labtaxded);
+
+     labtaxded  = floor(labtaxded); 
+      
+     savetaxded = saveamt1*12*proprate/100;
+     savetaxded = floor(savetaxded);   
+     
+     YY_Intax = YY_CalcTax - labtaxded - savetaxded;
+     
+     /*2014.02.24.hjku. 월1000만원 이상자 세금계산 로직 적용하기 위해*/
+     /* 2018.04.11 eyha 2018년 세법 변경 
+     if(YY_TaxPay_Org > 120000000) {
+        YY_Intax1 = fmax(fmin(YY_TaxPay_Org, 168000000)-120000000,0) * 0.98 * 0.35;
+        YY_Intax2 = fmax((YY_TaxPay_Org-168000000),0)  * 0.98 * 0.38;          
+     } else {
+        YY_Intax1 = 0;
+        YY_Intax2 = 0;
+     } 
+     YY_Intax = YY_Intax + YY_Intax1 + YY_Intax2;  */
+     
+     if(YY_TaxPay_Org > 120000000) {     	  
+        YY_Intax1 = fmax(fmin(YY_TaxPay_Org, 168000000)-120000000,0) * 0.98 * 0.35;
+        YY_Intax2 = fmax(fmin(YY_TaxPay_Org, 336000000)-168000000,0) * 0.98 * 0.38;
+        YY_Intax3 = fmax(fmin(YY_TaxPay_Org, 540000000)-336000000,0) * 0.98 * 0.4;
+        YY_Intax4 = fmax((YY_TaxPay_Org-540000000),0)  * 0.98 * 0.42;                  
+     } else {
+        YY_Intax1 = 0;
+        YY_Intax2 = 0;
+        YY_Intax3 = 0;        
+        YY_Intax4 = 0;        
+     } 
+       /* printf("[1000만원_debug] : empno=%s,YY_Intax1=%f,YY_Intax2= %f,YY_Intax3= %f,YY_Intax4= %f  \n",empno,YY_Intax1,YY_Intax2,YY_Intax3,YY_Intax4);    */
+     
+     
+     YY_Intax = YY_Intax + YY_Intax1 + YY_Intax2 + YY_Intax3 + YY_Intax4;  
+
+
+     YY_TaxPay = YY_TaxPay_Org;
+          
+     
+     if  (YY_Intax < 0) 
+          YY_Intax = 0;
+     
+     sprintf(emp,"%.1s",empno);
+     sprintf(buf,"%.2s",paydate+4);
+     
+                    
+     /*2015.07.20 eyha 년간간이세액에서 간이세액을 12개월로 무조건 나눔 */                         
+     if(YY_Intax<=0) {
+       intax = 0;          
+     }else {
+       /*intax = floor(YY_Intax / 12 / 10) * 10;*/
+       intax = floor(YY_Intax / 12);
+     }
+     
+     /*2015.07.21 eyha 세율 및 세액 적용*/
+     if(yy_taxamt > 0) {
+       intax = yy_taxamt;          
+     }else if ((yy_taxrate > 0) && (intax > 0)) {
+       intax = floor(intax * (yy_taxrate / 100) / 10) * 10 ;
+     }
+     
+          
+     if  (intax < 0)
+          intax = 0;
+     
+     savetaxded   = floor(savetaxded / 12);
+     jutax        = intax * jutaxrate / 100;
+     jutax        = floor(jutax / 10) * 10;
+     
+
+     return(SUCCESS);
+
+}
+
+/****************************************************************************
+  Get_TaxRate  Function.
+*****************************************************************************/
+Get_TaxRate(double taxlevel, double *taxrate, double *yearded)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          double  t_rate;
+          double  t_yearded;
+          double  t_taxlevel;
+     EXEC SQL END DECLARE SECTION;
+     
+     t_taxlevel = taxlevel;
+   
+     EXEC SQL
+     select nvl(taxrate,0), nvl(yearded,0)
+       into  :t_rate, :t_yearded
+       from  pkcpbas, pkcptax
+      where  (:t_taxlevel >= taxpayfr and :t_taxlevel < taxpayto) 
+        and  (taxnum = (select ctaxnum from  pkcpbas));
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"연세율표 읽기오류...");
+          sprintf(log_buff, "연세율표 읽기오류....");
+          Write_batlog(seqno++, log_buff);          
+          return(FAIL);
+     }
+   
+     *taxrate = t_rate;   /* 2015.07.24 eyha  세법 그대로 작업되도록 계산*/
+/*     *taxrate = t_rate + 1;    2011.02.23 kth 김현순 메니져 요청으로 1% 올림*/
+     *yearded = t_yearded;
+   
+     return(SUCCESS);
+}
+
+
+
+/*****************************************************************************
+               실지급액을 계산하는 루틴. 
+*****************************************************************************/
+Get_RealPay()
+{  
+     char buf[3] = "";
+     
+     taxgross   = tmp_taxgross   + taxpaysum;
+     notaxgross = tmp_notaxgross + notaxpaysum;
+     intaxsum   = tmp_intaxsum   + intax;
+     calctaxsum = 0; 
+          
+     dedsum     = dedsum  + intax + jutax + savetaxded;
+     realpay    = paysum - dedsum;
+     
+/*printf("debug[after] : dedsum=%f,intax=%f,jutax=%f,savetaxded=%f,\n",dedsum,intax,jutax,savetaxded);          */
+   
+     return(SUCCESS);
+}
+
+/***************************************************************************
+  Update_Record()  Function.
+****************************************************************************/
+Update_Record()
+{
+     labinded   = YY_LabInDed;
+     labneedded   = YY_LabNeedDed;
+     labinamt  = YY_LabInAmt;
+     inded   = YY_InDed;
+     taxinamt  = YY_TaxInAmt;
+     calctax   = YY_CalcTax;
+     
+     EXEC SQL 
+     update  pkmpcalc
+        set  
+             labinded     = :labinded, 
+             labneedded   = :labneedded,
+             labinamt     = :labinamt, 
+             inded        = :inded, 
+             taxinamt     = :taxinamt, 
+             calctax      = :calctax,
+             labtaxded    = :labtaxded, 
+             savetaxded   = :savetaxded,
+             intax        = :intax, 
+             jutax        = :jutax, 
+             dedsum       = :dedsum,
+             realpay      = :realpay, 
+             taxgross     = :taxgross,
+             notaxgross   = :notaxgross, 
+             intaxsum     = :intaxsum,
+             calctaxsum   = :calctaxsum, 
+             writeman     = :writeman,
+             writetime    = to_char(sysdate,'YYYYMMDDHH24MISSD'),
+             speded       = :speded,     
+             standded     = :standded     
+      where  empno = :empno;
+      
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 쓰기오류...");
+          sprintf(log_buff, "월급여화일 쓰기오류...SQLCODE[%s]\n", sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);            
+          return(FAIL);
+     }
+     else
+          return(SUCCESS);
+}
+
+/*****************************************************************************
+  기준월 + m 개월한 날짜를 구하는 함수.  
+ *****************************************************************************/
+void add_months(char *p_date,int i,char *result)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t_date[6+1]  = "";
+          char  retdate[6+1] = "";
+          int   n;
+     EXEC SQL END DECLARE SECTION;
+     
+     sprintf(t_date,"%.6s",p_date);
+     
+     n = i;
+     exec sql 
+     select to_char(add_months(to_date(:t_date,'YYYYMM'),:n),'YYYYMM')
+     into :retdate
+     from dual;
+     
+     retdate[6] = '\0';
+     sprintf(result,"%s",retdate);
+}
+
+/***************************************************************************
+  print_errmsg  Function.
+****************************************************************************/
+void print_errmsg(int errcode, char *errmsg)
+{
+     printf("[ERRCODE : %d] %s\n", errcode,errmsg);
+}
+
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAIL);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

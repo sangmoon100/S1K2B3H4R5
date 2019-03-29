@@ -1,0 +1,142 @@
+/*------------------------------------------------------------------------------
+    PROGRAM-NAME    : 퇴직연금 대상자 자동 확정 처리(pkq6041g)
+    SYSTEM-NAME     : 급여
+    SUBSYSTEM-NAME  : 퇴직연금
+    Programmer      : 
+    Version         : 1.0
+    Date            : 2018.08.20
+    Update Contents
+    버전    수정일    수정자   관련근거                 수정내용
+ -------------------------------------------------------------------------------
+    1.00  2018.08.20   이성규            퇴직연금 대상자 등록 후 14일 경과된 자료를 자동 확정 처리
+ -------------------------------------------------------------------------------*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define   DEBUG       0
+
+EXEC SQL INCLUDE SQLCA;
+
+int  Save_Pkhrapp();   /* PKHRAPP테이블에 자동확정처리 입력 */
+
+void main(void)
+{
+    char FL_file[255];
+    int  iRet = 0;
+    
+    STRINIT(&FL_file);
+    strcpy(FL_file,"pkq6041g");
+    
+    hinsa_get_filename(1, FL_file);
+    if  (hinsa_log_open(FL_file) == FAILURE)
+    {
+      hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+      return;
+    }
+    
+    hinsa_log_print(0,"퇴직연금 대상자 자동 확정 처리(pkq6041g.pc) 프로그램 시작...");
+
+    hinsa_db_connect();
+
+    iRet = Save_Pkhrapp();
+    if (iRet)
+        EXEC SQL COMMIT WORK;
+    else
+        EXEC SQL ROLLBACK WORK;
+    
+    hinsa_exit(0,"퇴직연금 대상자 자동 확정 처리(pkq6041g) 프로그램 종료...");
+}  
+
+int  Save_Pkhrapp(void)
+{
+    char strMsg[255];
+    char sDate[8+1];
+
+    STRINIT(&sDate);
+
+    EXEC SQL
+        SELECT BASEDATE INTO :sDate FROM PKHRPBASE WHERE BASEGUBUN = 'A';
+
+    if (SQLCODE != SQL_OK)
+    {
+        STRINIT(&strMsg);
+        sprintf(strMsg, "Fail Select from PKHRPBASE!! : %s", SQLERRM);
+        hinsa_log_print(0, strMsg);
+        return 0;
+    }        
+    /* 차후 Insert 대상만 업데이트를 수행하기 위해 CONYN = 'A'를 입력 */
+    EXEC SQL
+        INSERT INTO PKHRPAPP 
+               (SDATE, EMPNO, EMPDATE, AVGGROSS, RETRATE, RETAMT, RPTYPE, RPCOMP, 
+                RPGOOD, CONYN, CONTIME, APPDATE, APPREMARK, WRITETIME, WRITEMAN, BASEGUBUN)
+        SELECT /*+ INDEX (A I1_PKHRPAPP_LIST) */
+               :sDate, 
+               EMPNO, 
+               EMPDATE, 
+               0 AS AVGGROSS,
+               0 AS RETRATE,
+               0 AS RETAMT,
+               1 AS RPTYPE,
+               '' AS RPCOMP,
+               '' AS RPGOOD,
+               'A' AS CONYN,
+               TO_CHAR(SYSDATE, 'YYYYMMDD') AS CONTIME,
+               TO_CHAR(SYSDATE, 'YYYYMMDD') AS APPDATE,
+               '퇴직연금 제도 미선택에 따른 DB제도 자동 적용' AS APPREMARK,
+               TO_CHAR(SYSDATE, 'YYYYMMDDHH24miss') AS WRITETIME,
+               WRITEMAN, 
+               'A' AS BASEGUBUN
+          FROM PKHRPAPP_LIST A
+         WHERE A.WORKYM = SUBSTR(:sDate, 1, 6)
+           AND A.BASEGUBUN = 'A'
+           AND A.EMPNO NOT IN (SELECT EMPNO FROM PKHRPAPP)
+           AND A.WRITETIME <= TO_CHAR(SYSDATE - 14, 'YYYYMMDD')||'999999';
+
+    if (SQLCODE != SQL_OK)
+    {
+        STRINIT(&strMsg);
+        sprintf(strMsg, "Fail Insert into PKHRPAPP!! : %s", SQLERRM);
+        hinsa_log_print(0, strMsg);
+        return 0;
+    }
+    else if (SQL_PROCESS_COUNT < 1)     // 확정 대상 자료 없음
+    {
+        hinsa_log_print(0, "No Data Found!!");
+        return 0;
+    }
+    EXEC SQL
+        UPDATE PKHRPAPP P                                                                                       
+           SET CONYN = 'Y',
+               (P.AVGGROSS, P.RETRATE, P.RETAMT) = (SELECT NVL(B.BASEAMT, 0), NVL(B.RETRATE, 0), NVL(B.RETAMT, 0)
+                                                      FROM PKHMRESH B                                                  
+                                                     WHERE P.EMPNO     = B.EMPNO(+)                                     
+                                                       AND B.MRTODATE  = :sDate)                                       
+         WHERE P.SDATE = :sDate
+           AND P.BASEGUBUN = 'A'
+           AND P.CONYN = 'A';
+           
+    if (SQLCODE != SQL_OK)
+    {
+        STRINIT(&strMsg);
+        sprintf(strMsg, "Fail Update PKHRPAPP!! : %s", SQLERRM);
+        hinsa_log_print(0, strMsg);
+        return 0;
+    }
+    STRINIT(&strMsg);
+    sprintf(strMsg, "퇴직연금 신청 관리(PKHRPAPP)테이블 입력 건수 : %d", SQL_PROCESS_COUNT);
+    hinsa_log_print(0, strMsg);
+    
+    return 1;
+}
+

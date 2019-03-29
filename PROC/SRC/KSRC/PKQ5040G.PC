@@ -1,0 +1,1675 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKQ5040G(퇴직중간 정산 생성/계산)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 퇴직정산
+ Programmer     : 윤 형식
+ Version        : 1.00
+ Date           : 1998.02.17
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   1.00       1998.02.17         윤 형식         최초개발본      설계명세서
+   
+[2003.08.11] [강륜종 추가]  임원 평균임금/지급율 계산 방식이 pkq5090g.pc 에 반영된 내용이 반영이 되어 있지 않아 추가함.
+   31.00      2001.03.13         유효성        임원 연봉제에 따른 평균임금 계산방법 변경
+                                               임원 평균임금= (총연봉+1년분중식비)/12
+   32.00      2002.06.21         유효성        임원 퇴직지급율 계산시 직위별 재임기간으로 
+                                               산정하게 제도 변경됨
+[2003.08.11] [강륜종 추가 End........................................]
+
+   32.01      2004.02.24         강륜종        Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드. 
+   33.00      2004.10.12       강륜종(dsa2000) 중간정산 여러번 하는 사원을 위한 세금 계산로직 추가.   
+   34.00      2004.12.         강륜종(dsa2000) Rexec대체 서비스를 위한 수정작업.       
+   34.01      2005.01.13       dsa2000         퇴직세액공제   2005년부터 폐지   
+   34.02      2006.03.07       dsa2000         퇴직소득공제 세율변경 (50% => 45%)
+==================================================================================================================*/ 
+
+/*=============================================================================
+user lib : 평균임금 구하는...
+  lib_name : hperlib.a
+  lib_src  : avgpay.pc
+  lib_function_name  : get_mr_avgpay(
+      p_empno,
+      t_baseyymm,
+      &avgpay1, * 초과근무수당 100%적용 평균임금*
+      &avgpay2, * 초과근무수당 상한값 적용평균임금* 
+      &ovtmamt1,* 초과근무수당 100%  *   
+      &ovtmamt2)* 초과근무수당 상한값*   
+============================================================================= */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+/*#include "mis.h"*/
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define  SUCCESS -1*/
+#define  FAIL        -2
+/*#define  HOMEDIR  "/hper/insa"    Dsa2000 추가*/
+
+/* 함수의 Proto type 선언 */
+void Make_PKMMRMAS();
+void Calc_Retintax();
+void Calc_Avggross();
+void Calc_Retrealamt();
+void Calc_Retamt();
+
+/* 전역 변수 선언 */
+EXEC SQL BEGIN DECLARE SECTION ;
+     char   g_mrtodate[8+1] = "";  /* 중간 정산 기산일 to */
+     char   g_isall[1+1]    = "";  /* 전체 삭제 여부      */
+     char   g_frempno[4+1]  = "";  /* 사번from            */
+     char   g_toempno[4+1]  = "";  /* 사번to              */
+     char   g_workemp[4+1]  = "";  /* 작업사번            */
+
+/*2012년 이전 근속년수 추가 시작 2013.02.18*/     
+     char    empno[5];
+     char    mrfrdate[9];
+     char    mrtodate[9];
+     char    bretfrday[9];     
+     int     dutydd;
+     int     dutymm;     
+     int     exdd; 
+     int     realdd;    
+     int     realmm;    
+     int     realyy;    
+          
+     int     retdd;    
+     int     retmm;    
+     int     retyy;    
+
+     int     dutydd2012;  
+     int     exdd2012;    
+
+     int     retdd2012;
+     int     retmm2012;
+     int     retyy2012;     
+
+     int     retyy2013; 
+     
+    double avgtaxstamt1;    
+    double rettaxrate1;
+    double retavgtax1;
+    double retcalctax1;
+        
+
+/*정산(합산) 변수*/
+     char    mrfrdate_calc[9];
+     char    mrtodate_calc[9];          
+     int     dutydd_calc;  
+     int     dutymm_calc;       
+     int     exdd_calc;    
+     int     realdd_calc;
+     int     realmm_calc;
+     int     realyy_calc;   
+
+    double retamtsum;             
+    double fixded; 
+    double conded; 
+    double rinded; 
+    double taxstamt;
+    double avgtaxstamt;    
+    double retavgtaxstamt;    
+    double rettaxrate;
+    double retavgtax;
+    double retavgcalctax;    
+    double retcalctax;
+    
+    double calcintax;
+    double calcjutax;
+        
+    double retintax;
+    double retjutax;     
+    
+    double bretintax;
+
+ /*2012.12.31 이전 변수*/
+     char    mrfrdate_2012[9];
+     char    mrtodate_2012[9];          
+     int     dutydd_2012;  
+     int     dutymm_2012;       
+     int     exdd_2012;    
+     int     realdd_2012;
+     int     realmm_2012;
+     int     realyy_2012;   
+
+    double taxstamt_2012; 
+    double avgtaxstamt_2012;    
+    double retavgtaxstamt_2012;    
+    double rettaxrate_2012;
+    double retavgtax_2012;
+    double retavgcalctax_2012;    
+    double retcalctax_2012;
+    double retintax_2012;       
+     
+/*2013.01.01 이전 변수*/     
+     char    mrfrdate_2013[9];
+     char    mrtodate_2013[9];          
+     int     dutydd_2013;  
+     int     dutymm_2013;       
+     int     exdd_2013;    
+     int     realdd_2013;
+     int     realmm_2013;
+     int     realyy_2013;    
+     
+    double taxstamt_2013; 
+    double avgtaxstamt_2013;    
+    double retavgtaxstamt_2013;    
+    double rettaxrate_2013;
+    double retavgtax_2013;
+    double retavgcalctax_2013;    
+    double retcalctax_2013;
+    double retintax_2013;    
+    
+    double change_pay_2016     ;  //2015.12.15 eyha add
+    double change_payded_2016  ;  //2015.12.15 eyha add         
+    double taxstamt_2016       ;  //2015.12.15 eyha add    
+    double rettaxrate_2016     ;  //2015.12.15 eyha add    
+    double retavgtax_2016      ;  //2015.12.15 eyha add
+    double retcalctax_2016     ;  //2015.12.15 eyha add
+    double retintax_2016       ;  //2015.12.15 eyha add
+    double retintax_calc       ;  //2015.12.15 eyha add                        
+    
+
+    struct
+    {      double taxfr   ;
+           double taxto   ;
+           double taxrate ;
+           double yearded ;
+    } taxtbl[10];
+     
+/*2012년 이전 근속년수 추가 종료 2013.02.18*/     
+     
+EXEC SQL END DECLARE SECTION ;
+
+EXEC SQL INCLUDE SQLCA;
+
+int     id;
+
+/*Dsa2000 추가*/
+char    cmdline[256];
+/*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno = 0; 
+int  taxtblcnt=0;
+int  taxtblidx=0;
+
+FILE *fp = stdout;
+
+void main(int argc,char *argv[])
+{
+     char FL_file[255];
+     char *HOMEDIR;
+     HOMEDIR = hinsa_home();
+     strcat(HOMEDIR,"/proc/");
+     
+     if  (argc != 8) {   /* /hper8/HINSA/proc/bin/Kbin/pkq5040g 20161231 1 0000 zzzz D006 pkq5040g 2004110100000 */  
+          printf("[Usage] : pkq5040g 1.중간정산기산일TO 2. 1 or 0(전체) 3.사번FROM 4.사번TO 5.작업사번 6.프로그램ID 7.시작시간\n");
+          exit(1);
+     }
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkq5040g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     strcpy(g_mrtodate,argv[1]);
+     strcpy(g_isall   ,argv[2]);
+     strcpy(g_frempno ,argv[3]);
+     strcpy(g_toempno ,argv[4]);
+     strcpy(g_workemp ,argv[5]);
+     
+     /* Dsa2000  2004.02.24.  **********************************/
+     /* DB_connect(id,0); */
+     hinsa_log_print(0,"퇴직중간 정산 생성/계산 시작...");        
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /*dsa2000  수정..End......................................*/
+     
+     /*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[5]);
+     strcpy(log_progid,   argv[6]);
+     strcpy(log_rundate,  argv[7]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     EXEC SQL LOCK TABLE PKMMRMAS
+       IN EXCLUSIVE MODE NOWAIT;
+     
+     if  (sqlca.sqlcode != 0)
+     {  
+          sprintf(log_buff, "다른 사용자가 점유 사용중...\n");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("다른 사용자가 점유 사용중...\n");
+     }
+     
+     
+     /**************************************
+       2003.8.11  강륜종(Dsa2000) 추가  :   임원 퇴직지급율 계산 프로그램 call   : 2004.10.12.  임원은 계산 안하므로 막음..
+     ***************************************
+     memset(cmdline,'\0',256);                     
+     sprintf(cmdline,"%s/bin/Kbin/pkq5100g %.8s %s %s %s %s",
+        HOMEDIR,g_mrtodate,g_frempno,g_toempno,g_workemp,argv[6]);
+     system(cmdline);
+      Dsa2000 End ================================================================== */                                
+     
+     /* 6.3.1 생성 처리 Logic */
+     /* 2008.05.15 퇴직중간정산처리 이외에는 동작가능하도록 */
+     if(strncmp(g_mrtodate,"20080430",8)!=0) Make_PKMMRMAS();
+     
+     /* 6.4.1 퇴직금 계산 Logic */
+     Calc_Retamt();
+     
+     /* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====\n");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("ERROR ====== [작업 실패] =====\n");
+     }
+     else  
+     {
+          sprintf(log_buff, "OK ====== [ 작 업 성 공 ] =====\n");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          hinsa_exit(0,"OK ====== [작업 성공] =====\n");
+     }
+            
+     return;
+}
+/*  연세율표를 읽어 배열에 저장한다 */
+ReadTax()
+{
+     int i=0;
+
+     EXEC SQL DECLARE ctax CURSOR FOR
+     SELECT NVL(TAXPAYFR,0), NVL(TAXPAYTO,0), NVL(TAXRATE,0), NVL(YEARDED,0)
+       FROM PKCPTAX
+      WHERE TAXNUM = (Select CTAXNUM From PKCPBAS);
+
+     EXEC SQL OPEN ctax;
+
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+           Write_batlog(seqno++, "연세율표  fetch Error");  
+           exit(1);
+     }
+
+     while(1)
+     {
+          EXEC SQL FETCH ctax INTO
+          :taxtbl[i].taxfr,     :taxtbl[i].taxto,
+          :taxtbl[i].taxrate,   :taxtbl[i].yearded;
+
+
+          if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {
+            Write_batlog(seqno++, "연말정산 기초자료   read Error");  
+            exit(1);
+          }
+
+          if (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close ctax;
+               taxtblcnt = i;
+               break;
+          }
+          i++;
+     }
+}
+
+
+double GetTax(double taxlevel)
+{
+     int i;
+     double res;
+     
+     if (taxlevel <= 0 )
+       return 0 ;
+     
+     for (i=0 ;i <taxtblcnt ; ++i)
+     {
+          if ((taxtbl[i].taxfr < taxlevel) && (taxtbl[i].taxto >= taxlevel))
+          {
+                res = taxlevel * taxtbl[i].taxrate / 100;
+                res = res - taxtbl[i].yearded;
+                taxtblidx = i;
+               return res;
+          }
+     }
+}
+
+CalcTax2012(   int  m_realyy_calc,        int  m_realyy_2012,         double  m_taxstamt_2012,   
+            double *m_avgtaxstamt_2012,double *m_retavgtaxstamt_2012,    
+            double *m_rettaxrate_2012, double *m_retavgtax_2012,      double *m_retavgcalctax_2012,    
+            double *m_retcalctax_2012)
+{
+    EXEC SQL    
+         SELECT AVGTAXSTAMT_2012,
+                RETAVGTAXSTAMT_2012,
+                RETUTIL2.GET_RETTAXRATE(AVGTAXSTAMT_2012)             RETTAXRATE_2012,
+                0                                                     RETAVGTAX_2012,
+                RETUTIL2.GET_RETAVGTAX(AVGTAXSTAMT_2012)              RETAVGCALCTAX_2012,
+               (RETUTIL2.GET_RETAVGTAX(AVGTAXSTAMT_2012)*REALYY_2012) RETCALCTAX_2012   
+          INTO :m_avgtaxstamt_2012[0], :m_retavgtaxstamt_2012[0], :m_rettaxrate_2012[0], :m_retavgtax_2012[0], :m_retavgcalctax_2012[0], :m_retcalctax_2012[0]
+          FROM (SELECT A.*,
+                       FLOOR(TAXSTAMT_2012/REALYY_2012) AVGTAXSTAMT_2012,
+                       0 RETAVGTAXSTAMT_2012
+                  FROM (SELECT :m_taxstamt_2012 TAXSTAMT_2012, :m_realyy_calc REALYY_CALC, :m_realyy_2012 REALYY_2012 FROM DUAL)A
+               )A; 
+}
+
+CalcTax2013(   int  m_realyy_calc,        int  m_realyy_2013,         double m_taxstamt_2013,   
+            double *m_avgtaxstamt_2013,double *m_retavgtaxstamt_2013,    
+            double *m_rettaxrate_2013, double *m_retavgtax_2013,      double *m_retavgcalctax_2013,    
+            double *m_retcalctax_2013)
+{
+    EXEC SQL    
+         SELECT AVGTAXSTAMT_2013,
+                RETAVGTAXSTAMT_2013,
+                RETUTIL2.GET_RETTAXRATE(RETAVGTAXSTAMT_2013)          RETTAXRATE_2013,
+                RETUTIL2.GET_RETAVGTAX(RETAVGTAXSTAMT_2013)           RETAVGTAX_2013,
+                FLOOR(RETUTIL2.GET_RETAVGTAX(RETAVGTAXSTAMT_2013)/5) RETAVGCALCTAX_2013,
+               (FLOOR(RETUTIL2.GET_RETAVGTAX(RETAVGTAXSTAMT_2013)/5)*REALYY_2013) RETCALCTAX_2013   
+          INTO :m_avgtaxstamt_2013[0], :m_retavgtaxstamt_2013[0], :m_rettaxrate_2013[0], :m_retavgtax_2013[0], :m_retavgcalctax_2013[0], :m_retcalctax_2013[0]
+          FROM (SELECT A.*,
+                       FLOOR(TAXSTAMT_2013/REALYY_2013) AVGTAXSTAMT_2013,
+                       FLOOR(TAXSTAMT_2013/REALYY_2013)*5 RETAVGTAXSTAMT_2013
+                  FROM (SELECT :m_taxstamt_2013 TAXSTAMT_2013, :m_realyy_calc REALYY_CALC, :m_realyy_2013 REALYY_2013 FROM DUAL)A
+               )A; 
+}
+
+
+/***************************************************************************
+ 6.3.1 생성 처리 Logic
+***************************************************************************/
+void Make_PKMMRMAS()
+{
+     int i ;
+     
+     i = 0;
+     
+     EXEC SQL
+     SELECT COUNT(*) 
+       into :i
+       FROM PKMMRMAS
+      WHERE NVL(MRTODATE,' ') <> :g_mrtodate; 
+     
+     EXEC SQL
+     DELETE FROM PKMMRMAS
+      WHERE NVL(MRTODATE,' ') <> :g_mrtodate; 
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          error_quit("삭제중...\n");
+     }
+     
+     
+     /*  6.3.1.1 중간정산 마스터 삭제 */
+     if  (strcmp(g_isall,"0") == 0) /* 전체삭제 */
+     {
+          EXEC SQL
+          DELETE FROM PKMMRMAS;
+          
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {
+               error_quit("삭제중...\n");
+          }
+     }
+     else
+     {
+          EXEC SQL
+          DELETE FROM PKMMRMAS
+          WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;
+          
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {
+               error_quit("삭제중...\n");
+          }
+     }
+     
+     /* 6.3.1.2 중간정산신청에서 중간정산마스터로 insert */
+     /* 갯수 체크 */
+     EXEC SQL
+     INSERT INTO PKMMRMAS (EMPNO, KORNAME, JUMINID, PAYCL, PAYGR, PAYRA, PSTATE,
+            ORGNUM, DEPTCODE, EMPDATE, CALCYN, APPDATE,
+            MRFRDATE, MRTODATE, OVTMYN, WRITETIME, WRITEMAN)
+     SELECT EMPNO, KORNAME, JUMINID, PAYCL, PAYGR, PAYRA, PSTATE,
+            ORGNUM, DEPTCODE, EMPDATE, CALCYN, APPDATE,
+            MRFRDATE, MRTODATE, OVTMYN, TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS'), :g_workemp
+       FROM PKMMRAPP
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+        AND MRTODATE = :g_mrtodate
+        AND UPPER(CALCYN) = 'Y';
+     
+     if  (sqlca.sqlcode != 0)
+     {
+          error_quit("추출중...\n");
+     }
+     
+     /* 6.3.1.3 급여마스터로 부터 추가인적사항을 setting */
+     /* 2017.09.20 eyha 금융기관 코드 사이즈 변경 적용 
+     EXEC SQL
+     UPDATE PKMMRMAS A SET
+            (PAYBANK, PAYACNT) =
+            (SELECT NVL(PAYBANK,'99'), NVL(PAYACNT,'NULL')
+               FROM PKMPMAS B
+              WHERE A.EMPNO = B.EMPNO)
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;  */
+      
+     EXEC SQL
+     UPDATE PKMMRMAS A SET
+            (PAYBANK, PAYACNT) =
+            (SELECT NVL(PAYBANK,'NULL'), NVL(PAYACNT,'NULL')
+               FROM PKMPMAS B
+              WHERE A.EMPNO = B.EMPNO)
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;      
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          error_quit("인사사항 갱신중...\n");
+     }
+     
+/*  6.3.1.4 은행명 없는 사원
+    EXEC SQL DECLARE cs_paybank CURSOR FOR
+        SELECT EMPNO, KORNAME
+        FROM PKMMRAMS
+        WHERE PAYBANK = '99'
+           OR PAYBANK NOT IN (SELECT CODENO FROM PYCCODE C
+                              WHERE C.CODEID = 'K930')
+           OR PAYACNT = 'NULL'
+        ORDER BY EMPNO ;  */
+}
+
+int get_RealYYMMDD(char *m_empno,char *m_empdate,char *m_retdate, int *m_dutydd, int *m_dutymm, int *m_exdd, int *m_realdd, int *m_realmm, int *m_realyy)
+{
+    EXEC SQL
+         SELECT  HPER.RETUTIL2.GET_DUTYDD(       EMPDATE, RETDATE)   DUTYDD                                                                                    
+                ,HPER.RETUTIL2.GET_DUTYMM(       EMPDATE, RETDATE)   DUTYMM
+                ,HPER.RETUTIL2.GET_EXDD  (EMPNO, EMPDATE, RETDATE)     EXDD                                                                                    
+                ,HPER.RETUTIL2.GET_REALDD(EMPNO, EMPDATE, RETDATE)   REALDD
+                ,HPER.RETUTIL2.GET_REALMM(EMPNO, EMPDATE, RETDATE)   REALMM
+                ,HPER.RETUTIL2.GET_REALYY(EMPNO, EMPDATE, RETDATE)   REALYY
+           INTO m_dutydd, m_dutymm, m_exdd, m_realdd, m_realmm, m_realyy                
+           FROM (SELECT :m_empno EMPNO, :m_empdate EMPDATE, :m_retdate RETDATE FROM DUAL)A;
+    
+    return 0;
+}
+
+/***************************************************************************
+6.4.1 퇴직금 계산 Logic
+***************************************************************************/
+void Calc_Retamt()
+{
+/* dsa2000 추가 2004.10.12  전산처리요청  1년에 여러번 중간정산하는자의 근속기간 및 세금 계산시
+                                         기존 정산내역을 포함하여 계산되도록함.*/
+        
+        /* 종전 중간정산 자료를 종근무지 자료에 입력한다.*/
+     EXEC SQL
+     UPDATE  PKMMRMAS A
+        SET (BRETMM     , BRETAMT   ,
+             BRETINTAX  , BRETJUTAX ,
+             BRETFRDAY  , BRETTODAY ,
+             BRETSUBDATE ) =
+            (SELECT  SUM(NVL(RETMM   ,0)), SUM(NVL(RETAMT,  0)),
+                     SUM(NVL(REALRETINTAX,0)), SUM(NVL(REALRETJUTAX,0)),
+                     MIN(MRFRDATE),        MAX(MRTODATE),
+                     MAX(SUBDATE)
+               FROM  PKHMRHIS B
+              WHERE  A.EMPNO = B.EMPNO
+                AND  SUBSTR(A.MRTODATE ,1,4) = SUBSTR(B.MRTODATE ,1,4)
+              GROUP  BY B.EMPNO )
+      WHERE EMPNO IN (SELECT EMPNO 
+                        FROM PKHMRHIS B
+                       WHERE A.EMPNO = B.EMPNO
+                         AND SUBSTR(A.MRTODATE ,1,4) = SUBSTR(B.MRTODATE ,1,4)) ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {       
+          error_quit(sqlca.sqlcode,"1.2 중간정산자료 setting Error");
+     }
+
+     EXEC SQL
+     UPDATE  PKMMRMAS A
+        SET  BRETMM      = NVL(BRETMM    ,0),
+             BRETAMT     = NVL(BRETAMT   ,0),
+             BRETINTAX   = NVL(BRETINTAX ,0),
+             BRETJUTAX   = NVL(BRETJUTAX ,0) ;
+ 
+/*2013.02.15.hjku 근속년수 변경 시작 
+	ReadTax();        */ 
+	
+/*입사일, 퇴사일모두 근속일에 포함(+1부분추가) 
+     EXEC    SQL
+     UPDATE  PKMMRMAS
+        SET  dutymm = ceil(months_between(to_date(mrtodate,'YYYYMMDD') + 1,
+                                          to_date(mrfrdate,'YYYYMMDD'))),
+             dutydd = to_date(mrtodate,'YYYYMMDD')-
+                      to_date(mrfrdate,'YYYYMMDD') + 1;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {       
+          error_quit(sqlca.sqlcode,"1.3 근속일수 setting Error");
+     }
+*/     
+/* dsa2000 추가 end   2004.10.12.........................................................*/
+  
+  
+    /* 근속기간 계산 
+     EXEC SQL
+     UPDATE PKMMRMAS 
+        SET 
+            DUDAYS = to_date(mrtodate,'YYYYMMDD')-to_date(mrfrdate,'YYYYMMDD') + 1
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          error_quit("근속기간 계산중...\n");
+     }
+     */
+     /* 근속제외일수 계산 
+     EXEC SQL
+     UPDATE PKMMRMAS R SET
+            EXDD =
+                  (SELECT SUM(MONTHS_BETWEEN(
+                          TO_DATE(LEAST(X.EXTODATE   ,R.MRTODATE),'YYYYMMDD')+1,  
+                          TO_DATE(GREATEST(X.EXFRDATE,R.MRFRDATE),'YYYYMMDD'))*31  )
+                     FROM PKHEXDD X
+                    WHERE R.EMPNO = X.EMPNO
+                      AND UPPER(X.EXFIXYN) = 'Y'
+                    GROUP BY R.EMPNO, X.EMPNO)
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+        AND EMPNO IN (SELECT R.EMPNO FROM PKHEXDD X, PKMMRMAS R
+                       WHERE R.EMPNO = X.EMPNO
+                         AND NOT (X.EXFRDATE > R.MRTODATE OR
+                                  X.EXTODATE < R.MRFRDATE)
+                         AND UPPER(X.EXFIXYN) = 'Y' );
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          error_quit("근속제외일수 계산중...\n");
+     }
+     */
+     /* 실근속 기간 계산 
+     EXEC SQL
+     UPDATE PKMMRMAS 
+        SET REALDAYS = NVL(DUDAYS,0) - NVL(EXDD,0)
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+     
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+         error_quit("실근속 기간 계산(1)중...\n");
+     }
+     
+     EXEC SQL
+     UPDATE PKMMRMAS R SET
+            DUTYYY = FLOOR(DUDAYS / 372),
+            DUTYMM = FLOOR(MOD(DUDAYS,372) / 31),
+            DUTYDD = MOD(MOD(DUDAYS,372),31),
+            REALYY = FLOOR(REALDAYS / 372),
+            REALMM = FLOOR(MOD(REALDAYS,372) /31),
+            REALDD = MOD(MOD(REALDAYS,372),31)
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+     */
+/*     
+     EXEC SQL
+     UPDATE PKMMRMAS R 
+        SET
+            RETmm = REALYY * 12 + REALMM + DECODE(REALDD,0,0,1), 
+            RETYY = REALYY + DECODE(REALMM+REALDD,0,0,1)         
+     WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          Write_batlog(seqno++, "실근속 기간 계산(2)중...\n"); 
+          error_quit("실근속 기간 계산(2)중...\n");
+     }
+
+
+    -- 근속기간 계산 : 년도중 중간정산 받은자...(세금계산을 위한 년수 산출)
+     EXEC SQL
+     UPDATE PKMMRMAS A
+        SET RETYY  = ceil(MONTHS_BETWEEN(TO_DATE(MRTODATE,'YYYYMMDD')+1,
+                                         TO_DATE(NVL(BRETFRDAY,MRFRDATE),'YYYYMMDD'))/12)                                 
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+        AND EMPNO IN (SELECT EMPNO 
+                        FROM PKHMRHIS B
+                       WHERE A.EMPNO = B.EMPNO
+                         AND SUBSTR(A.MRTODATE ,1,4) = SUBSTR(B.MRTODATE ,1,4)) ;         
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          Write_batlog(seqno++, "실근속 기간 계산(3)중...\n"); 
+          error_quit("근속기간 계산(3)중...\n");
+     }        
+===================================================================================*/ 
+                       
+     EXEC    SQL DECLARE c1 CURSOR FOR
+         SELECT A.*,
+                CASE WHEN MRFRDATE_CALC <='20121231'  THEN MRFRDATE_CALC                      ELSE '' END MRFRDATE_2012,
+                CASE WHEN MRFRDATE_CALC <='20121231'  THEN LEAST(MRTODATE_CALC,'20121231')    ELSE '' END MRTODATE_2012,
+                CASE WHEN MRTODATE_CALC >='20130101'  THEN GREATEST(MRFRDATE_CALC,'20130101') ELSE '' END MRFRDATE_2013,
+                CASE WHEN MRTODATE_CALC >='20130101'  THEN MRTODATE_CALC                      ELSE '' END MRTODATE_2013      
+         FROM (           
+              SELECT  EMPNO,
+                      MRFRDATE, 
+                      MRTODATE,
+                      CASE WHEN BRETFRDAY IS NOT NULL THEN LEAST   (MRFRDATE,BRETFRDAY)  ELSE MRFRDATE END MRFRDATE_CALC,
+                      CASE WHEN BRETTODAY IS NOT NULL THEN GREATEST(MRTODATE,BRETTODAY)  ELSE MRTODATE END MRTODATE_CALC
+                FROM  PKMMRMAS WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+             )A;
+           
+
+     EXEC SQL OPEN  c1 ;
+
+     while(1)
+     {
+          EXEC   SQL FETCH c1
+          INTO  :empno, :mrfrdate, :mrtodate, :mrfrdate_calc, :mrtodate_calc,:mrfrdate_2012, :mrtodate_2012,:mrfrdate_2013, :mrtodate_2013;
+
+
+          if  (sqlca.sqlcode == 1403 )
+          {
+               EXEC SQL close c1;
+               break;
+          }
+
+          /* 최종분 근속 연수 */
+          dutydd = dutymm = exdd = realdd = realmm = realyy = 0;
+
+          get_RealYYMMDD(empno,mrfrdate,mrtodate,&dutydd,&dutymm,&exdd,&realdd,&realmm,&realyy);
+
+          /* 정산(합산) 근속 연수 */
+          dutydd_calc = dutymm_calc = exdd_calc = realdd_calc = realmm_calc = realyy_calc = 0;
+
+          get_RealYYMMDD(empno,mrfrdate_calc,mrtodate_calc,&dutydd_calc,&dutymm_calc,&exdd_calc,&realdd_calc,&realmm_calc,&realyy_calc);
+
+
+          /* 2012.12.31. 이전 근속 연수 */
+          dutydd_2012 = dutymm_2012 = exdd_2012 = realdd_2012 = realmm_2012 = realyy_2012 = 0;
+
+          if((strcmp(mrfrdate_2012,"")!=0)&&(strcmp(mrtodate_2012,"")!=0)  )
+             get_RealYYMMDD(empno,mrfrdate_2012,mrtodate_2012,&dutydd_2012,&dutymm_2012,&exdd_2012,&realdd_2012,&realmm_2012,&realyy_2012);
+
+
+          /* 2013.01.01. 이후 근속 연수 */
+          dutydd_2013 = dutymm_2013 = exdd_2013 = realdd_2013 = realmm_2013 = realyy_2013 = 0;
+
+          if((strcmp(mrfrdate_2013,"")!=0)&&(strcmp(mrtodate_2013,"")!=0)  )
+             get_RealYYMMDD(empno,mrfrdate_2013,mrtodate_2013,&dutydd_2013,&dutymm_2013,&exdd_2013,&realdd_2013,&realmm_2013,&realyy_2013);
+
+
+          realyy_2013 = realyy_calc - realyy_2012;
+
+          EXEC SQL
+          UPDATE  PKMMRMAS
+             SET    
+                     EXDAYS     = :exdd,                             
+                     DUDAYS     = :dutydd,
+                     REALDAYS   = :realdd,
+                     DUTYDD     = :dutydd,
+                     DUTYMM     = :dutymm,
+                     EXDD       = :exdd,
+                     REALDD     = :realdd,
+                     REALMM     = :realmm,
+                     REALYY     = :realyy,
+                     RETMM      = :realmm,
+                     RETYY      = :realyy_calc,
+                     RETYY2013  = :realyy_2013,
+                  MRFRDATE_CALC = :mrfrdate_calc,
+                  MRTODATE_CALC = :mrtodate_calc,                      
+                    DUTYDD_CALC = :dutydd_calc,
+                    DUTYMM_CALC = :dutymm_calc,
+                      EXDD_CALC = :exdd_calc,
+                    REALDD_CALC = :realdd_calc,
+                    REALMM_CALC = :realmm_calc,
+                    REALYY_CALC = :realyy_calc,
+                  MRFRDATE_2012 = :mrfrdate_2012,
+                  MRTODATE_2012 = :mrtodate_2012,                      
+                    DUTYDD_2012 = :dutydd_2012,
+                    DUTYMM_2012 = :dutymm_2012,
+                      EXDD_2012 = :exdd_2012,
+                    REALDD_2012 = :realdd_2012,
+                    REALMM_2012 = :realmm_2012,
+                    REALYY_2012 = :realyy_2012,
+                  MRFRDATE_2013 = :mrfrdate_2013,
+                  MRTODATE_2013 = :mrtodate_2013,
+                    DUTYDD_2013 = :dutydd_2013,
+                    DUTYMM_2013 = :dutymm_2013,
+                      EXDD_2013 = :exdd_2013,
+                    REALDD_2013 = :realdd_2013,
+                    REALMM_2013 = :realmm_2013,
+                    REALYY_2013 = :realyy_2013                      
+           WHERE  EMPNO = :empno;
+           
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {  
+             Write_batlog(seqno++, "실근속 기간 계산(3)중...\n"); 
+             error_quit("근속기간 계산(3)중...\n");
+             break;
+          }   
+
+     } /* end of while */
+      
+/*2013.02.15.hjku 근속년수 변경 종료*/
+
+     /* 평균임금/통산임금 계산 */
+     Calc_Avggross();
+     
+     /* 퇴직금 계산 */
+     Calc_Retrealamt();
+}
+
+
+
+/***************************************************************************
+ 평균임금/통산임금 계산
+***************************************************************************/
+void Calc_Avggross()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char     before3mon[6+1] = "" ; /*  3개월 전(g_mrtodate포함 3개월)*/
+          char     before12mon[6+1] = "" ; /* 12개월 전(g_mrtodate포함12개월)*/
+          long int odamt = 0;
+          float    avgpay1;
+          float    avgpay2;
+          float    ovtmamt1;
+          float    ovtmamt2;
+          float    maxovtmamt;
+          char     p_empno[4+1];
+          char     ovtmyn[1+1];
+     EXEC SQL END DECLARE SECTION;
+    
+     char  t_baseyymm[6+1];
+     int  flag;
+
+/* ==============================================================  
+    EXEC SQL
+        SELECT TO_CHAR(ADD_MONTHS(TO_DATE(:g_mrtodate,'YYYYMMDD'),-2),'YYYYMM'),
+               TO_CHAR(ADD_MONTHS(TO_DATE(:g_mrtodate,'YYYYMMDD'),-11),'YYYYMM'),
+               AVGODAMT
+        INTO :before3mon, :before12mon, :odamt
+        FROM PKCPBAS;
+
+    if (sqlca.sqlcode != 0)
+    {
+        error_quit("임시변수 산정중...\n");
+    }
+
+    //  3개월 급여합 
+    EXEC SQL
+        UPDATE PKMMRMAS R SET
+            PAY3SUM =
+            (SELECT SUM(NVL(BASICAMT,0)+NVL(INFOAMT,0)+NVL(DUTYAMT,0)+
+                        NVL(BBASICAMT,0)+NVL(BINFOAMT,0)+NVL(BDUTYAMT,0)+
+                        NVL(MATEAMT,0)+NVL(PARTAMT,0)+NVL(CHILDAMT,0)+
+                        NVL(OVTMAMT,0)+NVL(SPTMAMT,0)+NVL(MCARAMT,0)+
+                        NVL(LICEAMT,0)+NVL(MBONAMT,0)+NVL(SOPAY,0)+
+                        DECODE(NVL(ODAMT,0),0,0,:odamt)
+                       )
+             FROM PKHPHIS H
+             WHERE R.EMPNO = H.EMPNO
+               AND H.PAYDATE BETWEEN :before3mon AND :g_mrtodate
+            )
+        WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+    {
+        error_quit("3개월 급여합 계산중...\n");
+    }
+
+    // 12개월 상여합
+    EXEC SQL
+        UPDATE PKMMRMAS R SET
+            BON12SUM =
+            (SELECT SUM(NVL(BONUSAMT,0)+NVL(INCENTAMT,0)+NVL(TRAINAMT,0)+
+                        NVL(WINTERAMT,0)+NVL(YBONAMT,0)+ NVL(HOMESUPAMT,0)+
+                        NVL(SOBON,0)
+                       )
+             FROM PKHPHIS H
+             WHERE R.EMPNO = H.EMPNO
+               AND H.PAYDATE BETWEEN :before12mon AND :g_mrtodate
+            )
+        WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+    {
+        error_quit("12개월 상여합 계산중...\n");
+    }
+
+    // 평균 급여, 평균 상여, 평균 임금
+    EXEC SQL
+        UPDATE PKMMRMAS SET
+            AVGPAY   = CEIL(PAY3SUM  / 3),
+            AVGBON   = CEIL(BON12SUM /12),
+            AVGGROSS = CEIL(PAY3SUM  / 3) + CEIL(BON12SUM /12)
+        WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;
+
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+    {
+        error_quit("평균 임금 계산중...\n");
+    }
+
+    // 통상 임금 
+    // 1. 임원 / 정규직 
+    EXEC SQL
+        UPDATE PKMMRMAS R SET
+            COMMONAMT =
+            (SELECT NVL(BASICAMT,0) + NVL(INFOAMT,0) + NVL(DUTYAMT,0)
+             FROM PKMPMAS P
+             WHERE R.EMPNO = P.EMPNO
+            )
+        WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+    {
+        error_quit("통상 임금 계산(1)중...\n");
+    }
+
+  // 2. 임시직
+    EXEC SQL
+        UPDATE PKMMRMAS R SET
+            COMMONAMT =
+            (SELECT NVL(BASICAMT,0) + NVL(INFOAMT,0) + NVL(DUTYAMT,0)
+             FROM PKMPMAS P
+             WHERE R.EMPNO = P.EMPNO
+            )
+        WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+          AND PAYCL >= 'A' ;
+
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+    {
+        error_quit("통상 임금 계산(2)중...\n");
+    }
+=============================================================== */
+
+     EXEC SQL
+     SELECT  MAXOVTMAMT 
+       INTO  :maxovtmamt
+       FROM  PKCMRBAS;
+     
+     EXEC SQL
+     UPDATE  PKMMRMAS
+        SET  PAY3SUM  = 0,
+             BON12SUM = 0,
+             AVGPAY   = 0,
+             AVGBON   = 0
+      WHERE  EMPNO >= :g_frempno AND EMPNO <= :g_toempno;
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "급여합, 상여합 NULL 조정중...\n"); /*dsa2000 Rexec 대체*/
+          error_quit("급여합, 상여합 NULL 조정중...\n");
+     }
+     
+     /* 평균 급여, 평균 상여, 평균 임금 */  
+     sprintf(t_baseyymm,"%.6s",g_mrtodate);
+     EXEC SQL DECLARE cur1 CURSOR FOR
+     SELECT empno, upper(nvl(ovtmyn,'n'))
+       FROM PKMMRMAS
+      WHERE empno >= :g_frempno and empno <= :g_toempno
+      //infra          AND paycl > '09'             /* 2003.8.11. Dsa2000  이사대우까지 임원계산로직 추가 */
+        AND paycl >= 'C11'             /* 2003.8.11. Dsa2000  이사대우까지 임원계산로직 추가 */
+      ORDER BY empno;
+     
+     EXEC SQL OPEN cur1;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+         (sqlca.sqlcode != -1405)) 
+     {
+          Write_batlog(seqno++, "9.5.5.1 평균 임금 계산중...\n"); /*dsa2000 Rexec 대체*/
+          error_quit("9.5.5.1 평균 임금 계산중...\n");
+     }
+     
+     while (1)
+     {
+          EXEC SQL  FETCH  cur1
+          INTO    :p_empno, :ovtmyn;
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE cur1;
+               break;
+          }
+          
+          if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405))
+          {
+               error_quit("9.5.5.2 평균 임금 계산중...\n");
+          }
+          sprintf(p_empno,"%.4s",p_empno);
+          sprintf(ovtmyn,"%.1s",ovtmyn);
+
+          /*  printf("[debug0] : empno=%s,t_baseyymm=%s \n",p_empno,t_baseyymm);               */
+          
+          if ((flag=get_mr_avgpay(p_empno,t_baseyymm,
+               &avgpay1,&avgpay2,&ovtmamt1,&ovtmamt2)) != 0)
+          {
+               printf("empno : [%s] \n",p_empno);
+               error_quit("9.5.5.3 평균 임금 계산중...\n");   
+          }
+          
+          if  (ovtmyn[0] == 'Y') 
+          { 
+            /* printf("[debug1] : empno=%s,avgpay2=%f,maxovtmamt=%f \n",p_empno,avgpay2, maxovtmamt);              */
+          	
+               EXEC SQL
+               update  PKMMRMAS
+                  set  avggross = :avgpay2,
+                       ovtmamt  = :maxovtmamt /* * 3 3개월 주석 KHT 2009.03 avgpay 에서 3개월 구함. */
+                where  empno = :p_empno;
+               if  (sqlca.sqlcode != 0)
+               {
+                    error_quit("9.5.5.4 평균 임금 계산중...\n");
+               }
+          }
+          else
+          {
+               EXEC SQL
+               update  PKMMRMAS
+                  set  avggross = :avgpay1,
+                       ovtmamt  = :ovtmamt1  /* *3 3개월 주석 KHT 2009.03 avgpay 에서 3개월 구함. */
+                where  empno = :p_empno;
+               if  (sqlca.sqlcode != 0)
+               {
+                    error_quit("9.5.5.4 **평균 임금 계산중...\n");
+               }
+          } 
+     }
+  
+/* Dsa2000 추가 ====================================================================
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   31.00       2003.08.11         강 륜 종       임원 연봉제에 따른 평균임금,통상임금 계산방법 변경
+                                                [임원평균임금=(총연봉+중식비연간총액)/12]
+==================================================================================== */
+     EXEC SQL
+     UPDATE PKMMRMAS A
+        SET AVGGROSS = ( SELECT CEIL(( TOTPAY + AVGMCARAMT ) /12)
+                           FROM PKHYPHIS B, PKCPBAS C
+                          WHERE A.EMPNO = B.EMPNO
+                            AND B.YEARPAYNUM  = (SELECT TO_CHAR(YEARPAYNUM) FROM PKCPBAS)
+                        )  
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno 
+//        AND  <= '09' ;
+        AND paycl <= 'A99';     
+    
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, " 임원 평균 임금 계산중...\n"); /*dsa2000 Rexec 대체*/
+          error_quit(" 임원 평균 임금 계산중...\n");
+     }
+/* Dsa2000 추가 End ******************************************************************/      
+
+
+     /* 9.5.6-1 통상 임금 .... 임원 / 정규직 */
+     EXEC SQL
+     UPDATE PKMMRMAS r 
+/*      SET commonamt = (select ceil(totpay/18)    (select ceil(realtotpay/23)*/
+        SET commonamt = (select CEIL((TOTPAY + TONGAMT1 + TONGAMT2 + TONGAMT3) /12)  /* 2014.11.12 하은영 하은영 통상임금 규정변경으로 인한 시스템 적용 (18 -> 12, 통상임금, 통상임금수당도 포함) */
+                           from pkhyphis p
+                          where r.empno = p.empno 
+                            and yearpaynum = (select to_char(yearpaynum) from pkcpbas)  
+                        )
+      WHERE empno >= :g_frempno and empno <= :g_toempno;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "9.5.6-1 통상 임금 (임원 / 정규직) 계산중...\n"); /*dsa2000 Rexec 대체*/
+          error_quit("9.5.6-1 통상 임금 (임원 / 정규직) 계산중...\n");
+     }
+
+     /* 기준 임금 */
+     EXEC SQL
+     UPDATE PKMMRMAS 
+        SET
+            BASEAMT = GREATEST(AVGGROSS,COMMONAMT)
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "기준 임금 계산중...\n"); /*dsa2000 Rexec 대체*/
+          error_quit("기준 임금 계산중...\n");
+     }
+}
+
+/***************************************************************************
+ 퇴직금 계산
+***************************************************************************/
+void Calc_Retrealamt()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  taxnum[2+1] = ""  ;
+          float jutaxrate   = 0.0 ;
+     EXEC SQL END DECLARE SECTION;
+     
+     EXEC SQL
+          SELECT CTAXNUM, JUTAXRATE
+            INTO :taxnum, :jutaxrate
+            FROM PKCPBAS ;
+     
+     /* 퇴직금 지급율 직급
+        2009.03.27 kth 단수제로 변경 retcl 을 사용 하지 않음.
+     EXEC SQL
+         UPDATE PKMMRMAS R SET
+             RETCL = DECODE(PAYCL,'00','0'||TO_CHAR(PAYGR),'10')
+         WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;
+     
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+         Write_batlog(seqno++, "퇴직금 지급율 직급 계산중...\n"); dsa2000 Rexec 대체
+         error_quit("퇴직금 지급율 직급 계산중...\n");
+     }*/
+     
+     /* 9.6.2 퇴직금 지급율 */
+     EXEC SQL
+     UPDATE PKMMRMAS R 
+        SET
+            RETRATE = NVL(ROUND(R.RETMM/12,2),0.0) /* 누진제에서 단수제로 전환작업 RETRATE ->  ROUND(REALMM/12,2) kth 2009.03.17*/
+     WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "퇴직금 지급율 계산중...\n"); /*dsa2000 Rexec 대체*/
+          error_quit("퇴직금 지급율 계산중...\n");
+     }
+     
+/* Dsa2000  추가 ======================================================================
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   32.00      2003.08.11         강륜종         임원 퇴직지급율 계산시 직위별 재임기간으로 산정하게 제도 변경됨
+==================================================================================== */
+     EXEC SQL
+     UPDATE PKMMRMAS A
+        SET RETRATE = (SELECT NVL(SUM(NVL(B.CLRETRATE,0)),0) 
+                         FROM PKHRTDIR B       
+                        WHERE A.EMPNO = B.EMPNO
+                          AND B.CALCDATE = :g_mrtodate
+                        GROUP BY B.EMPNO)
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+        AND EMPNO IN (SELECT EMPNO 
+                        FROM PKHRTDIR
+                       WHERE CALCDATE = :g_mrtodate
+      GROUP BY EMPNO) ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "9.6.2.1 퇴직금 지급율 계산중_임원...\n"); /*dsa2000 Rexec 대체*/
+          error_quit("9.6.2.1 퇴직금 지급율 계산중_임원...\n");
+     }    
+/* Dsa2000  추가 END *****************************************************************/
+
+
+    /* 퇴직금 */
+     EXEC SQL
+     UPDATE PKMMRMAS R 
+        SET
+            RETAMT = CEIL(NVL(BASEAMT,0) * NVL(RETRATE,0.0))
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "퇴직금 계산중...\n"); /*dsa2000 Rexec 대체*/
+          error_quit("퇴직금 계산중...\n");
+     }
+        
+        /* START...2008.05.15 퇴직금 중간정산시 단수제전환 보상금 반영하여 세금계산 로직 타도록 */
+     if  (strncmp(g_mrtodate,"20080430",8)==0) 
+     {
+          printf("\nDEBUG 2008.05.15 퇴직중간정산");
+          EXEC SQL
+          UPDATE PKMMRMAS R SET
+                 AVGGROSS  = (SELECT AVGGROSS FROM PKHMRHIS_REPAY H WHERE EMPNO=R.EMPNO AND MRTODATE='20080430'),          
+                 RETAMT    = (SELECT REPAYSUM FROM PKHMRHIS_REPAY H WHERE EMPNO=R.EMPNO AND MRTODATE='20080430')
+           WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;
+
+          EXEC SQL
+          UPDATE PKMMRMAS R 
+             SET
+                 AVGGROSS  = NVL(AVGGROSS,0),
+                 RETAMT    = NVL(RETAMT,0)                 
+           WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;
+        
+  
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {
+               Write_batlog(seqno++, "퇴직금중간정산 계산중...\n"); 
+               error_quit("퇴직금중간정산 계산중...\n");
+          }         
+     }
+  /* END... */        
+  
+/*삭제시작    (2013년 세법 적용하기 위해)
+// dsa2000 2004.10.12.  전산처리요청  1년에 여러번 중간정산하는자의 근속기간 및 세금 계산시
+//                                     기존 정산내역을 포함하여 계산되도록함.
+
+     // 근로소득금액 : 중간정산퇴직금 + 기존 중간정산퇴직금 
+     EXEC    SQL
+     UPDATE  PKMMRMAS
+        SET  RETAMTSUM = NVL(RETAMT,0) + NVL(BRETAMT,0) ;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {       
+          Write_batlog(seqno++, "5. 퇴직급여액 : 중간정산퇴직금 + 기존 중간정산퇴직금 "); 
+          error_quit(sqlca.sqlcode,"5. 퇴직급여액 : 중간정산퇴직금 + 기존 중간정산퇴직금 ");
+     }        
+// dsa2000 2004.10.12. End  ...................................................................
+        
+        
+//  퇴직 소득세 
+//         퇴직 소득 공제 Calc_Retintax(); 
+//   2002.3.11  퇴직소득공제액 계산 ceil 을 floor로 수정함         
+     EXEC SQL
+     UPDATE PKMMRMAS SET
+            //RINDED = floor( (RETAMTSUM/2) + (300000 * RETYY) )     
+            RINDED = floor( (RETAMTSUM*40/100) + (300000 * RETYY) )  
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+        AND RETYY <= 5 ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          error_quit("퇴직 소득 공제(1) 계산중...\n");
+     }
+
+     EXEC SQL
+     UPDATE PKMMRMAS SET
+            //RINDED = floor((RETAMTSUM/2) + 1500000 + 500000 * (RETYY - 5))  //dsa2000 2004.10.12.  RETAMT => RETAMTSUM로 변경 
+            RINDED = floor( (RETAMTSUM*40/100) + 1500000 + 500000 * (RETYY - 5) ) //dsa2000  2006.03.07 50% =>45%로 변경 2011.01.14 kth 45%->40 변경 
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+        AND RETYY > 5 AND RETYY <= 10 ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          error_quit("퇴직 소득 공제(2) 계산중...\n");
+     }
+
+     EXEC SQL
+     UPDATE PKMMRMAS SET
+            //RINDED = floor( (RETAMTSUM/2) + 4000000 + 800000 * (RETYY - 10) )  //dsa2000 2004.10.12.  RETAMT => RETAMTSUM로 변경
+            RINDED = floor( (RETAMTSUM*40/100) + 4000000 + 800000 * (RETYY - 10) ) //dsa2000  2006.03.07 50% =>45%로 변경 2011.01.14 kth 45%->40 변경 
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+        AND RETYY > 10 AND RETYY <= 20 ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          error_quit("퇴직 소득 공제(3) 계산중...\n");
+     }
+
+     EXEC SQL
+     UPDATE PKMMRMAS SET
+            //RINDED = floor((RETAMTSUM/2) + 12000000 + 1200000 * (RETYY - 20))  //dsa2000  RETAMT => RETAMTSUM로 변경 
+            RINDED = floor((RETAMTSUM*40/100) + 12000000 + 1200000 * (RETYY - 20)) //dsa2000  2006.03.07 50% =>45%로 변경 2011.01.14 kth 45%->40 변경 
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+        AND RETYY > 20 ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          error_quit("퇴직 소득 공제(4) 계산중...\n");
+     }
+
+     // 퇴직 소득 금액, 퇴직 소득과세 표준 
+     EXEC SQL
+     UPDATE PKMMRMAS 
+        SET
+            RINAMT   = GREATEST(RETAMTSUM - RINDED,0), //dsa2000  RETAMT => RETAMTSUM로 변경 
+            TAXSTAMT = GREATEST(RETAMTSUM - RINDED,0)
+     WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "퇴직 소득금액, 퇴직 소득과세표준 계산중...\n"); 
+          error_quit("퇴직 소득금액, 퇴직 소득과세표준 계산중...\n");
+     }
+
+
+     -- 년평균 퇴직과표 
+     EXEC SQL
+     UPDATE PKMMRMAS 
+        SET
+            AVGTAXSTAMT = FLOOR(TAXSTAMT / DECODE(RETYY,0,1,RETYY))
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "년평균 퇴직과표 계산중...\n"); 
+          error_quit("년평균 퇴직과표 계산중...\n");
+     }
+
+     -- 퇴직세율, 퇴직연평균 산출세 
+     EXEC SQL
+     UPDATE PKMMRMAS R 
+        SET
+           (RETTAXRATE, RETAVGTAX) =
+           (SELECT C.TAXRATE, FLOOR(R.AVGTAXSTAMT * C.TAXRATE / 100 - C.YEARDED)
+              FROM PKCPTAX C
+             WHERE TAXNUM = :taxnum
+               AND R.AVGTAXSTAMT >= C.TAXPAYFR AND R.AVGTAXSTAMT < C.TAXPAYTO
+           )
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "퇴직세율, 퇴직연평균 산출세 계산중...\n"); 
+          error_quit("퇴직세율, 퇴직연평균 산출세 계산중...\n");
+     }
+
+     -- 퇴직산출세액 
+     EXEC SQL
+     UPDATE PKMMRMAS 
+        SET RETCALCTAX = RETAVGTAX * DECODE(RETYY,0,1,RETYY)
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "퇴직산출세액 계산중...\n"); 
+          error_quit("퇴직산출세액 계산중...\n");
+     }
+
+     -- 퇴직세액공제 20030225parksh 2003~2004년 공제금액(0.5->0.25),공제한도액(240000->120000)변경됨  2005년이후 폐지
+     EXEC SQL
+         UPDATE PKMMRMAS SET
+             RETTAXDED = FLOOR(LEAST(RETCALCTAX * 0.25,
+                                     DECODE(RETYY,0,1,RETYY) * 120000))
+         WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+  ===============================================================================================*/
+/*삭제종료    (2013년 세법 적용하기 위해)*/  
+
+/*2013.02.15.hjku 산출 세액 변경 시작*/
+     EXEC   SQL DECLARE c3 CURSOR FOR
+            SELECT EMPNO,REALYY_CALC,REALYY_2012,REALYY_2013,BRETINTAX, RETAMTSUM,FIXDED,
+                   LEAST(GREATEST((RETAMTSUM-FIXDED),0),CONDED) CONDED,RINDED,
+                   GREATEST((RETAMTSUM -RINDED),0) TAXSTAMT 
+             FROM (SELECT A.*,
+                   RETUTIL.GET_FIXDED(RETAMTSUM) FIXDED,
+                   RETUTIL.GET_CONDED(REALYY_CALC) CONDED,
+                   RETUTIL.GET_RINDED(RETAMTSUM,REALYY_CALC) RINDED,
+                   GREATEST((RETAMTSUM - RETUTIL.GET_RINDED(RETAMTSUM,REALYY_CALC)),0) TAXSTAMT
+              FROM (SELECT EMPNO, NVL(REALYY_CALC,0) REALYY_CALC, NVL(REALYY_2012,0) REALYY_2012, NVL(REALYY_2013,0) REALYY_2013, 
+                           NVL(BRETINTAX,0) BRETINTAX,  
+                           NVL(RETAMT,0) +  NVL(BRETAMT,0)  RETAMTSUM
+                      FROM PKMMRMAS WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno 
+              )A
+            );    
+
+      EXEC SQL OPEN  c3 ;
+
+     while(1)
+     {
+          EXEC  SQL FETCH c3
+          INTO  :empno,:realyy_calc,:realyy_2012,:realyy_2013,:bretintax, :retamtsum,:fixded,:conded,:rinded,:taxstamt ;
+
+          if  ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403) )
+          {
+                EXEC SQL close c3;
+                sprintf(log_buff, "FETCH CURSOR c2 Error\n");
+                Write_batlog(seqno++, log_buff); 
+                exit(1);
+          }
+
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c3;
+               break;
+          }
+          taxstamt_2012 = avgtaxstamt_2012  = retavgtaxstamt_2012 = rettaxrate_2012 = retavgtax_2012 = retavgcalctax_2012 = retcalctax_2012  = retintax_2012 = 0;
+          taxstamt_2013 = avgtaxstamt_2013  = retavgtaxstamt_2013 = rettaxrate_2013 = retavgtax_2013 = retavgcalctax_2013 = retcalctax_2013  = retintax_2013 = 0;
+          
+          retintax = retjutax = 0; /*신고대상 세액*/
+
+
+          /* 2012년 이전 산출 세액 */
+          if((realyy_calc >0)&&(realyy_2012>0)) {
+            taxstamt_2012 = lround(taxstamt * realyy_2012 / realyy_calc);
+
+            CalcTax2012(realyy_calc,realyy_2012,taxstamt_2012, &avgtaxstamt_2012, &retavgtaxstamt_2012, &rettaxrate_2012,&retavgtax_2012, &retavgcalctax_2012, &retcalctax_2012);
+          }
+          
+          /* 2013년 이후 산출 세액 */
+          if((realyy_calc >0)&&(realyy_2013>0)) {
+            taxstamt_2013 = taxstamt - taxstamt_2012;
+
+            CalcTax2013(realyy_calc,realyy_2013,taxstamt_2013, &avgtaxstamt_2013, &retavgtaxstamt_2013, &rettaxrate_2013,&retavgtax_2013, &retavgcalctax_2013, &retcalctax_2013);
+          }
+
+          /* 기납부세액 처리 */
+          retintax_2012 = retcalctax_2012 - bretintax;
+          retintax_2013 = retcalctax_2013;          
+
+          avgtaxstamt       = floor(taxstamt / realyy_calc);
+          retavgtaxstamt    = retavgtaxstamt_2013; 
+          retavgtax         = retavgtax_2013;
+          
+          retavgcalctax     = trunc(retavgcalctax_2012  + retavgcalctax_2013);          
+          retcalctax        = trunc(retcalctax_2012     + retcalctax_2013);
+          
+          
+          /* 2015.12.18 eyha 2016년 퇴직세법 적용  */
+          change_pay_2016 = change_payded_2016 = taxstamt_2016 = rettaxrate_2016 = retavgtax_2016 = retcalctax_2016 = retintax_2016 = retintax_calc = 0;               
+          if ((retamtsum >0) && (strcmp(g_mrtodate,"20160101") >= 0))   
+          {          	
+          	  /* 환산급여(change_pay_2016), 환산급여공제(change_payded_2016)  */
+              EXEC  SQL
+              SELECT  a.CHANGE_PAY_2016,
+                      RETUTIL.GET_CHANGE_PAYDED(substr(:g_mrtodate,1,4), CHANGE_PAY_2016) change_payded_2016
+              INTO    :change_pay_2016, :change_payded_2016
+              FROM   (SELECT  RETUTIL.GET_CHANGE_PAY(substr(:g_mrtodate,1,4), :retamtsum - :conded, :realyy_calc ) CHANGE_PAY_2016
+                      FROM    DUAL
+                      ) a;
+                                            
+                     
+              /* 퇴직소득 과세표준(taxstamt_2016) = 환산급여 - 환산급여공제 */       
+              taxstamt_2016 =  change_pay_2016 - change_payded_2016;       	
+              
+              /* 환산산출세율(rettaxrate_2016), 환산산출세액(retavgtax_2016), 산출세액(retcalctax_2016)  */                     
+              EXEC  SQL
+              SELECT a.*, 
+                     RETUTIL.GET_RETCALCTAX(substr(:g_mrtodate,1,4), RETAVGTAX_2016, :realyy_calc)  RETAVGTAX_2016
+              INTO :rettaxrate_2016, :retavgtax_2016, :retcalctax_2016     
+              FROM (
+                       SELECT 
+                               RETUTIL.GET_RETTAXRATE(:taxstamt_2016) RETTAXRATE_2016,
+                               RETUTIL.GET_RETAVGTAX(:taxstamt_2016)  RETAVGTAX_2016
+                      FROM DUAL
+                   ) a;              
+             
+              /* 2016년 이후 소득세 */               
+              retintax_2016 = retcalctax_2016;         
+                       	
+              
+              /* 특례 적용 산출세액(retintax_calc)  */                     
+              EXEC  SQL
+              SELECT RETUTIL.GET_RETINTAX(substr(:g_mrtodate,1,4), :retcalctax, :retcalctax_2016)  RETINTAX_CALC                 
+              INTO :retintax_calc
+              FROM DUAL;   
+              
+              
+              /*  printf("[debug 3 ] : empno=%s,change_pay_2016=%f,retintax_calc=%f  \n",empno,change_pay_2016,retintax_calc);  */                                                         
+          }
+           
+    
+          /* 2015.12.18 eyha 2016년 세법적용 
+                    calcintax         = retcalctax - bretintax;  */
+          if (strcmp(g_mrtodate,"20160101") >= 0)
+            calcintax         = retintax_calc - bretintax;   
+          else             
+            calcintax         = retcalctax - bretintax;   
+                             
+          
+          calcjutax         = trunc(calcintax/10);
+          
+          retintax          = trunc(calcintax/10)  * 10;
+          retjutax          = trunc((calcintax * jutaxrate / 100) /10) * 10;
+          
+               EXEC SQL 
+               UPDATE  PKMMRMAS
+                  SET  RETAMTSUM           = :retamtsum,
+                       FIXDED              = :fixded,
+                       CONDED              = :conded,
+                       RINDED              = :rinded,
+                       RINAMT              = GREATEST(:retamtsum - :rinded,0),
+                       TAXSTAMT            = :taxstamt, 
+                       TAXSTAMT_2012       = :taxstamt_2012,                            
+                       AVGTAXSTAMT_2012    = :avgtaxstamt_2012,
+                       RETAVGTAXSTAMT_2012 = :retavgtaxstamt_2012,                          
+                       RETTAXRATE_2012     = :rettaxrate_2012,                          
+                       RETAVGTAX_2012      = :retavgtax_2012,
+                       RETAVGCALCTAX_2012  = :retavgcalctax_2012,                           
+                       RETCALCTAX_2012     = :retcalctax_2012,
+                       TAXSTAMT_2013       = :taxstamt_2013,                                                    
+                       AVGTAXSTAMT_2013    = :avgtaxstamt_2013,
+                       RETAVGTAXSTAMT_2013 = :retavgtaxstamt_2013,                          
+                       RETTAXRATE_2013     = :rettaxrate_2013,                          
+                       RETAVGTAX_2013      = :retavgtax_2013,
+                       RETAVGCALCTAX_2013  = :retavgcalctax_2013,                           
+                       RETCALCTAX_2013     = :retcalctax_2013,
+                       AVGTAXSTAMT         = :avgtaxstamt,
+                       RETAVGTAXSTAMT      = :retavgtaxstamt,                           
+                       RETAVGTAX           = :retavgtax,
+                       RETAVGCALCTAX       = :retavgcalctax,                        
+                       RETCALCTAX          = :retcalctax,
+                       CALCINTAX           = :calcintax,
+                       CALCJUTAX           = :calcjutax,                       
+                       RETINTAX            = :retintax,
+                       RETJUTAX            = :retjutax,
+                       RETINTAX_2012       = :retintax_2012,                        
+                       RETINTAX_2013       = :retintax_2013,
+                       CHANGE_PAY_2016     = :change_pay_2016    ,  /*2015.12.15 eyha add*/
+                       CHANGE_PAYDED_2016  = :change_payded_2016 ,
+                       TAXSTAMT_2016       = :taxstamt_2016      ,
+                       RETTAXRATE_2016     = :rettaxrate_2016    ,
+                       RETAVGTAX_2016      = :retavgtax_2016     ,
+                       RETCALCTAX_2016     = :retcalctax_2016    ,
+                       RETINTAX_2016       = :retintax_2016      ,
+                       RETTAXYY            = substr(:g_mrtodate,1,4),  	
+                       RETINTAX_CALC       = :retintax_calc                          	                                                	                  
+                WHERE  EMPNO = :empno;
+          
+               if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+               {    
+                    sprintf(log_buff, "산출세액 반영 setting Error(1)");
+                    Write_batlog(seqno++, log_buff); 
+                    exit(1);
+               }
+          
+     }
+
+/*2013.02.15.hjku 산출 세액 변경 종료*/
+  
+ /* 퇴직소득세  
+     EXEC SQL
+     UPDATE PKMMRMAS 
+     //SET    RealRETINTAX = FLOOR( (RETCALCTAX - RETTAXDED) /10 ) * 10   2005년이후 폐지 dsa2000  2005.01.
+        SET RetIntax = FLOOR(RETCALCTAX /10 ) * 10
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "퇴직소득세(1) 계산중...\n"); 
+          error_quit("퇴직소득세(1) 계산중...\n");
+     }
+
+     EXEC SQL
+     UPDATE PKMMRMAS 
+        SET RetIntax = 0
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+        AND RetIntax < 0 ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "퇴직소득세(2) 계산중...\n"); 
+          error_quit("퇴직소득세(2) 계산중...\n");
+     }
+*/
+     /* 퇴직주민세  
+     EXEC SQL
+     UPDATE PKMMRMAS                                  
+        SET RetJutax = FLOOR( (RetIntax * :jutaxrate / 100) /10) * 10
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "퇴직주민세 계산중...\n"); 
+          error_quit("퇴직주민세 계산중...\n");
+     }
+
+ */    
+/*==== dsa2000 추가 2004.10.12.   Start.. 동해년도의 종전 중간정산 반영한 세금 .=========== */
+    /* REALRETINTAX  IS '동해년도 총소득세';  RealRetJutax
+       RETREAL       IS '동해년도 총지급 중간정산금';       
+       RETINTAX      IS '실소득세 = 동해년도의 총소득세 - 종전소득세';  RetJutax
+       RETREALAMT    IS '실퇴직금 = 동해년도의 총소득세 - 종전소득세';                   */        
+                         
+     EXEC    SQL
+     UPDATE  PKMMRMAS
+        /*SET  RealRetintax = nvl(RETIntax,0) - nvl(bretintax,0);*/
+        SET  RealRetintax = nvl(RETIntax,0)
+     WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {       
+          Write_batlog(seqno++, "12. 실퇴직소득세 setting Error"); /*dsa2000 Rexec 대체*/
+          error_quit(sqlca.sqlcode,"12. 실퇴직소득세 setting Error");
+     }
+
+     EXEC    SQL
+     UPDATE  PKMMRMAS
+        /*SET     RealRetjutax = nvl(RETJutax,0) - nvl(bretjutax,0);*/
+        SET     RealRetjutax = nvl(RETJutax,0)
+     WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;;        
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {       
+          error_quit(sqlca.sqlcode,"13. 실퇴직주민세 setting Error");
+     }
+
+     EXEC    SQL
+     UPDATE  PKMMRMAS
+        SET  retreal   = retamtsum - RETIntax - RETJutax   - nvl(bretintax,0) - nvl(bretjutax,0);
+      /*WHERE  Bretamt <> 0;             //2013.02.19.hjku. 화면과 계산로직 맞추기 위해                   종전 중간정산 있는 사원만 Update. 데이터 구분을 위해.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {       
+          Write_batlog(seqno++, "11. 동해년도 총지급 중간정산금  setting Error"); /*dsa2000 Rexec 대체*/
+          error_quit(sqlca.sqlcode,"11. 동해년도 총지급 중간정산금  setting Error");
+     }
+
+     EXEC    SQL
+     UPDATE  PKMMRMAS
+        SET  RetRealAmt = retamt - RealRetIntax - RealRetJutax,
+             writetime  = to_char(sysdate, 'yyyymmddhh24miss') ,
+             writeman   = :g_workemp; 
+             
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {       
+          error_quit(sqlca.sqlcode,"14. 실지급 퇴직금 setting Error");  /*중간정산 반영후 퇴직금.*/
+     }
+/* dsa2000 추가 2004.10.12  end................................................................ */        
+        
+        
+/* 국민연금 전환금  변경후 :
+** ===============================================================
+*  1999.04 부터 국민연금에서 퇴충부담금 부분이 없어지므로
+*  국민연금이력에서 퇴충부담금을 공제할 경우 퇴충필드가 따로 없으므로
+*  1999.03 까지만 합계를 낸다.*   단, 중간정산 이후 금액부터
+** ================================================================ *
+*/
+     EXEC SQL
+     UPDATE PKMMRMAS R 
+        SET
+            ANUAMT =
+            (SELECT SUM(NVL(ANUSELFAMT,0))
+               FROM PKHNPHIS N
+              WHERE R.EMPNO = N.EMPNO
+                AND SUBSTR(R.MRFRDATE,1,6) <= N.ANUYYMM
+                AND SUBSTR(R.MRTODATE,1,6) >= N.ANUYYMM
+                AND N.ANUYYMM <= '199903'
+            )
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno;
+
+        /* NULL 값은 실지급액 계산시 처리 */
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          error_quit("국민연금 전환금 계산중...\n");
+     }
+
+     /* 실지급액 (국민연금 전환금 포함 계산)*/
+     EXEC SQL
+     UPDATE PKMMRMAS SET
+            ANUAMT  = NVL(ANUAMT,0),
+            /*     DEDSUM  = NVL(ANUAMT,0) + NVL(RETINTAX,0)+ NVL(RETJUTAX,0) ,*/
+            DEDSUM  = NVL(ANUAMT,0) + NVL(RealRETINTAX,0)+ NVL(RealRETJUTAX,0) ,
+            REALAMT = NVL(RETREALAMT,0) - NVL(ANUAMT,0)
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "실지급액 계산중...\n"); /*dsa2000 Rexec 대체*/
+          error_quit("실지급액 계산중...\n");
+     }
+
+}
+
+void Calc_Retintax()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char empno[4+1] = "";
+          int  retyy = 0;
+          long int retamt = 0;
+     EXEC SQL END DECLARE SECTION;
+ 
+     double rinded = 0;
+ 
+     EXEC SQL DECLARE cursor_rinded CURSOR FOR
+     SELECT EMPNO, RETYY, RETAMT
+       FROM PKMMRMAS
+      WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno
+      ORDER BY RETYY, EMPNO;
+ 
+     if  (sqlca.sqlcode != 0)
+     {
+          error_quit("\n");
+     }
+ 
+     EXEC SQL OPEN cursor_rinded;
+ 
+     if  (sqlca.sqlcode != 0)
+     {
+          error_quit("\n");
+     }
+ 
+     while(1)
+     {
+          EXEC SQL FETCH cursor_rinded INTO
+              :empno, :retyy, :retamt;
+          
+          if (sqlca.sqlcode == 1403) break;
+          
+          if  (retyy <= 5)
+               rinded = (retamt/2) + (300000 * retyy);
+          else if ((retyy > 5) && (retyy <= 10))
+               rinded = (retamt/2) + 1500000 + 500000 * (retyy - 5);
+          else if ((retyy > 10) && (retyy <= 20))
+               rinded = (retamt/2) + 4000000 + 800000 * (retyy - 10);
+          else /* if (retyy > 20) */
+               rinded = (retamt/2) + 12000000 + 1200000 * (retyy - 20);
+          
+          EXEC SQL
+              UPDATE PKMMRMAS 
+                 SET
+                     RINDED = CEIL(:rinded)
+          WHERE EMPNO >= :g_frempno AND EMPNO <= :g_toempno ;
+          
+          if (sqlca.sqlcode != 0)
+          {
+              error_quit("\n");
+          }
+     }
+
+}
+
+/*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}
+/*
+hinsacc pkq5040g
+pkq5040g 20130131 1 0000 zzzz D029 pkq5040g 20130131
+*/   

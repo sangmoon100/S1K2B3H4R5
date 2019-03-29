@@ -1,0 +1,917 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKA4050G(1년 미만 입사자 연차 생성 프로그램)
+ SYSTEM-NAME    : 인사
+ SUBSYSTEM-NAME : 근태
+ Programmer     : 이상문
+ Version        : 1.00
+ Date           : 2018.06.27
+
+Update Contents
+ Version  date(yy.mm.dd)  programmer       description                        relevant doc.no
+ 1.00     2018.06.27      이상문             최초개발본                       
+ ============================================================================= */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define  SUCCESS     -1*/
+#define  FAIL        -2
+
+
+/*** 함수 Prototype 선언  ***/
+void    add_days(char* indate,int m, char* rdate);
+double  calc_term(char *frdate,char *todate);
+void    trail_spaces(char *dest);
+void   check_duty(char* p_empno, int mon);
+
+/****** log File 관련 ******/
+void    CreateLog();
+void    WriteLog(char *message);
+
+/*********************************************
+  Global Variable
+**********************************************/
+
+EXEC SQL BEGIN DECLARE SECTION;
+
+     /***  연차 테이블(PKYEARLT) 참조변수  ***/
+     char    yearly_yy[5]     = "";  /* 연차발생년도   */
+     char    empno[5]         = "";  /* 사번     */
+     char    korname[13]      = "";  /* 성명     */
+     double  yearly_cnt       = 0;   /* 연차사용가능일수  */
+     double  longwork_cnt     = 0;   /*   */
+     double  limit_cnt        = 0;   /* 제한일수  */
+     double  yearlyplan_cnt   = 0;   /* 연차사용목표  */
+     char    notice_yn[2]     = "";  /* 고지완료여부  */
+     char    noticeempno[5]   = "";  /* 고지완료등록사번  */
+     char    noticetime[15]   = "";  /* 고지완료일   */
+     char    assign_yn[2]     = "";  /* 사용시기지정완료여부  */
+     char    assignempno[5]   = "";  /* 사용시기지정완료등록사번  */
+     char    assigntime[15]   = "";  /* 사용시기지정완료일   */
+     char    mod_yn[2]        = "";  /* 목표조정대상여부  */
+     char    close_yn[2]      = "";  /* 닫기확인여부  */
+     char    closeempno[5]    = "";  /* 닫기확인등록사번  */
+     char    closetime[15]    = "";  /* 닫기확인일   */
+     double  tot_yearly_cnt   = 0;   /* 연차발생일수  */
+     double  pre_used_cnt     = 0;   /* 전년도사용일수  */
+     double  next_yearly_cnt  = 0;   /* 익년도선사용일수  */
+     
+     char    empdate[9]       = "";   /* 최초입사일 */
+     char    rundate[9]       = "";   /* 실행년월일 */
+
+     typedef struct PKYEARLT
+     {
+          char    yearly_yy[5];
+          char    empno[5];
+          int     tot_yearly_cnt;
+     };
+
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+/****************************************************************************** 
+  Other Variables
+******************************************************************************/ 
+char  logfile[40];
+char  logfile_fullname[140];
+char  mm[3] = "";
+int   id;
+
+/***** Log Filspeciale Pointer *****/
+FILE *fp;
+
+struct PKYEARLT pkyearlt1;
+struct PKYEARLT pkyearlt2;
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = "";
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno = 0;
+
+void main(int argc,char *argv[])
+{
+     int  flag;
+     char FL_file[255];
+     char  curdatetime[20+1]="";
+
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pka4050g");
+
+     hinsa_get_filename(1, FL_file);
+     /*if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }*/
+
+     /* Dsa2000  2004.02.24.  **********************************/
+     hinsa_log_print(0,"1년 미만 입사자 연차 생성 시작...[pka4050g]");
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /*dsa2000  수정..End......................................*/
+
+     EXEC SQL
+     SELECT  to_char(sysdate, 'YYYYMMDD')
+       INTO  :rundate
+       FROM  DUAL ;
+          
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_rundate,  rundate);
+     strcpy(log_progid,   "pka4050g");
+     strcpy(log_writeman, "CRON");
+
+     EXEC SQL DECLARE log_db DATABASE;
+     hinsa_log_db_connect();
+     /*========================================================*/
+
+     EXEC SQL LOCK TABLE PKYEARLT
+       IN   EXCLUSIVE  MODE  NOWAIT;
+     
+     /*printf("rundate=%s \n", rundate);
+     sprintf(log_buff, "rundate=%s \n",rundate);
+     Write_batlog(seqno++, log_buff);*/
+     
+     CreateLog();
+
+
+     /* 1년 미만 입사자 연차 생성 */
+     flag = process_records();
+     
+     printf("\n 1년 미만 입사자 연차 생성 ====================\n");
+     sprintf(log_buff, "\n 1년 미만 입사자 연차 생성 ====================\n"); /*dsa2000 Rexec 대체*/
+     Write_batlog(seqno++, log_buff);
+     
+     /* 재직자중 1년 이상 입사자 연차 사용 관리 */
+     flag = process_records_over();
+     
+     printf("\n 재직자중 1년 이상 입사자 연차 사용 관리 =====\n=");
+     sprintf(log_buff, "\n 재직자중 1년 이상 입사자 연차 사용 관리 ======\n"); /*dsa2000 Rexec 대체*/
+     Write_batlog(seqno++, log_buff);
+
+     /*** 종료시간 Print dsa2000 Add ***************************/
+     EXEC SQL  
+     SELECT TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS')
+       INTO :curdatetime
+       FROM DUAL;
+     
+     sprintf(log_buff, "종료시간 : %.14s \n ",curdatetime);
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff); 
+     /*********************************************************/
+
+     if  (flag != SUCCESS)
+     {
+          sprintf(log_buff,"작업이 실패했습니다.\n");
+          WriteLog(log_buff);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업이 실패했습니다.\n");
+     }
+     else
+     {
+          sprintf(log_buff,"작업이 성공적으로 완료되었습니다.\n");
+          WriteLog(log_buff);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          hinsa_exit(0,"OK 작업이 성공적으로 완료되었습니다.\n");
+     }
+     
+     fclose(fp);
+}
+
+
+/*****************************************************************************
+  대상자료를 추출하는 함수.== 재직자중 1년 미만 입사자 
+ *****************************************************************************/
+process_records()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          int  mon = 0;
+     EXEC SQL END   DECLARE SECTION;
+
+     /* 대상자 조회 */
+     EXEC SQL DECLARE cursor1 CURSOR FOR
+     SELECT NVL(EMPNO,' '), NVL(TRIM(KORNAME),' '), NVL(GROUPEMPDATE,EMPDATE)
+       FROM PIMPMAS
+      WHERE PSTATE < '80'
+        AND EMPCODE <> '75' // 그룹 전적
+        //AND :rundate BETWEEN EMPDATE AND to_char(to_date(EMPDATE,'YYYYMMDD') + 365,'YYYYMMDD')
+        AND :rundate BETWEEN NVL(GROUPEMPDATE,EMPDATE) AND to_char(to_date(NVL(GROUPEMPDATE,EMPDATE),'YYYYMMDD') + 364,'YYYYMMDD') // 1년 미만
+        //AND EMPNO NOT LIKE 'P%'
+        AND EMPNO NOT LIKE 'M%'
+        AND EMPNO NOT LIKE 'I%'
+      ORDER BY EMPNO;
+
+     EXEC SQL OPEN cursor1;
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405))
+     {
+          printf("ERROR_CODE : %d, cursor1 Open Error\n",  sqlca.sqlcode);
+          sprintf(log_buff, "ERROR_CODE : %d, cursor1 Open Error. \n", sqlca.sqlcode); /*dsa2000 Rexec 대체*/
+          WriteLog(log_buff);
+          Write_batlog(seqno++, log_buff);
+          EXEC SQL CLOSE cursor1;
+          return(FAIL);
+     }
+     
+
+     while(1)
+     {
+          EXEC SQL FETCH cursor1
+             INTO :empno, :korname, :empdate;
+             
+          if (sqlca.sqlcode == 1403) {
+              EXEC SQL CLOSE cursor1;
+              return(SUCCESS);
+          }
+          mon = 0;
+
+          /* 개월수 체크 */
+          EXEC SQL
+          SELECT to_number(trunc(months_between(to_date(:rundate,'YYYYMMDD'),to_date(:empdate,'YYYYMMDD')))) mon
+            INTO :mon
+            FROM DUAL;
+
+          if (mon >= 1)
+          {
+               /* 근태 체크 */
+               check_duty(empno, mon);
+               
+               /* PKYEARLT 테이블 반영 */
+               update_pkyearlt();
+               
+          }
+
+     }
+     
+     return(SUCCESS);
+}
+
+/* 근태 체크 */
+void check_duty(char* p_empno, int mon)
+{
+     int  i         = 0;
+     char giveyn[2] = ""; /* 해당월 Y : 연차생성, N : 연차미생성 */
+     char t_yy[5]   = ""; /* 입사년도 */
+     char t_yy2[5]  = ""; /* 입사년도 다음년 */
+     char w_yy[5]   = ""; /* 현재년도 */
+     char flag[2]   = ""; /* C:입사년도, N:다음년도 */
+     
+     EXEC SQL BEGIN DECLARE SECTION;
+         char wkdate[9] = "";
+         char frdate[9] = "";
+         char todate[9] = "";
+         char col[30]   = "";
+         char duty[3]   = "";
+         char tmp[3]    = "";
+     EXEC SQL END   DECLARE SECTION;
+
+     EXEC SQL
+     SELECT substr(EMPDATE,1,4)
+       INTO :t_yy
+       FROM PIMPMAS
+      WHERE EMPNO = :p_empno;
+     
+     strcpy(pkyearlt1.yearly_yy, t_yy);
+     pkyearlt1.tot_yearly_cnt = 0;
+     pkyearlt2.tot_yearly_cnt = 0;
+     strcpy(flag, "C");
+
+     
+     for(i = 1;i <= mon;i++)
+     {
+          EXEC SQL
+          SELECT to_char(add_months(to_date(EMPDATE,'YYYYMMDD'), (:i-1)),'YYYYMMDD')
+                ,to_char(add_months(to_date(EMPDATE,'YYYYMMDD'), :i),'YYYYMMDD')
+            INTO :frdate, :todate
+            FROM PIMPMAS
+           WHERE EMPNO = :p_empno;
+          
+          strcpy(wkdate, frdate);
+          
+          strcpy(giveyn, "Y");
+          //giveyn = "Y";
+          
+          while(1)
+          {
+               EXEC SQL
+               SELECT 'DD'||to_char(to_number(substr(:wkdate,7,2)))
+                 INTO :col
+                 FROM DUAL;
+               
+               trail_spaces(col);
+          
+               /* 해당일자 근태 조회 */
+               EXEC SQL
+               SELECT 
+                      CASE 
+                           WHEN (:col = 'DD1' ) THEN DD1
+                           WHEN (:col = 'DD2' ) THEN DD2
+                           WHEN (:col = 'DD3' ) THEN DD3
+                           WHEN (:col = 'DD4' ) THEN DD4
+                           WHEN (:col = 'DD5' ) THEN DD5
+                           WHEN (:col = 'DD6' ) THEN DD6
+                           WHEN (:col = 'DD7' ) THEN DD7
+                           WHEN (:col = 'DD8' ) THEN DD8
+                           WHEN (:col = 'DD9' ) THEN DD9
+                           WHEN (:col = 'DD10') THEN DD10
+                           WHEN (:col = 'DD11') THEN DD11
+                           WHEN (:col = 'DD12') THEN DD12
+                           WHEN (:col = 'DD13') THEN DD13
+                           WHEN (:col = 'DD14') THEN DD14
+                           WHEN (:col = 'DD15') THEN DD15
+                           WHEN (:col = 'DD16') THEN DD16
+                           WHEN (:col = 'DD17') THEN DD17
+                           WHEN (:col = 'DD18') THEN DD18
+                           WHEN (:col = 'DD19') THEN DD19
+                           WHEN (:col = 'DD20') THEN DD20
+                           WHEN (:col = 'DD21') THEN DD21
+                           WHEN (:col = 'DD22') THEN DD22
+                           WHEN (:col = 'DD23') THEN DD23
+                           WHEN (:col = 'DD24') THEN DD24
+                           WHEN (:col = 'DD25') THEN DD25
+                           WHEN (:col = 'DD26') THEN DD26
+                           WHEN (:col = 'DD27') THEN DD27
+                           WHEN (:col = 'DD28') THEN DD28
+                           WHEN (:col = 'DD29') THEN DD29
+                           WHEN (:col = 'DD30') THEN DD30
+                           WHEN (:col = 'DD31') THEN DD31
+                       END
+                 INTO :duty
+                 FROM PKHDUTY
+                WHERE EMPNO = :p_empno
+                  AND DUYYMM = substr(:wkdate,1,6);
+               
+                    /*printf("empno=%s, mon=%d, duty=%s, DD=%s \n", empno, i, duty, col);
+                    sprintf(log_buff, "empno=%s, mon=%d, duty=%s, DD=%s \n", empno, i, duty, col); 
+                    Write_batlog(seqno++, log_buff);*/
+                    
+               /* 연차생성 제외대상 근태 */
+               if (
+                   (strcmp(duty,"71") == 0) ||  /* 병가       */
+                   (strcmp(duty,"72") == 0) ||  /* 결근       */
+                   (strcmp(duty,"73") == 0) ||  /* 무단결근   */
+                   (strcmp(duty,"82") == 0) ||  /* 병상       */
+                   (strcmp(duty,"85") == 0) ||  /* 기소       */
+                   (strcmp(duty,"88") == 0) ||  /* 병상(난임) */
+                   (strcmp(duty,"89") == 0) ||  /* 기타       */
+                   (strcmp(duty,"91") == 0)     /* 정직       */
+                  )
+               {
+                    strcpy(giveyn, "N");
+                    
+               }
+               EXEC SQL
+               SELECT to_char(to_date(:wkdate,'YYYYMMDD') + 1,'YYYYMMDD')
+                 INTO :wkdate
+                 FROM DUAL;
+
+               /*hinsa_exit(0," 개발자 종료. !!!\n");*/
+               if (strcmp(wkdate, todate) == 0)
+               {
+                   /*printf("break! mon=%d \n",i);
+                   sprintf(log_buff, "break! mon=%d \n",i); 
+                   Write_batlog(seqno++, log_buff);*/
+                   break;
+               }
+          }
+          
+          
+          EXEC SQL
+          SELECT substr(:wkdate,1,4)
+            INTO :w_yy
+            FROM DUAL;
+          
+          if ((strcmp(pkyearlt1.yearly_yy, w_yy) != 0) && (strcmp(flag,"C") == 0))
+          {
+                strcpy(pkyearlt2.yearly_yy, w_yy);
+                //pkyearlt2.yearly_yy = t_yy;
+                pkyearlt2.tot_yearly_cnt = 0;
+                strcpy(t_yy2, w_yy);
+                //t_yy2 = t_yy;
+                strcpy(flag, "N");
+          }
+          
+          if (strcmp(giveyn,"Y") == 0)
+          {
+
+               if (strcmp(pkyearlt1.yearly_yy, w_yy) == 0)
+               {
+                    pkyearlt1.tot_yearly_cnt = pkyearlt1.tot_yearly_cnt + 1;
+
+               }
+               else
+               {
+                    pkyearlt2.tot_yearly_cnt = pkyearlt2.tot_yearly_cnt + 1;
+               }
+
+          }
+          
+          
+          /* PKNWYRDET 테이블 반영 */
+          update_pknwyrdet(giveyn, i);
+     } 
+
+}
+
+
+/*****************************************************************************
+  PKYEARLT 테이블 반영 함수.
+ *****************************************************************************/
+update_pkyearlt()
+{
+     int    count = 0;
+     char   tmp_yearly_yy[5];
+     int    tmp_yearly_cnt;
+     double use_year_cnt;
+     
+     /* 입사년도 */
+     strcpy(tmp_yearly_yy, pkyearlt1.yearly_yy);
+     tmp_yearly_cnt = pkyearlt1.tot_yearly_cnt;
+     
+     EXEC SQL
+     SELECT count(*)
+       INTO :count
+       FROM PKYEARLT
+      WHERE YEARLY_YY = :tmp_yearly_yy
+        AND EMPNO = :empno;
+     
+     /* 입사년도 연차 사용 일수 */
+     EXEC SQL
+     SELECT HPER.PAYUTIL.GET_DUTY_CNT(:empno,to_char(to_date(:empdate,'YYYYMMDD'),'YYYYMMDD'),to_char(to_date(:empdate,'YYYYMMDD'),'YYYY')||'1231','1')
+       INTO :use_year_cnt
+       FROM DUAL;
+         
+     
+     /* pkyearlt1 */
+     /* 없으면 생성 */
+     if (count == 0)
+     {
+          EXEC SQL
+          INSERT INTO PKYEARLT
+          VALUES (
+                  :tmp_yearly_yy
+                 ,:empno
+                 ,:korname
+                 ,NVL(:tmp_yearly_cnt,0)/*,NVL(:tmp_yearly_cnt-:use_year_cnt,0)*/
+                 ,'CRON'
+                 ,NVL(:rundate,'')
+                 ,NULL
+                 ,NULL
+                 ,10
+                 ,NULL
+                 ,NULL
+                 ,NULL
+                 ,NULL
+                 ,NULL
+                 ,NULL
+                 ,NULL
+                 ,'N'
+                 ,NULL
+                 ,NULL
+                 ,NVL(:tmp_yearly_cnt,0)
+                 ,0
+                 ,0
+                 );
+               
+          if  (sqlca.sqlcode != 0) 
+          {
+               printf("ERROR_CODE : %d, PKYEARLT INSERT ERROR\n", sqlca.sqlcode);
+               sprintf(log_buff, "ERROR_CODE : %d, PKYEARLT INSERT ERROR\n", sqlca.sqlcode); 
+               WriteLog(log_buff);
+               Write_batlog(seqno++, log_buff);
+               return(FAIL);
+          }
+     }
+     else
+     {
+          EXEC SQL
+          UPDATE PKYEARLT
+             SET 
+                 YEARLY_CNT      = NVL(:tmp_yearly_cnt,0)/*NVL(:tmp_yearly_cnt-:use_year_cnt,0)*/
+                ,WRITEID         = 'CRON'
+                ,WRITETIME       = NVL(:rundate,'')
+                ,TOT_YEARLY_CNT  = NVL(:tmp_yearly_cnt,0)
+          WHERE  EMPNO = :empno
+            AND  YEARLY_YY       = :tmp_yearly_yy;
+          
+          if  (sqlca.sqlcode != 0) 
+          {
+               printf("ERROR_CODE : %d, PKYEARLT UPDATE ERROR\n", sqlca.sqlcode);
+               sprintf(log_buff, "ERROR_CODE : %d, PKYEARLT UPDATE ERROR\n", sqlca.sqlcode); 
+               WriteLog(log_buff);
+               Write_batlog(seqno++, log_buff);
+               return(FAIL);
+          }
+     }
+     
+     
+     /* 다음년도 - 전년도 남은 연차 이월 */
+     if (strcmp(pkyearlt1.yearly_yy, pkyearlt2.yearly_yy) != 0)
+     {
+          strcpy(tmp_yearly_yy, pkyearlt2.yearly_yy);
+          tmp_yearly_cnt = pkyearlt1.tot_yearly_cnt + pkyearlt2.tot_yearly_cnt;
+          
+          EXEC SQL
+          SELECT count(*)
+            INTO :count
+            FROM PKYEARLT
+           WHERE YEARLY_YY = :tmp_yearly_yy
+             AND EMPNO = :empno;
+          
+          /* 다음년도 연차 사용 일수 */
+          EXEC SQL
+          SELECT PAYUTIL.GET_DUTY_CNT(:empno,to_char(to_date(:empdate,'YYYYMMDD'),'YYYYMMDD'),to_char(to_date(:empdate,'YYYYMMDD') + 365,'YYYY')||'1231','1')
+            INTO :use_year_cnt
+            FROM DUAL;
+            
+          /* pkyearlt2 */
+          /* 없으면 생성 */
+          if (count == 0)
+          {
+               EXEC SQL
+               INSERT INTO PKYEARLT
+               VALUES (
+                       :tmp_yearly_yy
+                      ,:empno
+                      ,:korname
+                      ,NVL(:tmp_yearly_cnt,0)/*,NVL(:tmp_yearly_cnt-:use_year_cnt,0)*/
+                      ,'CRON'
+                      ,NVL(:rundate,'')
+                      ,NULL
+                      ,NULL
+                      ,10
+                      ,NULL
+                      ,NULL
+                      ,NULL
+                      ,NULL
+                      ,NULL
+                      ,NULL
+                      ,NULL
+                      ,'N'
+                      ,NULL
+                      ,NULL
+                      ,NVL(:tmp_yearly_cnt,0)
+                      ,0
+                      ,0
+                      );
+               
+               if  (sqlca.sqlcode != 0)
+               {
+                    printf("ERROR_CODE : %d, PKYEARLT2 INSERT ERROR\n", sqlca.sqlcode);
+                    sprintf(log_buff, "ERROR_CODE : %d, PKYEARLT2 INSERT ERROR\n", sqlca.sqlcode);
+                    WriteLog(log_buff);
+                    Write_batlog(seqno++, log_buff);
+                    return(FAIL);
+               }
+          }
+          else
+          {
+               EXEC SQL
+               UPDATE PKYEARLT
+                  SET 
+                      YEARLY_CNT      = NVL(:tmp_yearly_cnt,0)/*NVL(:tmp_yearly_cnt-:use_year_cnt,0)*/
+                     ,WRITEID         = 'CRON'
+                     ,WRITETIME       = NVL(:rundate,'')
+                     ,TOT_YEARLY_CNT  = NVL(:tmp_yearly_cnt,0)
+               WHERE  EMPNO = :empno
+                 AND  YEARLY_YY       = :tmp_yearly_yy;
+               
+               if  (sqlca.sqlcode != 0) 
+               {
+                    printf("ERROR_CODE : %d, PKYEARLT2 UPDATE ERROR\n", sqlca.sqlcode);
+                    sprintf(log_buff, "ERROR_CODE : %d, PKYEARLT2 UPDATE ERROR\n", sqlca.sqlcode); 
+                    WriteLog(log_buff);
+                    Write_batlog(seqno++, log_buff);
+                    return(FAIL);
+               }
+          }
+     }
+     
+     EXEC SQL COMMIT ;
+     
+     if (use_year_cnt > 0)
+     {
+          use_check_pknwyrdet(use_year_cnt);
+     }
+}
+
+/*****************************************************************************
+  PKNWYRDET 테이블 반영 함수.
+ *****************************************************************************/
+update_pknwyrdet(char* p_giveyn, int mon)
+{
+    int  count;
+    char accyn[2];
+    char accdate[9];
+    char useyn[2];
+
+    /* Y = (입사일+mon,'N'), N = (NULL,'X') */
+    EXEC SQL
+    SELECT :p_giveyn
+          ,DECODE(:p_giveyn,'Y',to_char(add_months(to_date(:empdate,'YYYYMMDD'), :mon),'YYYYMMDD'),'')
+          ,DECODE(:p_giveyn,'Y','N','X')
+      INTO :accyn
+          ,:accdate
+          ,:useyn
+      FROM DUAL;
+
+    /* 존재 여부 확인 */
+    EXEC SQL
+    SELECT count(*)
+      INTO :count
+      FROM PKNWYRDET
+     WHERE EMPNO = :empno
+       AND MON   = :mon;
+    
+    
+     /* 없으면 생성 */
+     if (count == 0)
+     {
+          /*printf("empno=%s, korname=%s, empdate=%s, mon=%d, accyn=%s, accdate=%s, useyn=%s \n", empno, korname, empdate, mon, accyn, accdate, useyn);
+          sprintf(log_buff, "empno=%s, korname=%s, empdate=%s, mon=%d, accyn=%s, accdate=%s, useyn=%s \n", empno, korname, empdate, mon, accyn, accdate, useyn); 
+          Write_batlog(seqno++, log_buff);*/
+          
+          EXEC SQL
+          INSERT INTO PKNWYRDET
+          VALUES (
+                  :empno
+                 ,:korname
+                 ,:empdate
+                 ,NVL(:mon,0)
+                 ,NVL(:accyn,'')
+                 ,NVL(:accdate,'')
+                 ,NVL(:useyn,'')
+                 ,NVL(:rundate,'')
+                 ,'CRON'
+                 );
+               
+          if  (sqlca.sqlcode != 0) 
+          {
+               printf("ERROR_CODE : %d, PKNWYRDET INSERT ERROR\n", sqlca.sqlcode);
+               sprintf(log_buff, "ERROR_CODE : %d, PKNWYRDET INSERT ERROR\n", sqlca.sqlcode); 
+               WriteLog(log_buff);
+               Write_batlog(seqno++, log_buff);
+               return(FAIL);
+          }
+     }
+     else
+     {
+          EXEC SQL
+          UPDATE PKNWYRDET
+             SET 
+                 ACCYN      = NVL(:accyn,'')
+                ,ACCDATE    = NVL(:accdate,'')
+                ,USEYN      = NVL(:useyn,'')
+                ,WRITEMAN   = 'CRON'
+                ,WRITETIME  = NVL(:rundate,'')
+          WHERE  EMPNO   = :empno
+            AND  EMPDATE = :empdate
+            AND  MON     = :mon
+          ;
+          
+          if  (sqlca.sqlcode != 0) 
+          {
+               printf("ERROR_CODE : %d, PKNWYRDET UPDATE ERROR\n", sqlca.sqlcode);
+               sprintf(log_buff, "ERROR_CODE : %d, PKNWYRDET UPDATE ERROR\n", sqlca.sqlcode); 
+               WriteLog(log_buff);
+               Write_batlog(seqno++, log_buff);
+               return(FAIL);
+          }
+     }
+}
+
+/*****************************************************************************
+  PKNWYRDET 테이블에 연차 사용 반영 함수.
+ *****************************************************************************/
+use_check_pknwyrdet(double use_year_cnt)
+{
+     int i = 0;
+     int t = ceil(use_year_cnt);
+     
+     for (i = 0;i < t;i++)
+     {
+          EXEC SQL
+          UPDATE PKNWYRDET
+             SET USEYN = 'Y'
+           WHERE EMPNO = :empno
+             AND ACCYN = 'Y'
+             AND USEYN = 'N'
+             AND MON   = (SELECT min(MON)
+                            FROM PKNWYRDET
+                           WHERE EMPNO = :empno
+                             AND ACCYN = 'Y'
+                             AND USEYN = 'N');
+          
+          if  ( (sqlca.sqlcode) != 0 && (sqlca.sqlcode != 1403) ) 
+          {
+               printf("ERROR_CODE : %d, USE_CHECK_PKNWYRDET UPDATE ERROR\n", sqlca.sqlcode);
+               sprintf(log_buff, "ERROR_CODE : %d, USE_CHECK_PKNWYRDET UPDATE ERROR\n", sqlca.sqlcode); 
+               WriteLog(log_buff);
+               Write_batlog(seqno++, log_buff);
+               return(FAIL);
+          }
+     }
+}
+
+/*****************************************************************************
+  대상자료를 추출하는 함수.== 재직자중 1년 이상 입사자 연차 사용 관리
+ *****************************************************************************/
+process_records_over()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          double use_year_cnt;
+     EXEC SQL END   DECLARE SECTION;
+
+     /* 대상자 조회 */
+     EXEC SQL DECLARE cursor2 CURSOR FOR
+     SELECT EMPNO, EMPDATE
+       FROM PKNWYRDET
+      WHERE EMPNO NOT IN (
+                          SELECT NVL(EMPNO,' ')
+                            FROM PIMPMAS
+                           WHERE PSTATE < '80'
+                             AND EMPCODE <> '75' // 그룹 전적
+                             AND :rundate BETWEEN NVL(GROUPEMPDATE,EMPDATE) AND to_char(to_date(NVL(GROUPEMPDATE,EMPDATE),'YYYYMMDD') + 364,'YYYYMMDD') // 1년 미만
+                             //AND EMPNO NOT LIKE 'P%'
+                             AND EMPNO NOT LIKE 'M%'
+                             AND EMPNO NOT LIKE 'I%'
+                         )
+        AND to_char(SYSDATE, 'YYYY') = to_char(to_date(EMPDATE,'YYYYMMDD') + 365,'YYYY')
+      ORDER BY EMPNO;
+
+     EXEC SQL OPEN cursor2;
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405))
+     {
+          printf("ERROR_CODE : %d, cursor2 Open Error\n",  sqlca.sqlcode);
+          sprintf(log_buff, "ERROR_CODE : %d, cursor2 Open Error. \n", sqlca.sqlcode); /*dsa2000 Rexec 대체*/
+          WriteLog(log_buff);
+          Write_batlog(seqno++, log_buff);
+          EXEC SQL CLOSE cursor1;
+          return(FAIL);
+     }
+     
+
+     while(1)
+     {
+          EXEC SQL FETCH cursor2
+             INTO :empno, :empdate;
+             
+          if (sqlca.sqlcode == 1403) {
+              EXEC SQL CLOSE cursor2;
+              return(SUCCESS);
+          }
+          //mon = 0;
+
+          /* 다음년도 연차 사용 일수 */
+          EXEC SQL
+          SELECT PAYUTIL.GET_DUTY_CNT(:empno,to_char(to_date(:empdate,'YYYYMMDD'),'YYYYMMDD'),to_char(to_date(:empdate,'YYYYMMDD') + 365,'YYYY')||'1231','1')
+            INTO :use_year_cnt
+            FROM DUAL;
+
+          if (use_year_cnt > 0)
+          {
+               use_check_pknwyrdet(use_year_cnt);
+          }
+
+     }
+     
+     return(SUCCESS);
+}
+
+/*****************************************************************************
+  기준일+M 일을 구하는 함수.
+ *****************************************************************************/
+void add_days(char* indate,int m, char* rdate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char    t_date[8+1]  = "";
+          double  t_adddays;
+     EXEC SQL END DECLARE SECTION;
+
+     sprintf(t_date,"%s",indate);
+     t_adddays = m;
+
+     EXEC SQL
+     SELECT   TO_CHAR(TO_DATE(TO_CHAR(TO_DATE(:t_date,'YYYYMMDD')+
+                                              :t_adddays,'YYYYMMDD'),'YYYYMMDD'),'YYYYMMDD')
+     INTO  :t_date
+     FROM  DUAL;
+
+     sprintf(rdate,"%s",t_date);
+}
+
+/****************************************************************************
+  trail_spaces function.
+ ****************************************************************************/
+void trail_spaces(char *dest)
+{
+     int len,i,flag;
+
+     len = strlen(dest);
+
+     i    = 0;
+     flag = 0;
+     while (i < len)
+     {
+          if (*(dest+i) == ' ')
+          {
+               flag = 1;
+               break;
+          }
+          else
+            i++;
+     }
+
+     if  (flag)
+         *(dest+i) = '\0';
+     else
+         *(dest+len) = '\0';
+}
+/****************************************************************************
+  calc_term function.
+ ****************************************************************************/
+double  calc_term(char *frdate,char *todate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t1_date[9] = "";
+          char  t2_date[9] = "";
+          double  term;
+     EXEC SQL END   DECLARE SECTION;
+
+     strncpy(t1_date,frdate,8);
+     strncpy(t2_date,todate,8);
+     EXEC SQL
+     SELECT  TO_DATE(:t2_date,'YYYYMMDD') - TO_DATE(:t1_date,'YYYYMMDD')
+       INTO  :term
+       FROM  DUAL;
+
+     if  (sqlca.sqlcode != 0)
+          return(FAIL);
+     else
+          return(term);
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{
+     EXEC SQL AT log_db
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0))
+     {
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);
+          return(FAILURE);
+     }
+
+     EXEC SQL AT log_db COMMIT WORK ;
+}
+
+void CreateLog()
+{
+     char  curdatetime[20+1]="";
+     char  *logdir;
+     logdir = hinsa_home();
+     /*printf("logdir : %s", logdir);*/
+     strcat(logdir,"/log/proc/pka4050g/");        
+
+     EXEC SQL
+     SELECT TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS')
+       INTO   :curdatetime
+       FROM   DUAL;
+
+  /* 로그파일명을 세팅 */
+     sprintf(logfile_fullname, "%spka4050g_%.12s.log", logdir, curdatetime);
+     /* 로그파일 오픈 */
+     fp = fopen(logfile_fullname, "w+");
+     
+     if  (fp == NULL) 
+     {
+          printf("로그파일오픈(%s) 에러\n", logfile_fullname);
+          exit(1);
+     }
+     
+     sprintf(log_buff, "1년 미만 입사자 연차 생성 cron program [pkg3075g] 을 실행합니다. \n ");
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+     
+     sprintf(log_buff, "실행시간 : %.14s \n ",curdatetime);
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+}
+
+void WriteLog(char *message)
+{
+     fprintf(fp, "%s", message);
+}

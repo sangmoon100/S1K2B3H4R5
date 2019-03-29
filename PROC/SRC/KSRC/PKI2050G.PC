@@ -1,0 +1,1430 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKI2050G(당월학자금 생성)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 지원금
+ Programmer     : 김승회
+ Version        : 1.00
+ Date           : 1997.02.16
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   10.00       1997.02.16         김승회          최초개발본      설계명세서
+   10.01       2004.02.24         강륜종          Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.   
+   10.02       2004.04.19.        강륜종          테이블변경 (R_PNMSCMON => PNMSCEXT )   
+   11.00       2004.11.       강륜종(dsa2000)         Rexec대체 서비스를 위한 수정작업.       
+============================================================================= */
+
+#include <stdio.h> 
+#include <string.h> 
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define  SUCCESS     -1*/
+#define  FAIL        -2
+
+typedef struct data_rec 
+{
+     char  sckind[2+1];
+     char  scname[20+1];
+     double  count;
+     double  sum;
+     struct data_rec* ptr;
+}  record;
+record* first = NULL;
+
+/********* Function Prototype 정의 ************/
+
+void   print_errmsg(int errcode, char *errmsg);
+void   error_quit(char *msg);
+void   free_link(void);
+
+/*********************************************
+  Global Variable
+**********************************************/
+
+EXEC SQL BEGIN DECLARE SECTION;
+     char     empno[5]      = "";      /* 사번     */
+     VARCHAR  faminame[20]  = {0,""};  /* 수혜자명   */
+     char     famijuid[15]  = "";      /* 수혜자주민등록번호  */
+     char     sckind[3]     = "";      /* 학자금구분   */
+     char     scyymm[7]     = "";      /* 지급일자   */
+     double   scamt         = 0;       /* 지급금액   */  
+     double   scseqno       = 0;       /* 지급횟수(마스터)  */
+     double   sccnt         = 0;       /* 지급횟수(이력)  */
+     double   scsum         = 0;       /* 지급액누계   */
+     
+     double   sckiamt       = 0;
+     double   scfrage       = 0;
+     double   sctoage       = 0;
+     
+     char  workyymm[7]  = "";          /* 작업기준월   */
+     char  writetime[16]    = "";      /* 최종작업일시   */
+     char  writeman[5]      = "";      /* 최종작업자   */
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+char  msg[500+1]      = "";
+int   s_count         = 0;
+int   f_count         = 0;
+int   skip_count      = 0;
+char  check_six12[2]  = "";
+char  jobkind[2]      = "";
+char  fryymm[6+1]     = "";
+
+int   id;
+char  dir[80];
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char  log_rundate[16]     = ""; 
+char  log_progid[16]      = "";
+char  log_writeman[5]     = "";
+char  log_buff[100]       = "";
+int   seqno = 0; 
+
+void main(int argc,char *argv[])
+{
+     char FL_file[255];
+     
+     /*dsa2000 Rexec 대체 파라미터 추가...*/
+     if  (argc != 7) {  /*/hper8/HINSA/proc/bin/Kbin/pki2050g 200410 1 200410 D006 pki2050g 2004110100000*/
+          printf("[Usage] : pki2050g 1.공제년월 2.작업종류(1자리)==>1:모든종류의학자금, 1이외의값:유치원학자금제외 \n");
+          printf("       3.유치원학자금 생성대상 시작월 4.작업자사번 5.프로그램ID 6.시작시간  \n");
+          exit(1);
+     }  
+      
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pki2050g");
+
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+      
+     sprintf(workyymm,"%s",argv[1]);
+     sprintf(jobkind,"%s",argv[2]);
+     sprintf(fryymm,"%s",argv[3]);
+     sprintf(writeman,"%s",argv[4]);
+     /*sprintf(check_six12,"%s",argv[4]);*/
+     /*memset(dir,0x00,sizeof(dir));
+     
+        Dsa2000  2004.02.24.  **********************************/
+     /* DB_connect(id,0); */
+     hinsa_log_print(0,"당월 학자금 생성 시작..."); 
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /*dsa2000  수정..End......................................*/
+     
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[4]);
+     strcpy(log_progid,   argv[5]);
+     strcpy(log_rundate,  argv[6]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     if  (restore_master() == FAIL) 
+     {
+          sprintf(log_buff, "= 작업실패1 ="); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...1");
+     }
+     
+     if  (delete_his_records() == FAIL) 
+     {
+          sprintf(log_buff, "= 작업실패2 ="); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...2");
+     }
+     
+     if  (delete_ded_records() == FAIL) 
+     {
+          sprintf(log_buff, "= 작업실패3 ="); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...3");
+     }
+     
+     if  (update_master1() == FAIL) 
+     {
+          sprintf(log_buff, "= 작업실패4 ="); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...4");
+     }
+     
+     if  (insert_his_records1() == FAIL) 
+     {
+          sprintf(log_buff, "= 작업실패5 ="); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...5");
+     }
+     
+     if  (insert_ded_records1() == FAIL) 
+     {
+          sprintf(log_buff, "= 작업실패6 ="); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...6");
+     }
+     
+     if  (jobkind[0] == '1') 
+     {
+          if  (update_master2() == FAIL) 
+          {
+               sprintf(log_buff, "= 작업실패7 ="); /*dsa2000 Rexec 대체*/
+               Write_batlog(seqno++, log_buff);
+               error_quit("작업실패...7");
+          }
+          
+          if  (insert_ded_records2() == FAIL) 
+          {
+               sprintf(log_buff, "= 작업실패8 ="); /*dsa2000 Rexec 대체*/
+               Write_batlog(seqno++, log_buff);
+               error_quit("작업실패...8");
+          }
+          else
+          {
+               printf("유치원학자금생성에 성공한 인원 : (%d) 명. \n",s_count);
+               sprintf(log_buff, "유치원학자금생성에 성공한 인원 : (%d) 명. \n",s_count); /*dsa2000 Rexec 대체*/
+               Write_batlog(seqno++, log_buff);
+                     
+               printf("유치원학자금생성에 실패한 인원 : (%d) 명. \n",f_count);
+               sprintf(log_buff, "유치원학자금생성에 실패한 인원 : (%d) 명. \n",f_count); /*dsa2000 Rexec 대체*/
+               Write_batlog(seqno++, log_buff);
+                     
+               printf("연령문제로 유치원학자금에서 제외된 인원 (%d) 명. \n", skip_count);
+               sprintf(log_buff, "연령문제로 유치원학자금에서 제외된 인원 (%d) 명. \n", skip_count); /*dsa2000 Rexec 대체*/
+               Write_batlog(seqno++, log_buff);
+          }
+     }
+     printf("당월학자금생성 작업완료...\n");
+  
+/*******************************************************
+  2002-09-16  유효성 
+  급여 추출을위해 자녀학자금을 임시테이블에 insert한다. 
+********************************************************/  
+     EXEC SQL 
+     DELETE FROM PNMSCEXT;  /* DSA2000 테이블변경 (R_PNMSCMON => PNMSCEXT ) */
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          sprintf(log_buff, "자녀학자금 임시테이블 삭제 실패.."); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("자녀학자금 임시테이블 삭제 실패..");  
+     }  
+     
+     EXEC SQL 
+     INSERT  INTO PNMSCEXT  /* DSA2000 테이블변경 (R_PNMSCMON => PNMSCEXT ) */
+     SELECT  EMPNO, KORNAME, 13 SCKIND, SUM(SCAMT ) SCAMT
+       FROM  PNMSCMON
+      WHERE  SCKIND NOT IN ('11','25')
+      GROUP  BY EMPNO,KORNAME;
+           
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          sprintf(log_buff, "자녀학자금 임시테이블 insert 실패.."); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("자녀학자금 임시테이블 insert 실패..");  
+     } 
+     
+     if  (read_result() == FAIL) 
+     {
+          sprintf(log_buff, "작업결과 상세내역 작성실패..."); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업결과 상세내역 작성실패...");
+     }   
+     else
+     {
+          sprintf(log_buff, "OK 작업이 성공적으로 완료되었습니다.\n"); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          hinsa_exit(0,"OK 작업이 성공적으로 완료되었습니다.\n");
+     }
+   
+}
+
+/*****************************************************************************
+  학자금지급이력을 삭제하는 함수.
+ *****************************************************************************/
+delete_his_records()
+{
+     EXEC SQL 
+     DELETE  FROM PNHSCHIS
+      WHERE  SCYYMM = :workyymm;
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          sprintf(msg,"학자금지급이력 삭제오류...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     else
+          return(SUCCESS);
+}
+
+/*****************************************************************************
+  당월학자금을 삭제하는 함수.
+ *****************************************************************************/
+delete_ded_records()
+{
+     EXEC SQL 
+     DELETE  FROM PNMSCMON;
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          sprintf(msg,"당월학자금 삭제오류...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     else
+          return(SUCCESS);
+}
+
+/*****************************************************************************
+  학자금마스터를 복원하는 함수.  
+ *****************************************************************************/
+restore_master()
+{
+     if (get_sckind("유치원",sckind) == FAIL)     
+         return(FAIL);
+        
+      
+     if  (jobkind[0] == '1')  
+     { /* 유치원 학자금의 경우 */
+          EXEC SQL DECLARE c1 CURSOR FOR
+          SELECT  EMPNO, FAMINAME, FAMIJUID
+            FROM  PNMSCMAS 
+           WHERE  SCKIND = :sckind    
+             AND  (SCENDYYMM IS NULL)   
+             AND  UPPER(NVL(SCYN,' ')) = 'Y'   
+             AND ((EMPNO IN (SELECT EMPNO
+                               FROM PKMPMAS
+                              WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')) or
+			            (EMPNO IN (SELECT EMPNO
+                               FROM PKZMPMAS
+                              WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')))		
+           ORDER  BY EMPNO, FAMINAME;
+          
+          EXEC SQL OPEN c1;
+          if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405)) 
+          {
+               sprintf(msg,"학자금마스터 읽기오류1...");
+               print_errmsg(sqlca.sqlcode,msg);   
+               Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/  
+               EXEC SQL CLOSE c1;
+               return(FAIL);
+          }
+          
+          while(1) 
+          {
+               EXEC SQL FETCH   c1
+               INTO   :empno, :faminame, :famijuid; 
+               if (sqlca.sqlcode == 1403) 
+               {
+                EXEC SQL CLOSE c1;
+                break;
+               }
+                              
+               if  (sqlca.sqlcode != 0) 
+               {
+                    sprintf(msg,"Cursor c1 Data Fetch Error...");
+                    print_errmsg(sqlca.sqlcode,msg);  
+                    Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/     
+                    EXEC SQL CLOSE c1;
+                    return(FAIL);
+               }
+               
+               hinsa_trim(famijuid);
+               /*
+               hinsa_trim(faminame);
+               */
+               
+               EXEC SQL
+               SELECT  NVL(SUM(SCAMT),0), COUNT(*)
+                 INTO  :scsum, :scseqno  
+                 FROM  PNHSCHIS
+                WHERE  EMPNO   = :empno 
+                  AND  SCKIND  = :sckind
+                  AND  FAMINAME= :faminame 
+                  AND  FAMIJUID= :famijuid  
+                  AND  SCYYMM < :workyymm;
+               if  (sqlca.sqlcode != 0) 
+               {
+                    sprintf(msg,"학자금지급이력 읽기오류1...");
+                    print_errmsg(sqlca.sqlcode,msg);   
+                    Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/   
+                    EXEC SQL CLOSE c1;
+                    return(FAIL);
+               }
+               
+               EXEC SQL
+               UPDATE  PNMSCMAS
+                  SET  
+                       SCSUM = :scsum,
+                       SCSEQNO = :scseqno
+               WHERE  EMPNO   = :empno 
+                 AND  SCKIND  = :sckind
+                 AND  FAMINAME= :faminame 
+                 AND  FAMIJUID= :famijuid;
+               if  (sqlca.sqlcode != 0) 
+               {
+                    sprintf(msg,"학자금마스터 복원오류...");
+                    print_errmsg(sqlca.sqlcode,msg);      
+                    Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+                    EXEC SQL CLOSE c1;
+                    return(FAIL);
+               }
+          }
+     }
+     
+     
+     EXEC SQL DECLARE c6 CURSOR FOR
+     SELECT  EMPNO, FAMINAME, FAMIJUID, SCKIND
+       FROM  PNMSCMAS 
+      WHERE  SCKIND <> :sckind    
+        AND  UPPER(NVL(SCYN,' ')) = 'Y'   
+        AND  SCYYMM = :workyymm   
+        AND ((EMPNO IN (SELECT EMPNO
+                          FROM PKMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')) or
+			       (EMPNO IN (SELECT EMPNO
+                          FROM PKZMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')))		        
+      ORDER  BY EMPNO, FAMINAME;
+     
+     EXEC SQL OPEN c6;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+         (sqlca.sqlcode != -1405)) 
+     {
+          sprintf(msg,"Cursor C6 Open Error...");
+          print_errmsg(sqlca.sqlcode,msg);   
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          EXEC SQL CLOSE c6;
+          return(FAIL);
+     }
+     
+     while(1) 
+     {
+          EXEC SQL FETCH   c6
+          INTO   :empno, :faminame, :famijuid, :sckind; 
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE c6;
+               break;
+          }
+     
+          if  (sqlca.sqlcode != 0) 
+          {
+               sprintf(msg,"Cursor c6 Data Fetch Error...");
+               print_errmsg(sqlca.sqlcode,msg);     
+               EXEC SQL CLOSE c6;
+               return(FAIL);
+          }
+     
+          hinsa_trim(famijuid);
+          /*
+          hinsa_trim(faminame);
+          */
+          
+          EXEC SQL
+          SELECT  NVL(SUM(SCAMT),0), COUNT(*)
+            INTO  :scsum, :scseqno  
+            FROM  PNHSCHIS
+           WHERE  EMPNO   = :empno 
+             AND  SCKIND  = :sckind
+             AND  FAMINAME= :faminame 
+             AND  FAMIJUID= :famijuid
+             AND  SCYYMM < :workyymm;
+          if  (sqlca.sqlcode != 0) 
+          {
+               sprintf(msg,"학자금지급이력 읽기오류1...");
+               print_errmsg(sqlca.sqlcode,msg);
+               Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+               EXEC SQL CLOSE c6;     
+               return(FAIL);
+          }
+          
+          EXEC SQL
+          UPDATE  PNMSCMAS
+             SET  
+                  SCSUM       = :scsum,
+                  SCSEQNO     = :scseqno
+           WHERE  EMPNO    = :empno 
+             AND  SCKIND   = :sckind
+             AND  FAMINAME = :faminame 
+             AND  FAMIJUID = :famijuid;
+          if  (sqlca.sqlcode != 0) 
+          {
+               sprintf(msg,"학자금마스터 복원오류...");
+               print_errmsg(sqlca.sqlcode,msg);
+               Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+               EXEC SQL CLOSE c6;     
+               return(FAIL);
+          }
+     }
+   
+   /*
+     EXEC SQL
+     UPDATE  PNMSCMAS
+     SET  
+      SCSEQNO = 0,
+      SCSUM  = 0
+     WHERE  SCKIND <> :sckind AND (SCFYYMM = :workyymm AND
+      UPPER(NVL(SCYN,' ')) = 'Y') AND EMPNO IN (
+      SELECT   EMPNO 
+      FROM  PKMPMAS
+      WHERE  PSTATE < '80'); 
+   
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+      sprintf(msg,"학자금마스터 쓰기오류1...");
+      print_errmsg(sqlca.sqlcode,msg);
+      return(FAIL);
+     }
+   */
+     return(SUCCESS);
+}
+
+/*****************************************************************************
+  학자금마스터를 갱신하는 함수1.  
+ *****************************************************************************/
+update_master1()
+{
+     if  (get_sckind("유치원",sckind) == FAIL)
+          return(FAIL);
+      
+     EXEC   SQL 
+     UPDATE  PNMSCMAS
+        SET  
+             SCSEQNO = (SCSEQNO + 1),
+             SCSUM  = (SCAMT + SCSUM) 
+      WHERE  SCKIND <> :sckind    
+        AND  SCYYMM = :workyymm    
+        AND  UPPER(NVL(SCYN,' ')) = 'Y'   
+        AND ((EMPNO IN (SELECT EMPNO
+                          FROM PKMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')) or
+			       (EMPNO IN (SELECT EMPNO
+                          FROM PKZMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y'))); 
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          sprintf(msg,"학자금마스터 쓰기오류2...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     else
+          return(SUCCESS);
+}
+
+/*****************************************************************************
+  당월학자금지급이력을 생성하는 함수1.
+ *****************************************************************************/
+insert_his_records1()
+{
+     if  (get_sckind("유치원",sckind) == FAIL)
+          return(FAIL);
+      
+     DPsys_date(writetime,0);
+     
+     EXEC SQL 
+     INSERT   INTO   PNHSCHIS
+      ( SCYYMM, EMPNO, KORNAME, ORGNUM, DEPTCODE, FAMINAME, 
+        FAMIJUID, SCKIND, SCCNT, SCAMT, WRITETIME, WRITEMAN,SCETC            /*kth 20091215 SCETC 비고 추가*/
+      )
+     (
+     SELECT  :workyymm, EMPNO, KORNAME, ORGNUM, DEPTCODE, FAMINAME,
+             FAMIJUID, SCKIND, SCSEQNO, SCAMT, :writetime, :writeman,SCETC  /*kth 20091215 SCETC 비고 추가*/
+       FROM  PNMSCMAS
+      WHERE  SCKIND <> :sckind    
+        AND  SCYYMM = :workyymm    
+        AND  UPPER(NVL(SCYN,' ')) = 'Y'   
+        AND ((EMPNO IN (SELECT EMPNO
+                          FROM PKMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')) or
+			       (EMPNO IN (SELECT EMPNO
+                          FROM PKZMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')))		        
+     );
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(msg,"학자금지급이력 생성오류1...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     
+     EXEC  SQL
+     SELECT  COUNT(*)
+       INTO  :scseqno
+       FROM  PNMSCMAS
+      WHERE  SCKIND <> :sckind    
+        AND  SCYYMM = :workyymm    
+        AND  UPPER(NVL(SCYN,' ')) = 'Y'    
+        AND ((EMPNO IN (SELECT EMPNO
+                          FROM PKMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')) or
+			       (EMPNO IN (SELECT EMPNO
+                          FROM PKZMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')));
+     
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(msg,"학자금마스터 읽기오류...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     else
+     {
+          printf("유치원 학자금을 제외한 학자금 생성건수 : [%.0f] 건\n", scseqno);
+          sprintf(log_buff,"유치원 학자금을 제외한 학자금 생성건수 : [%.0f] 건\n", scseqno); 
+          Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+          return(SUCCESS);
+     }
+}
+
+/*****************************************************************************
+  당월학자금을 생성하는 함수1.
+ *****************************************************************************/
+insert_ded_records1()
+{
+     if  (get_sckind("유치원",sckind) == FAIL)
+          return(FAIL);
+      
+     EXEC SQL 
+     INSERT   INTO   PNMSCMON
+            ( SCYYMM, EMPNO, KORNAME, SCKIND, SCAMT )
+     SELECT  :workyymm, EMPNO, KORNAME, SCKIND, SUM(SCAMT)
+       FROM  PNMSCMAS
+      WHERE  SCKIND <> :sckind    
+        AND  SCYYMM = :workyymm    
+        AND  UPPER(NVL(SCYN,' ')) = 'Y'     
+        AND ((EMPNO IN (SELECT EMPNO
+                          FROM PKMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')) or
+			       (EMPNO IN (SELECT EMPNO
+                          FROM PKZMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')))		
+      GROUP  BY EMPNO, KORNAME, SCKIND;
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(msg,"당월학자금 생성오류1...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     
+     DPsys_date(writetime,0);
+     
+     EXEC SQL DECLARE c3 CURSOR FOR
+     SELECT  EMPNO
+       FROM  PNMSCMON
+      GROUP  BY EMPNO;
+     
+     EXEC SQL OPEN c3;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+         (sqlca.sqlcode != -1405)) 
+     {
+          sprintf(msg,"당월학자금 읽기오류1...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          EXEC SQL CLOSE c3;
+          return(FAIL);
+     }
+     
+     while(1)
+     {
+          EXEC SQL FETCH   c3 INTO :empno;
+          
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE c3;
+               return(SUCCESS);
+          }
+          
+          if  (sqlca.sqlcode != 0) 
+          {
+               sprintf(msg,"Cursor c3 Data Fetch Error...");
+               print_errmsg(sqlca.sqlcode,msg);
+               Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+               EXEC SQL CLOSE c3;
+               return(FAIL);
+          }
+          
+          EXEC SQL
+          UPDATE  PNMSCMON
+             SET
+                  (KORNAME, DEPTCODE, ORGNUM)  = 
+                  (
+                    SELECT  KORNAME, DEPTCODE, ORGNUM
+                    FROM  PKMPMAS 
+                    WHERE  EMPNO = :empno
+                  ),
+                   WRITETIME = :writetime,
+                   WRITEMAN  = :writeman
+           WHERE  EMPNO = :empno;  
+          if  (sqlca.sqlcode != 0)
+          {
+               sprintf(msg,"당월학자금 쓰기오류1...");
+               print_errmsg(sqlca.sqlcode,msg);
+               Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+               EXEC SQL CLOSE c3;
+               return(FAIL);
+          }
+                   
+     }
+}
+
+/*****************************************************************************
+  학자금마스터를 갱신하는 함수2.  
+ *****************************************************************************/
+update_master2()
+{
+     int index;
+   
+     if  (get_sckind("유치원",sckind) == FAIL)
+          return(FAIL);
+   
+     EXEC SQL
+     SELECT   CEIL(SCKIAMT * SCRATE / 100), SCFRAGE, SCTOAGE 
+       INTO  :sckiamt, :scfrage, :sctoage
+       FROM   PNCSCBAS 
+      WHERE   SCKIND = :sckind;
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(msg,"학자금지급기준 읽기오류1...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+   
+     EXEC SQL DECLARE c2 CURSOR FOR
+     SELECT  EMPNO, FAMINAME, FAMIJUID, SCSEQNO, SCAMT, SCSUM 
+       FROM  PNMSCMAS
+      WHERE  SCKIND = :sckind    
+        AND  ((SCENDYYMM IS NULL) OR (SCENDYYMM >= :fryymm))  /* 2008.03.17 지급기한이 유요한 사람도 조회가능하도록 */
+        AND  UPPER(NVL(SCYN,' ')) = 'Y'  
+   /*SCENDYYMM IS NULL   AND   */
+        AND ((EMPNO IN (SELECT EMPNO
+                          FROM PKMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')) or
+			       (EMPNO IN (SELECT EMPNO
+                          FROM PKZMPMAS
+                         WHERE PSTATE < '80' AND UPPER(PAYYN) = 'Y')))		        
+      ORDER  BY EMPNO, FAMINAME;
+   
+     EXEC SQL OPEN c2;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+         (sqlca.sqlcode != -1405)) 
+     {
+          sprintf(msg,"학자금마스터 읽기오류2...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          EXEC SQL CLOSE c2;
+          return(FAIL);
+     }
+     
+     s_count = f_count  = skip_count = 0;
+   
+     while(1)
+     {
+          EXEC SQL FETCH c2
+          INTO :empno, :faminame, :famijuid, :scseqno, 
+             :scamt, :scsum;
+          
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE c2;
+               return(SUCCESS);
+          }
+          
+          hinsa_trim(famijuid);
+          /*
+          hinsa_trim(faminame);
+          */
+          
+          if  (scseqno == 12) 
+          {
+               printf(" 유치원학자금 지급횟수 초과.\n");
+               printf(" EMPNO : %.4s , FAMINAME : %12s \n", empno,faminame.arr);
+               sprintf(log_buff," EMPNO : %.4s , FAMINAME : %12s \n", empno,faminame.arr);
+               Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+               EXEC SQL 
+               UPDATE  PNMSCMAS
+                  SET  
+                       SCYN = 'N'
+                WHERE  EMPNO    = :empno 
+                  AND  SCKIND   = :sckind
+                  AND  FAMINAME = :faminame 
+                  AND  FAMIJUID = :famijuid;
+               if  (sqlca.sqlcode != 0)
+               {
+                    sprintf(msg,"학자금마스터 지급해지1...");
+                    print_errmsg(sqlca.sqlcode,msg);
+                    Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+                    return(FAIL);
+               }
+               skip_count++;
+           }
+          else if ((index = check_age(famijuid)) != 0)    
+          {
+               if  (index == 2)
+               {    
+                    if ((update_master()     ==  SUCCESS) &&  
+                        (insert_his_records2() == SUCCESS))   
+                         s_count++;
+                    else 
+                    {
+                         printf(" EMPNO : %.4s , FAMINAME : %12s \n", empno,faminame.arr);
+                         sprintf(" EMPNO : %.4s , FAMINAME : %12s \n", empno,faminame.arr);
+                         Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+                         
+                         f_count++;
+                         EXEC SQL 
+                         UPDATE  PNMSCMAS
+                            SET  
+                                 SCYN = 'N'
+                          WHERE  EMPNO   = :empno 
+                            AND  SCKIND  = :sckind
+                            AND  FAMINAME= :faminame 
+                            AND  FAMIJUID= :famijuid;
+                         if  (sqlca.sqlcode != 0)
+                         {
+                             sprintf(msg,"학자금마스터 지급해지2...");
+                             print_errmsg(sqlca.sqlcode,msg);
+                             Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+                             return(FAIL);
+                         }
+                    }
+               }
+            else
+                 skip_count++;
+          }
+          else
+               f_count++;  
+     }
+}
+
+/*****************************************************************************
+  학자금마스터을 갱신하는 함수.
+ *****************************************************************************/
+update_master()
+{
+     EXEC SQL 
+     UPDATE  PNMSCMAS
+        SET  
+             SCSEQNO = :scseqno + 1,
+             SCYYMM  = :workyymm,
+             SCAMT   = :scamt,
+             SCSUM   = :scsum + :scamt
+      WHERE  EMPNO    = :empno 
+        AND  SCKIND   = :sckind
+        AND  FAMINAME = :faminame 
+        AND  FAMIJUID = :famijuid;
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(msg,"학자금마스터 쓰기오류5...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     else
+          return(SUCCESS);
+}
+
+/*****************************************************************************
+  당월학자금지급이력을 생성하는 함수2.
+ *****************************************************************************/
+insert_his_records2()
+{
+     if  (get_sckind("유치원",sckind) == FAIL)
+          return(FAIL);
+      
+     DPsys_date(writetime,0);
+     
+     EXEC SQL 
+     INSERT  INTO   PNHSCHIS
+            (SCYYMM, EMPNO, KORNAME, ORGNUM, DEPTCODE, FAMINAME, 
+             FAMIJUID, SCKIND, SCCNT, SCAMT, WRITETIME, WRITEMAN,SCETC  /*kth 20091215 SCETC 비고 추가*/
+            )
+     SELECT  :workyymm, EMPNO, KORNAME, ORGNUM, DEPTCODE, FAMINAME,
+             FAMIJUID, SCKIND, SCSEQNO, SCAMT, :writetime, :writeman,SCETC /*kth 20091215 SCETC 비고 추가*/
+       FROM  PNMSCMAS
+      WHERE  EMPNO    = :empno 
+        AND  SCKIND   = :sckind
+        AND  FAMINAME = :faminame 
+        AND  FAMIJUID = :famijuid;
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(msg,"학자금지급이력 생성오류2...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     else
+          return(SUCCESS);
+                                             
+}
+
+/*****************************************************************************
+  당월학자금을 생성하는 함수2.
+ *****************************************************************************/
+insert_ded_records2()
+{
+     /*2011.06.28 KTH 유치원 학자금 휴직자 0원 처리  델파이에서 처러  */
+     EXEC SQL
+     UPDATE PNHSCHIS SET SCAMT = 0
+      WHERE SCYYMM = :workyymm
+        AND SCKIND = '11'
+		      AND EMPNO IN (
+                      SELECT EMPNO FROM PIHANNO
+                       WHERE :workyymm||'15' BETWEEN ANFRDATE AND ANTODATE
+                         AND ANCODE LIKE '5%' 
+                         AND ANCODE <> '514' 
+                      );  
+     if  ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0))
+     {
+          sprintf(msg,"유치원 학자금 휴직자 처리 오류 ...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체 */          
+          return(FAIL);
+     }
+     
+        
+     EXEC SQL 
+     INSERT  INTO   PNMSCMON
+             (SCYYMM, EMPNO, KORNAME, SCKIND, SCAMT)
+     SELECT  :workyymm, EMPNO, KORNAME, :sckind, SUM(SCAMT)
+       FROM  PNHSCHIS
+      WHERE  SCKIND = :sckind AND SCYYMM = :workyymm 
+      GROUP  BY EMPNO, KORNAME;
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(msg,"당월학자금 생성오류2...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     
+     DPsys_date(writetime,0);
+     
+     EXEC SQL DECLARE c4 CURSOR FOR
+     SELECT  EMPNO
+       FROM  PNMSCMON
+      WHERE  SCKIND = :sckind AND SCYYMM = :workyymm
+      GROUP  BY EMPNO;
+     
+     EXEC SQL OPEN c4;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+         (sqlca.sqlcode != -1405)) 
+     {
+          sprintf(msg,"당월학자금 읽기오류4...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          EXEC SQL CLOSE c4;
+          return(FAIL);
+     }
+     
+     while(1)
+     {
+          EXEC SQL FETCH   c4 INTO :empno;
+          
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE c4;
+               return(SUCCESS);
+          }
+          
+          EXEC SQL
+          UPDATE PNMSCMON
+             SET
+                   (KORNAME, DEPTCODE, ORGNUM)  = 
+                   (
+                    SELECT  KORNAME, DEPTCODE, ORGNUM
+                    FROM  PKMPMAS 
+                    WHERE  EMPNO = :empno
+                   ),
+                 WRITETIME = :writetime,
+                 WRITEMAN  = :writeman
+          WHERE  EMPNO = :empno;
+          if  (sqlca.sqlcode != 0)
+          {
+               sprintf(msg,"당월학자금 쓰기오류1...");
+               print_errmsg(sqlca.sqlcode,msg);
+               Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+               EXEC SQL CLOSE c4;
+               return(FAIL);
+          }
+     }
+}
+
+/*****************************************************************************
+  학자금구분코드를 구하는 함수.
+ *****************************************************************************/
+get_sckind(char *scname, char *result)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t_scname[21]   = "";
+          char  t_code[3]  = "";
+     EXEC SQL END DECLARE SECTION;
+     
+     int  i;
+     
+     i = sprintf(t_scname,"%s",scname);
+     t_scname[i] = 37; /* % Character */
+     
+     EXEC SQL
+     SELECT  SCKIND
+       INTO  :t_code
+       fROM  PNCSCBAS
+      WHERE  SCNAME LIKE :t_scname;  
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(msg,"학자금구분코드 읽기 오류1...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     
+     sprintf(result,t_code);
+     return(SUCCESS);
+}
+
+/*****************************************************************************
+  연령제한을 Check하는 함수.  
+ *****************************************************************************/
+check_age(char *age)
+{
+     char  yy[5]  = "";  
+     char  mm[3]   = "";
+     int  i  = 0;
+     double  month1, month2, month;
+     
+     if  (strlen(age) != 8)
+     {
+          printf("생년월일이 유효하지 않습니다   ==>   ");
+          printf(" EMPNO : (%.4s) , 수혜자주민번호 : (%.8s) \n", empno,famijuid);
+          sprintf(log_buff, " 생년월일 Error => EMPNO : (%.4s) , 수혜자주민번호 : (%.8s) \n", empno,famijuid);
+          Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+          return(0);
+     }
+     
+     
+     strncpy(yy,age,4);
+     strncpy(mm,age+4,2);
+     month1 = (atoi(yy) + scfrage) * 12 + atoi(mm);   
+     month2 = (atoi(yy) + sctoage + 1) * 12 + atoi(mm);   
+     
+     strncpy(yy,workyymm,4);
+     strncpy(mm,workyymm+4,2);
+     month = atoi(yy) * 12 + atoi(mm);
+     
+     if  (month < month1)    
+     {
+          printf(" 유치원학자금 연령기준 미달   ==>   ");
+          printf(" EMPNO : %.4s , 수혜자주민번호 : %.8s \n", empno,famijuid);
+          sprintf(log_buff, " 유치원학자금 연령기준 미달Error => EMPNO : %.4s , 수혜자주민번호 : %.8s \n", empno,famijuid);
+          Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+          return(1);   
+     }
+     else if (month >= month2)  
+     {
+          printf(" 유치원학자금 연령기준 초과   ==>   ");
+          printf(" EMPNO : %.4s , 수혜자주민번호 : %.8s \n",empno,famijuid);
+          sprintf(log_buff, " 유치원학자금 연령기준 초과Error => EMPNO : %.4s , 수혜자주민번호 : %.8s \n", empno,famijuid);
+          Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+          return(1);    
+     }
+     
+     if  (strncmp(age,fryymm,6) < 0)
+          return(1);   
+     
+     return(2);
+
+}
+
+/***************************************************************************
+  read_result  Function.
+****************************************************************************/
+read_result()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t_sckind[2+1]    = "";
+          char  t_scname[20+1]   = "";
+          
+          char  t_empno[4+1]   = "";
+          char  t_korname[12+1]   = "";
+          VARCHAR  t_faminame[12+1]   = {0,""};
+          char  t_pstate[2+1]   = "";
+          char  t_payyn[1+1]   = "";
+          
+          double  t_count;
+          double  t_sum;
+     EXEC SQL END DECLARE SECTION;
+     
+     record *p,*q;
+     int  i,j;
+     int  flag;
+     
+     double  pay_count, pay_sum;
+     
+     
+     EXEC SQL
+     UPDATE  PNMSCMAS A  
+        SET (SCYYMM, SCSUM, SCSEQNO) =
+            (SELECT  MAX(B.SCYYMM), SUM(B.SCAMT), MAX(B.SCCNT)
+               FROM  PNHSCHIS B 
+              WHERE  A.EMPNO  = B.EMPNO   
+                AND  A.SCKIND = B.SCKIND  
+                AND  A.FAMINAME = B.FAMINAME
+             )
+     WHERE  SCKIND = '11' 
+       AND  SCYYMM IS NOT NULL;
+     if  (sqlca.sqlcode != 0) 
+     {
+          sprintf(msg,"학자금마스터 작업결과 Setting Error...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     
+     if  (get_sckind("유치원",t_sckind) == FAIL)
+          return(FAIL);
+     
+     EXEC SQL DECLARE c8 CURSOR FOR
+     SELECT  A.EMPNO, A.KORNAME, FAMINAME, SCNAME, PSTATE, PAYYN
+       FROM  PNMSCMAS A,PKMPMAS B,PNCSCBAS C
+      WHERE (A.EMPNO  =  B.EMPNO)
+	      AND (A.SCKIND <> :t_sckind AND A.SCKIND = C.SCKIND)  
+        AND  UPPER(NVL(SCYN,' ')) = 'Y'      
+        AND  SCYYMM = :workyymm      
+        AND (PSTATE < '80' AND UPPER(PAYYN) = 'Y')
+     union		
+     SELECT  A.EMPNO, A.KORNAME, FAMINAME, SCNAME, PSTATE, PAYYN
+       FROM  PNMSCMAS A,PKZMPMAS B,PNCSCBAS C
+      WHERE (A.EMPNO  =  B.EMPNO)
+	      AND (A.SCKIND <> :t_sckind AND A.SCKIND = C.SCKIND)  
+        AND  UPPER(NVL(SCYN,' ')) = 'Y'      
+        AND  SCYYMM = :workyymm      
+        AND  PSTATE < '80' AND UPPER(PAYYN) = 'Y'		
+      ORDER  BY EMPNO, FAMINAME, SCNAME;
+     
+     EXEC SQL OPEN c8;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+         (sqlca.sqlcode != -1405))
+     {
+          sprintf(msg,"Cursor c8 Open Error...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          EXEC SQL CLOSE c8;
+          return(FAIL);
+     }
+     
+     printf("\n ========= < 학자금생성제외자 > ========= \n");
+     sprintf(log_buff, "\n ========= < 학자금생성제외자 > ========= \n");
+     Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+     
+     j = 0;
+     for (i = 0; i < 74; i++) j += sprintf(msg+j,"=");
+     printf("%s\n",msg);
+     Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+     j = 0;
+     j += sprintf(msg+j,"  사 번");   /* 7 Bytes  */
+     j += sprintf(msg+j,"    성    명");  /* 12 Bytes  */
+     j += sprintf(msg+j,"    수혜자명");  /* 12 Bytes  */
+     j += sprintf(msg+j,"    학자금 구분");  /* 15 Bytes  */
+     j += sprintf(msg+j,"    인사상태");  /* 12 Bytes  */
+     j += sprintf(msg+j,"    급여지급여부");  /* 16 Bytes  */
+     printf("%s\n",msg);
+     Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+     
+     j   = 0;
+     for (i = 0; i < 74; i++) j += sprintf(msg+j,"=");
+     printf("%s\n",msg);
+     Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+     
+     flag   = 0;
+     while(1)
+     {
+          EXEC SQL FETCH   c8
+          INTO   :t_empno, :t_korname, :t_faminame, t_scname,
+            :t_pstate, :t_payyn;
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE c8;
+               break;
+          }
+          
+          if  (sqlca.sqlcode != 0)
+          {
+               sprintf(msg,"Cursor c8 Data Fetch Error...");
+               print_errmsg(sqlca.sqlcode,msg);
+               Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+               EXEC SQL CLOSE c8;
+               return(FAIL);
+          }
+          
+          hinsa_trim(t_korname);
+          /*
+          hinsa_trim(t_faminame);
+          */
+          hinsa_trim(t_scname);
+          flag++;
+          j = 0;
+          j += sprintf(msg+j,"%7s",t_empno);
+          j += sprintf(msg+j,"%12s",t_korname);
+          j += sprintf(msg+j,"%12s",t_faminame.arr);
+          j += sprintf(msg+j,"%15s",t_scname);
+          j += sprintf(msg+j,"%12s",t_pstate);
+          j += sprintf(msg+j,"%16s",t_payyn);
+          printf("%s\n",msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+     }
+     
+     
+     if  (jobkind[0] == '1')   /* 유치원 학자금의 경우 */
+     {
+     
+          EXEC SQL DECLARE c7 CURSOR FOR
+          SELECT  A.EMPNO, A.KORNAME, FAMINAME, SCNAME, PSTATE, PAYYN
+            FROM  PNMSCMAS A, PKMPMAS B, PNCSCBAS C
+           WHERE  (A.EMPNO = B.EMPNO)      
+             AND  (A.SCKIND = :t_sckind AND A.SCKIND = C.SCKIND)  
+             AND  SCENDYYMM IS NULL      
+             AND  UPPER(NVL(SCYN,' ')) = 'Y'      
+             AND  (PSTATE < '80' AND UPPER(PAYYN) = 'Y')
+          union	
+		      SELECT  A.EMPNO, A.KORNAME, FAMINAME, SCNAME, PSTATE, PAYYN
+            FROM  PNMSCMAS A, PKZMPMAS B, PNCSCBAS C
+           WHERE  (A.EMPNO = B.EMPNO)      
+             AND  (A.SCKIND = :t_sckind AND A.SCKIND = C.SCKIND)  
+             AND  SCENDYYMM IS NULL      
+             AND  UPPER(NVL(SCYN,' ')) = 'Y'      
+             AND  (PSTATE < '80' AND UPPER(PAYYN) = 'Y')		 
+           ORDER  BY EMPNO, FAMINAME, SCNAME;
+          
+          EXEC SQL OPEN c7;
+          if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+              (sqlca.sqlcode != -1405)) 
+          {
+               sprintf(msg,"Cursor c7 Open Error...");
+               print_errmsg(sqlca.sqlcode,msg);
+               Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+               EXEC SQL CLOSE c7;
+               return(FAIL);
+          }
+          
+          while(1)
+          {
+               EXEC SQL FETCH   c7
+               INTO   :t_empno, :t_korname, :t_faminame, t_scname,
+                 :t_pstate, :t_payyn; 
+               if  (sqlca.sqlcode == 1403) 
+               {
+                    EXEC SQL CLOSE c7;
+                    break;
+               }
+               
+               if  (sqlca.sqlcode != 0) 
+               {
+                    sprintf(msg,"Cursor c7 Data Fetch Error...");
+                    print_errmsg(sqlca.sqlcode,msg);
+                    Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+                    EXEC SQL CLOSE c7;
+                    return(FAIL);
+               }
+               hinsa_trim(t_korname);
+               /*
+               hinsa_trim(t_faminame);
+               */
+               hinsa_trim(t_scname);
+               flag++;
+               j = 0;
+               j = 0;
+               j += sprintf(msg+j,"%7s",t_empno);
+               j += sprintf(msg+j,"%12s",t_korname);
+               j += sprintf(msg+j,"%12s",t_faminame.arr);
+               j += sprintf(msg+j,"%15s",t_scname);
+               j += sprintf(msg+j,"%12s",t_pstate);
+               j += sprintf(msg+j,"%16s",t_payyn);
+               printf("%s\n",msg);
+          }
+     
+     }
+     
+     if  (flag == 0) 
+     {
+          printf("   ========= 해당자 없슴!!! ========= \n\n\n");
+          sprintf(log_buff, "   ========= 해당자 없슴!!! ========= \n\n\n");
+          Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+     }   
+     
+     EXEC SQL DECLARE c5 CURSOR FOR
+     SELECT  A.SCKIND, SCNAME, COUNT(*), SUM(A.SCAMT)
+       FROM  PNHSCHIS A, PNCSCBAS B 
+      WHERE  SCYYMM = :workyymm AND A.SCKIND = B.SCKIND
+      GROUP  BY A.SCKIND, SCNAME
+      ORDER  BY A.SCKIND;
+     
+     EXEC SQL OPEN c5;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+         (sqlca.sqlcode != -1405)) 
+     {
+          sprintf(msg,"Cursor c5 Open Error...");
+          print_errmsg(sqlca.sqlcode,msg);
+          Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+          EXEC SQL CLOSE c5;
+          return(FAIL);
+     }
+     
+     
+     p = q = NULL;
+     i = 0;
+     while(1)
+     {
+          memset(t_sckind,0x00,sizeof(t_sckind));
+          memset(t_scname,0x00,sizeof(t_scname));
+          
+          EXEC SQL FETCH   c5
+          INTO :t_sckind, :t_scname, :t_count, t_sum; 
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE c5;
+               break;
+          }
+          
+          if  (sqlca.sqlcode != 0) 
+          {
+               sprintf(msg,"Cursor c5 Data Fetch Error...");
+               print_errmsg(sqlca.sqlcode,msg);
+               Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+               EXEC SQL CLOSE c5;
+               return(FAIL);
+          }
+          
+          q = p;
+          p = (record*) malloc(sizeof(record)); 
+          if  (p == NULL) 
+          { 
+               EXEC SQL CLOSE c5;
+               j  = sprintf(msg,"메모리가 부족합니다.");
+               sprintf(msg+j," 프로그램을 종료합니다.\n"); 
+               printf("%s",msg);
+               Write_batlog(seqno++, msg);  /*dsa2000 Rexec 대체*/
+               return(FAIL);
+          }
+          
+          if  (i == 0)
+               first   = p;  
+          
+          sprintf(p->sckind,"%s",t_sckind);
+          sprintf(p->scname,"%s",t_scname);
+          p->count = t_count;
+          p->sum   = t_sum;
+          if (i != 0)
+            q->ptr    = p;
+          i++;
+     }
+     p->ptr = NULL;
+     
+     j = 0;
+     for (i = 0; i < 80; i++) j += sprintf(msg+j,"=");
+     printf("\n%s\n",msg);
+     
+     j = 0;
+     for (i = 0; i < 26; i++) j += sprintf(msg+j,"=");
+     j += sprintf(msg+j,"   < 작업결과 상세내역 >   "); 
+     for (i = 0; i < 27; i++) j += sprintf(msg+j,"=");
+     printf("%s\n",msg);
+     
+     j = 0;
+     for (i = 0; i < 80; i++) j += sprintf(msg+j,"=");
+     printf("%s\n\n",msg);
+     
+     pay_count = pay_sum = 0;
+     while(first != NULL) 
+     {
+           printf("# 학자금구분 # : %s \n",first->scname); 
+           sprintf(log_buff, "# 학자금구분 # : %s \n",first->scname); 
+           Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+           
+           printf("     [1]. 총지급인원 : %10.0f 명 \n",first->count); 
+           sprintf(log_buff,"     [1]. 총지급인원 : %10.0f 명 \n",first->count); 
+           Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+           
+           printf("     [2]. 총지급금액 : %10.0f 원 \n\n",first->sum);
+           sprintf(log_buff,"     [2]. 총지급금액 : %10.0f 원 \n\n",first->sum);
+           Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+           
+           if ((strcmp(first->sckind,"11") == 0) || /* 유치원학자금  */
+               (strcmp(first->sckind,"18") == 0) || /* 유학 (중/고교)  */
+               (strcmp(first->sckind,"19") == 0) || /* 유학 (대학교)  */
+               (strcmp(first->sckind,"25") == 0))   /* 본인대학교  */
+           {
+                pay_count += first->count;
+                pay_sum   += first->sum;   
+           }
+           first = first->ptr;
+     }
+     
+     printf("### 회사지원학자금 ###  \n"); 
+     sprintf(log_buff, "### 회사지원학자금 ###  \n"); 
+     Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+     
+     printf("     [1]. 총지급인원 : %10.0f 명 \n",pay_count); 
+     sprintf(log_buff, "     [1]. 총지급인원 : %10.0f 명 \n",pay_count); 
+     Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/  
+     
+     printf("     [2]. 총지급금액 : %10.0f 원 \n\n",pay_sum);
+     sprintf(log_buff, "     [2]. 총지급금액 : %10.0f 원 \n\n",pay_sum);
+     Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+     
+     free_link();
+     return(SUCCESS);
+}
+/***************************************************************************
+  free_link  Function.
+****************************************************************************/
+void free_link()
+{
+     record *p,*q;
+     p = first;
+     while(p != NULL) 
+     {
+          q = p->ptr;
+          free(p);
+          p = q;
+     }
+}
+/***************************************************************************
+  print_errmsg  Function.
+****************************************************************************/
+void print_errmsg(int errcode, char *errmsg)
+{
+     printf("[ERRCODE : %d] %s\n", errcode,errmsg);
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

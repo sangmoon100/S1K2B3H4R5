@@ -1,0 +1,175 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : pkc1030g.pc  (maketemp)(월 변동자료 추출)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 급여계산
+ Programmer     : 이인환
+ Version        : 1.00
+ Date           : 1997.02.16
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer  description     relevant doc.no
+   1.00       1997.02.16         이인환      최초개발본      설계명세서
+   34.00     2004.02.24          강륜종      Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.  
+   35.00     2004.05.21          강륜종      파일명 maketemp.pc 에서 pkc1030g.pc 로 변경.
+   36.00     2004.11.       강륜종(dsa2000)  Rexec대체 서비스를 위한 수정작업.      
+   37.00     2015.04.            강륜종      변동테이블을 고정테이블로 변경.
+============================================================================= */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#include "hinsa_common.h" /*dsa2000  추가.. 2004.11.03.*/
+
+EXEC SQL BEGIN DECLARE SECTION;
+     char  empno[5];
+     char  tvalue[13];  
+     char  tvalue_nojo[2];  
+     char  sqlstr[1024];
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE sqlca;
+
+int  id;
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno = 0; 
+
+main(argc,argv)
+int  argc;
+char *argv[];
+{
+     char FL_file[255];
+  
+     if  (argc != 6) {  /* pkc1030g /hper/insa/HINSA/data/Kdata/T_SPTMAMT SPTMAMT D006 pkc1030g 2004110100000 */
+          printf("[Usage] : pkc1030g 1.경로+Tname 2.datafld 3.writeman 4.progid 5.rundate \n");
+          exit(1);
+     }
+
+     /*로그 디렉토리 생성 및 로그작업*/
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkc1030g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+      }
+      
+     hinsa_log_print(0,"월 변동자료 추출 시작...");        
+     hinsa_db_connect();  /*DB Connect 실시..*/
+         
+     strcpy(log_writeman, argv[3]);
+     strcpy(log_progid,   argv[4]);
+     strcpy(log_rundate,  argv[5]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+                 
+     Read_InsertData(argv[1],argv[2]);
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, " 작업 ERROR "); /*dsa2000 Rexec 대체 추가*/
+          Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체 추가*/
+          error_quit(" 작업 ERROR ");
+     }
+     else  
+     {
+          sprintf(log_buff, "OK!! 자료추출 성공."); /*dsa2000 Rexec 대체 추가*/
+          Write_batlog(seqno++, log_buff);         /*dsa2000 Rexec 대체 추가*/
+          hinsa_exit(0,"OK 작업이 완료되었습니다.");
+     }
+}
+
+Read_InsertData(fname,datafld)
+char *fname;
+char *datafld;
+{
+     FILE *fp;  
+     char buf[256];
+     
+     fp = fopen(fname,"r");
+     if  (fp == NULL)
+     {
+          printf("[ERR] %s 화일이 없습니다",fname);        
+          sprintf(log_buff, "[ERR] %s 화일이 없습니다",fname); /*dsa2000 Rexec 대체 추가*/
+          Write_batlog(seqno++, log_buff);                     /*dsa2000 Rexec 대체 추가*/   
+     
+          /*2015.04. 계정권한 분리작업 : 임시작업테이블을 고정작업테이블로 대체.  강륜종.
+          sprintf(sqlstr,"drop table %s ", tname);
+          EXEC SQL EXECUTE IMMEDIATE :sqlstr;     */
+          exit(0);   
+     }
+     
+     /*2015.04. 계정권한 분리작업 : Delete구문 Add */
+     sprintf(sqlstr,"Delete PKC1030G_Program Where Workemp='%s' And Datafld='%s'", log_writeman,datafld);
+     EXEC SQL EXECUTE IMMEDIATE :sqlstr;
+     
+     while (fgets(buf,256,fp))
+     {
+          sprintf(empno,"%4.4s",buf);   
+          
+          if  (strncmp(datafld, "NOJOYN",6) == 0 ) /*dsa2000  2005.10 문자값 처리토록 추가.*/
+          {
+               sprintf(tvalue_nojo, "%1.1s",buf+5);
+               /*2015.04. 계정권한 분리작업 : 임시작업테이블을 고정작업테이블로 대체.  강륜종.
+               sprintf(sqlstr,"insert into %s (empno,tvalue) values ('%s','%s')",tname,empno,tvalue_nojo);*/
+               sprintf(sqlstr,"insert into PKC1030G_Program (Workemp,Datafld,Empno,Charvalue) Values ('%s','%s','%s','%s')"
+                             ,log_writeman,datafld,empno,tvalue_nojo);
+          }
+          else
+          {
+               sprintf(tvalue,"%12s",buf+5);
+               /*2015.04. 계정권한 분리작업 : 임시작업테이블을 고정작업테이블로 대체.  강륜종.
+               sprintf(sqlstr,"insert into %s (empno,tvalue) values ('%s',%s)",tname,empno,tvalue);*/
+               sprintf(sqlstr,"insert into PKC1030G_Program (Workemp,Datafld,Empno,Numvalue) Values ('%s','%s','%s',%s)"
+                             ,log_writeman,datafld,empno,tvalue);
+          }
+          
+          /*printf("%s\n", sqlstr);*/
+          EXEC SQL EXECUTE IMMEDIATE :sqlstr; 
+          
+          if  (sqlca.sqlcode != 0)
+          {
+               printf("[ERRCODE : %d] %s번 임시 테이블 삽입 ERROR",sqlca.sqlcode,empno);
+               sprintf(log_buff, "[ERRCODE : %d] %s번 임시 테이블 삽입 ERROR",sqlca.sqlcode,empno); /*dsa2000 Rexec 대체 추가*/
+               Write_batlog(seqno++, log_buff);                                                     /*dsa2000 Rexec 대체 추가*/     
+               fclose(fp);
+               
+               /*2015.04. 계정권한 분리작업 : 임시작업테이블을 고정작업테이블로 대체.  강륜종.
+               sprintf(sqlstr,"drop table %s ", tname);*/
+               sprintf(sqlstr,"Delete PKC1030G_Program Where Workemp='%s' And Datafld='%s'", log_writeman,datafld);
+               EXEC SQL EXECUTE IMMEDIATE :sqlstr;                
+               exit(0);
+          }
+     }
+     
+     fclose(fp);
+}
+
+/*=== dsa2000 2004.10. Rexec대체 서비스를 위한 =====================================*/
+int   Write_batlog(int seqno, char *message)
+{  
+      EXEC SQL AT log_db 
+      INSERT INTO PYBATLOG
+      VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+      if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+      {  
+           printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);        
+           sprintf(log_buff, "ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode); /*dsa2000 Rexec 대체 추가*/
+           Write_batlog(seqno++, log_buff);   /*dsa2000 Rexec 대체 추가*/   
+           return(-1);          
+      }                        
+                        
+      EXEC SQL AT log_db COMMIT WORK ;  
+}

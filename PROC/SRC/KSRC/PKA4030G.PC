@@ -1,0 +1,431 @@
+/* -------------------------------------------------------------------------------
+ PROGRAM-NAME   : pka4030g.pc(당월근태Data생성)
+ SYSTEM-NAME    : 인사
+ SUBSYSTEM-NAME : 근태
+ Programmer     : 강륜종
+ Version        : 1.00
+ Date           : 2016.10.
+
+Update Contents
+  버전    수정일      수정자   관련근거       수정내용
+   1.00   2016.10.    강륜종   최초개발본
+------------------------------------------------------------------------------- */
+#include <stdio.h>
+#include <stdlib.h>
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#define  MAXPERSON   4000
+
+/*** 함수 Prototype 선언  ***/
+EXEC SQL INCLUDE sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+     struct 
+     {
+          char  duyymm[7];     /* 기준년월     */
+          char  empno[5];      /* 사번         */
+          char  korname[13];   /* 성명         */
+          int   stdd;          /* 월근태시작일 */
+          int   endd;          /* 월근태종료일 */
+          char  dd[32][3];     /* 일일근태     */
+     } knte[MAXPERSON];
+
+     char  sqlstr1[1024];
+     char  tempdate[9];
+     char  preyymm[7];
+     char  prelastday[3];
+     char  workyymm[7];
+     char  lastday[3];
+     char  frempno[5];
+     char  toempno[5];
+EXEC SQL END   DECLARE SECTION;
+
+FILE *fp = stdout;
+
+int   cnt= 0;
+char  dir[80];
+char  log_rundate[16]     = ""; 
+char  log_progid[16]      = "";
+char  log_writeman[5]     = "";
+char  log_buff[100]       = "";
+int   seqno = 0; 
+
+
+void main(argc,argv)
+int  argc;
+char *argv[];
+{
+     char FL_file[255];
+       
+     if  (argc != 5) {  /* /hper/insa/HINSA/proc/bin/Kbin/pka4030g 0000 ZZZZ CRON pka4030g */
+          printf("[Usage] : pka4030g 1.사번fr 2.사번to 3.CRON 4.progid\n");
+          exit(1);
+     }
+     
+     /*로그 디렉토리 생성 및 로그작업*/
+     STRINIT(FL_file);
+     strcpy(FL_file,"pka4030g");
+
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          sprintf(log_buff, " 로그파일 생성에러로 인한 프로그램 종료..."); 
+          Write_batlog(seqno++, log_buff);                                 
+          error_quit("로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+
+     memset(dir,'\0',sizeof(dir));
+     hinsa_log_print(0,"당월 근태 생성 프로그램 시작...");
+     hinsa_db_connect();  /*DB Connect 실시..*/
+          
+     strcpy(frempno,      argv[1]);
+     strcpy(toempno,      argv[2]);
+     strcpy(log_writeman, argv[3]);
+     strcpy(log_progid,   argv[4]);
+
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+
+     printf("CheckDate...\n");
+     CheckDate();
+
+     printf("DutyInsert...\n");
+     DutyInsert();              /*** 당월 근태 생성 ***/
+        
+     /* hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, " 근태 생성 Error "); 
+          Write_batlog(seqno++, log_buff);
+          error_quit(" 근태 생성 Error ");
+     }
+     else  
+     {
+          sprintf(log_buff, "OK!! 작업성공.");
+          Write_batlog(seqno++, log_buff);     
+          hinsa_exit(0,"OK 작업이 완료되었습니다.");
+     }
+}
+
+
+err_print(errcode,str)
+int errcode;
+char *str;
+{
+     fprintf(fp,"[ERRCODE : %d] %s\n",errcode,str);
+}
+
+CheckDate()
+{   
+     memset(preyymm,'\0',sizeof(preyymm));
+     memset(prelastday,'\0',sizeof(prelastday));
+     memset(workyymm,'\0',sizeof(workyymm));
+     memset(lastday,'\0',sizeof(lastday));
+     
+     EXEC SQL
+     Select TO_CHAR(ADD_MONTHS(SYSDATE,-1),'YYYYMM'), 
+            TO_CHAR(LAST_DAY(ADD_MONTHS(SYSDATE,-1)),'DD'),
+            TO_CHAR(SYSDATE,'YYYYMM'), 
+            TO_NUMBER(TO_CHAR(LAST_DAY(SYSDATE),'DD')),
+            TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS')
+       INTO :preyymm, :prelastday, :workyymm, :lastday, :log_rundate 
+       FROM DUAL;
+     
+     
+     printf("     preyymm[%s] prelastday[%s] workyymm[%s] lastday[%s]\n", preyymm,prelastday,workyymm,lastday);
+     if  (sqlca.sqlcode != 0)
+     {    
+          err_print(sqlca.sqlcode," 기준일자 Read Error");
+          Write_batlog(seqno++, " 기준일자 Read Error");   
+          exit(1);
+     }
+}
+
+
+DutyInsert()
+{        
+     
+     EXEC   SQL   
+     Insert Into Pkhduty_Record
+     Select To_Char(Sysdate,'YYYYMMDDHH'), C.Num,
+            'CRON', 'CRON', '퇴직일 이후 근태데이터 삭제전 백업', A.* 
+       From Pkhduty A, Pimpmas B,
+           (Select Nvl(Max(Recseq),0)+1 Num From Pkhduty_Record 
+             Where Recdate Like To_Char(Sysdate,'YYYYMMDD')||'%') C
+      Where Duyymm > Substr(Retdate,1,6) 
+        And A.Empno = B.Empno;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          err_print(sqlca.sqlcode," 퇴직일 이후 근태데이터 삭제전 백업 Error");
+          Write_batlog(seqno++, " 퇴직일 이후 근태데이터 삭제전 백업 Error");   
+          exit(1);
+     }
+     
+     EXEC   SQL   
+     Delete Pkhduty
+      Where (Duyymm, Empno) In (Select Duyymm, A.Empno From Pkhduty A, Pimpmas B 
+                                 Where Duyymm > Substr(Retdate,1,6) 
+                                   And A.Empno = B.Empno);
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          err_print(sqlca.sqlcode," 퇴직일 이후 근태데이터 삭제 Error");
+          Write_batlog(seqno++, " 퇴직일 이후 근태데이터 삭제 Error");   
+          exit(1);
+     }
+     
+     EXEC   SQL
+     Update Pkhduty A Set (Orgnum,Deptcode)=(Select Orgnum, Jobdept From Pimpmas Where A.Empno=Empno)
+      Where Duyymm =:workyymm;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 )
+     {  
+          printf("workyymm[%s] frempno[%s] toempno[%s]\n", workyymm, frempno, toempno);
+          err_print(sqlca.sqlcode," 기존 자료 근무부서 Update Error");
+          Write_batlog(seqno++, " 기존 자료 근무부서 Update Error");   
+          exit(1);
+     }
+     
+     EXEC   SQL
+     Insert Into Pkhduty
+           (Duyymm, Empno, Korname, Orgnum, Deptcode, 
+            Dd1,  Dd2,  Dd3,  Dd4,  Dd5,  Dd6,  Dd7,  Dd8,  Dd9,  Dd10, 
+            Dd11, Dd12, Dd13, Dd14, Dd15, Dd16, Dd17, Dd18, Dd19, Dd20, 
+            Dd21, Dd22, Dd23, Dd24, Dd25, Dd26, Dd27, Dd28, Dd29, Dd30,  Dd31, Conyn, Endyn,
+            Normal  ,  Late     ,  Earleave  ,  Repoff  ,  Speoff  ,
+            Satoff  ,  Domtour  ,  Seatour   ,  Corpdisp,  Domdisp ,
+            Seadisp ,  Edu      ,  Lodge     ,  Special ,  Longwork,
+            Pubvac  ,  Pubsick  ,  Bear      ,  Celeb   ,  Birth   ,
+            Health  ,  Half     ,  Month     ,  Year    ,  Sick    ,
+            Absence ,  Pubrest  ,  Sickrest  ,  Babyrest,  Milrest ,
+            Stayrest,  Studyrest,  Genrest   ,  Etcrest ,  Etc1    ,
+            Etc2    ,  Etc3     ,  Etc4      ,  Etc5    ,  Holiday ,
+            Noinput ,  Ymdedcnt ,  Mcardedcnt,  Nopaycnt,  Realdd  ,
+            Fullyn  ,  Writetime,  Writeman  ,  Contime ,  Conman  ,
+            Monthdd ,  Boncode  ,  Yearhalf  ,  
+            Prize   ,  Exchange ,  Exchholi  ,  Walkout ,  Workstop,
+            Before  ,  Temporary,  Edupat    ,  Absence2,  Worktype,CHILDBIRTH,UNPAID)
+     Select :workyymm, A.Empno, A.Korname, A.Orgnum, A.Jobdept, 
+            '', '', '', '', '', '', '', '', '', '', 
+            '', '', '', '', '', '', '', '', '', '', 
+            '', '', '', '', '', '', '', '', '', '', '', 'N', '',
+            0, 0, 0, 0, 0,   0, 0, 0, 0, 0,   0, 0, 0, 0, 0,   0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0,   0, 0, 0, 0, 0,   0, 0, 0, 0, 0,   0, 0, 0, 0, 0,   0, 0, 0, 0, 0,   
+            'N', To_Char(Sysdate,'YYYYMMDDHH24MISS'), 'CRON', '',  '',
+            0, A.Boncode, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '',0,0
+       From Pimpmas A
+      Where A.Empno Not In (Select Empno From Pkhduty Where Duyymm = :workyymm) /*당월 미생성자만*/
+        And A.Pstate < '80'
+        And A.Empno Between :frempno And :toempno
+        And Substr(A.Empdate,1,6) <= :workyymm
+        And Jobpayra >= 'C11';   /* 팀장이하 직책 */
+     
+     if  (sqlca.sqlcode != 0)
+     {  
+          printf("workyymm[%s] frempno[%s] toempno[%s]\n", workyymm, frempno, toempno);
+          err_print(sqlca.sqlcode," 개인근태자료 생성 Error");
+          Write_batlog(seqno++, " 개인근태자료 생성 Error");   
+          exit(1);
+     }
+
+     printf("DutyUpdate...\n");
+     DutyUpdate();
+}
+
+
+DutyUpdate()
+{
+     int i = 0;
+     char empno[05];
+     char kntedd[03];
+     
+     memset(empno,'\0',sizeof(empno));
+     
+     EXEC   SQL
+     DECLARE c1 CURSOR  FOR
+     Select A.Empno, A.Korname, 
+            Case When (:workyymm = Substr(B.Empdate,1,6)) Then To_Number(Substr(B.Empdate,7,2)) Else 1                   End Stdd,
+            Case When (:workyymm = Substr(B.Retdate,1,6)) Then To_Number(Substr(B.Retdate,7,2)) Else To_Number(:lastday) End Endd,
+            Nvl(DD1, '99'), Nvl(DD2, '99'), Nvl(DD3, '99'), Nvl(DD4, '99'), Nvl(DD5, '99'),
+            Nvl(DD6, '99'), Nvl(DD7, '99'), Nvl(DD8, '99'), Nvl(DD9, '99'), Nvl(DD10,'99'),
+            Nvl(DD11,'99'), Nvl(DD12,'99'), Nvl(DD13,'99'), Nvl(DD14,'99'), Nvl(DD15,'99'),
+            Nvl(DD16,'99'), Nvl(DD17,'99'), Nvl(DD18,'99'), Nvl(DD19,'99'), Nvl(DD20,'99'),
+            Nvl(DD21,'99'), Nvl(DD22,'99'), Nvl(DD23,'99'), Nvl(DD24,'99'), Nvl(DD25,'99'),
+            Nvl(DD26,'99'), Nvl(DD27,'99'), Nvl(DD28,'99'), Nvl(DD29,'99'), Nvl(DD30,'99'), Nvl(DD31,'99')
+       From Pkhduty A, Pimpmas B
+      Where Duyymm  = :workyymm  
+        And A.Empno = B.Empno 
+        And A.Empno Between :frempno And :toempno;
+     
+     EXEC SQL open c1;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 && sqlca.sqlcode != -1405)
+     {  
+          err_print(sqlca.sqlcode," 개인근태자료 Read Error");
+          Write_batlog(seqno++, " 개인근태자료 Read Error");   
+          exit(1);
+     }
+     
+     cnt = 1;
+     while(1)
+     {
+          EXEC SQL FETCH c1 INTO
+          :knte[cnt].empno,  :knte[cnt].korname,
+          :knte[cnt].stdd,   :knte[cnt].endd,
+          :knte[cnt].dd[1],  :knte[cnt].dd[2],  :knte[cnt].dd[3],  :knte[cnt].dd[4],  :knte[cnt].dd[5],
+          :knte[cnt].dd[6],  :knte[cnt].dd[7],  :knte[cnt].dd[8],  :knte[cnt].dd[9],  :knte[cnt].dd[10],
+          :knte[cnt].dd[11], :knte[cnt].dd[12], :knte[cnt].dd[13], :knte[cnt].dd[14], :knte[cnt].dd[15],
+          :knte[cnt].dd[16], :knte[cnt].dd[17], :knte[cnt].dd[18], :knte[cnt].dd[19], :knte[cnt].dd[20],
+          :knte[cnt].dd[21], :knte[cnt].dd[22], :knte[cnt].dd[23], :knte[cnt].dd[24], :knte[cnt].dd[25],
+          :knte[cnt].dd[26], :knte[cnt].dd[27], :knte[cnt].dd[28], :knte[cnt].dd[29], :knte[cnt].dd[30], :knte[cnt].dd[31];
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c1;
+               cnt--;
+               break;     
+          }
+          
+          for( i = 1 ; i <= atoi(lastday) ; ++i)
+          {    
+               int holicnt = 0;  
+               
+               memset(kntedd,  '\0',sizeof(kntedd));
+               memset(tempdate,'\0',sizeof(tempdate));
+
+               sprintf(tempdate,"%.6s%02d",workyymm,i);
+               sprintf(empno,"%s",knte[cnt].empno);
+               
+               /*휴일 & 정상 코드 업데이트*/
+               if (strcmp(knte[cnt].dd[i],"99") == 0)
+               {
+                    EXEC SQL
+                    Select decode(to_char(to_date(:tempdate,'YYYYMMDD'),'D'),'1','49','7','49','00')
+                      INTO :kntedd
+                      From DUAL;
+                      
+                    sprintf(knte[cnt].dd[i],"%s",kntedd);  
+
+                    EXEC SQL
+                    Select COUNT(*) into :holicnt 
+                      From
+                   (Select HOLIDATE
+                      From PKCHOLI
+                     Where HOLIDATE = :tempdate  
+                     UNION
+                    Select DUTYDATE
+                      From PKHOLIEMP
+                     Where DUTYDATE = :tempdate
+                       And EMPNO    = :empno
+                       And DUKIND   = '49'      /*휴일적용*/
+                     MINUS
+                    Select DUTYDATE
+                      From PKHOLIEMP
+                     Where DUTYDATE = :tempdate
+                       And EMPNO    = :empno
+                       And DUKIND   = '00')     /*평일적용*/   
+                    ;
+                    /*printf("holicnt[%d]\n",holicnt);*/
+                    if  (holicnt != 0)
+                    {
+                         sprintf(kntedd,"49");  
+                         sprintf(knte[cnt].dd[i],"%s",kntedd);
+                    }                    
+                    
+                    memset(sqlstr1,'\0',sizeof(sqlstr1));
+                    sprintf(sqlstr1,"UPDATE Pkhduty a SET DD%-2d='%s', Writetime=To_Char(Sysdate,'YYYYMMDDHH24MISS'), Writeman='CRON' Where duyymm='%.6s' And empno='%s' ",
+                                     i, knte[cnt].dd[i], workyymm, knte[cnt].empno);
+                                     
+                    EXEC SQL EXECUTE IMMEDIATE :sqlstr1;
+                    /*printf("sqlstr1[%s] empno[%s] i[%d]\n",sqlstr1, knte[cnt].empno, i);*/
+                    if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 )
+                    {  
+                        err_print(sqlca.sqlcode,"휴일코드 Setting Error");
+                        Write_batlog(seqno++, "사번[%s] 휴일코드 Setting Error",knte[cnt].empno);  
+                        exit(1);
+                    }
+               }
+               
+               
+               /*전월 말일 교대근무자 : 당월 1일 비번 Setting (단, 기등록된 Data 있을시 Update 안함) (이명노M 2016.10.17)*/
+               if ( (i == 1) && ( (strcmp(knte[cnt].dd[i],"99") == 0) || (strcmp(knte[cnt].dd[i],"00") == 0) ) )
+               {
+                    EXEC SQL
+                    Select Decode(decode(:prelastday,28,DD28,29,DD29,30,DD30,31,DD31),'06','07')
+                      INTO :kntedd
+                      From Pkhduty
+                     Where Duyymm=:preyymm And Empno=:empno;
+                      
+                    sprintf(knte[cnt].dd[i],"%s",kntedd);
+               
+                    if (strcmp(kntedd,"07") == 0)
+                    {
+                        memset(sqlstr1,'\0',sizeof(sqlstr1));
+                        sprintf(sqlstr1,"UPDATE Pkhduty a SET DD%-2d='%s', Writetime=To_Char(Sysdate,'YYYYMMDDHH24MISS'), Writeman='CRON' Where duyymm='%.6s' And empno='%s'",
+                                         i, knte[cnt].dd[i], workyymm, knte[cnt].empno);
+                                         
+                        EXEC SQL EXECUTE IMMEDIATE :sqlstr1;
+                        /*printf("sqlstr1[%s]empno[%s]i[%d]\n",sqlstr1,knte[cnt].empno,i);*/
+                        if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 )
+                        {  
+                            err_print(sqlca.sqlcode,"비번 Setting Error");
+                            Write_batlog(seqno++, "사번[%s] 비번 Setting Error",knte[cnt].empno);  
+                            exit(1);
+                        }
+                    }
+               }
+               
+               
+               /*신규입사 & 퇴직자 : 불입처리*/
+               if ( ( (i < knte[cnt].stdd) && (strcmp(knte[cnt].dd[i],"49") != 0) && (strcmp(knte[cnt].dd[i],"97") != 0) ) || 
+                    ( (i > knte[cnt].endd) && (strcmp(knte[cnt].dd[i],"49") != 0) && (strcmp(knte[cnt].dd[i],"97") != 0) ) )
+               {
+                    sprintf(knte[cnt].dd[i],"97");   
+                    memset(sqlstr1,'\0',sizeof(sqlstr1));            
+                    sprintf(sqlstr1,"UPDATE Pkhduty a SET DD%-2d='%s', Writetime=To_Char(Sysdate,'YYYYMMDDHH24MISS'), Writeman='CRON' Where duyymm='%.6s' And empno='%s' ",
+                                     i, knte[cnt].dd[i], workyymm, knte[cnt].empno);
+                                     
+                    EXEC SQL EXECUTE IMMEDIATE :sqlstr1;                         
+                    /*printf("sqlstr1[%s]empno[%s]i[%d]\n",sqlstr1,knte[cnt].empno,i);*/
+                    if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 )
+                    {  
+                        err_print(sqlca.sqlcode," 근태코드 불입 Setting Error");
+                        Write_batlog(seqno++, "사번[%s] 근태코드 불입 Setting Error",knte[cnt].empno);  
+                        exit(1);
+                    }
+               }
+          }
+          
+          cnt++;
+          
+          if  (cnt > MAXPERSON)
+          {
+               printf("작업인원이 %d명을 초과합니다. \n",MAXPERSON);
+               sprintf(log_buff, "작업인원이 %d명을 초과합니다. \n",MAXPERSON); 
+               Write_batlog(seqno++, log_buff);                                
+               exit(0);  
+          }
+          
+     }
+}
+
+int Write_batlog(int seqno, char *message)
+{
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);
+          return(-1);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

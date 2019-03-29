@@ -1,0 +1,1322 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKC10805C(파견직 급여생성)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 급여계산
+ Programmer     : 김태호
+ Version        : 1.00
+ Date           : 2010.04.05
+PKMPYCALC
+Update Contents
+Version  date(yy.mm.dd) programmer      description     relevant doc.no
+   1.00     2010.04.05    김태호         최초개발본      설계명세서
+============================================================================= */
+
+#include <string.h> 
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define  SUCCESS     -1*/
+#define  FAIL        -2
+
+/********* Function Prototype 정의 ************/
+
+void  Generate_Records();
+void  Gen_EmpRecord();
+void  Extract_DayPayEmp();
+void  Calc_BasicGongje();
+void  CalMidEnt_DayPay();
+void  Process_Calc();
+void  Get_Pays();
+void  Get_DedSum();
+void  print_errmsg(int errcode, char *errmsg);
+
+/*********************************************
+  Global Variable
+**********************************************/
+
+EXEC SQL BEGIN DECLARE SECTION;
+     /* 당월급여내역  (pkmpycalc) 참조 변수                           */
+     char    empno[5]        = "";   /* 사   번      */
+     char    korname[13]     = "";   /* 성   명      */
+     char    juminid[13+1]   = "";   /* 주민등록번호   */  
+     char    paydate[7]      = "";   /* 급 여 지 급 월       */
+     char    predate[7]      = "";   /* 급 여 지 급 월   -1    */
+     char    paynum[3]       = "";   /* 급  호  차  수       */
+     char    paycl[4]        = "";   /* 직   급      */
+     char    payra[3+1]      = "";
+     float   paygr;                  /* 호   봉      */  
+     char    pstate[3]       = "";   /* 인  사  상  태       */
+     char    orgnum[4]       = "";   /* 조  직  차  수       */  
+     char    deptcode[7]     = "";   /* 부  서  코  드       */
+     char    bldcode[3]      = "";   /* 근 무 지 코 드       */
+     char    payyn[2]        = "";   /* 급여지급여부         */
+     char    paycalckind[2]  = "";   /* 당월급여계산방식     */
+     char    ducalckind[2]   = "";   /* 당월직무계산방식     */
+     char    bpaycalckind[2] = "";   /* 전월급여계산방식     */
+     char    bducalckind[2]  = "";   /* 전월급여계산방식    */
+     char    paybank[4]      = "";   /* 급여지급은행*        2017.09.18 jissi 2->3자리 코드로 변경*/ 
+     char    payacnt[21]     = "";   /* 급여통장번호*        */
+     double  basicamt;               /* 당월  기본급         */     
+     double  bbasicamt;              /* 전월기본급소급액     */
+     double  bonusamt;               /* 정기상여금           */  
+     double  devidemon;              /* 상여금분할월수       */ 
+     double  tmp_anudamt;            /* 국민연금 누계액      */ 
+    
+     double  ovtmamt;                /* 초과근무수당          */
+     double  sptmamt;                /* 특별근무수당          */
+     double  aidamt1;                /* 기타수당1          */
+     double  aidamt2;                /* 기타수당2          */
+     double  aidamt3;                /* 기타수당3          */
+     double  mcaramt;                /* 식대교통비           */
+     double  mcartaxamt;              /* 식대교통비(과세)  */
+     double  taxpay;                 /* 과세급여          */
+     double  notaxpay;               /* 비과세급여           */
+     double  paysum;                 /* 지급총액          */
+     double  taxpaysum;              /* 과세급여총액          */
+     double  notaxpaysum;            /* 비과세급여총액       */
+     double  empldamt;               /* 고용보험료          */
+     double  anudamt;                /* 국민연금본인각출료   */
+     double  dedamt1;                /* 기타공제1          */
+     double  dedamt2;                /* 기타공제2          */
+     double  dedamt3;                /* 기타공제3          */
+     double  dedamt4;                /* 기타공제4          */
+     double  dedsum;                 /* 공제액계             */
+     double  realpay;                /* 실지급액          */
+     double  sopay;                  /* 소급급여             */
+     double  sobon;                  /* 소급상여             */
+     double  sopaysum;               /* 소급급여합   */
+     char    cretime[16]  = "";      /* 급여생성일시         */
+     char    writetime[16]  = "";    /* 최종작업일시         */
+     char    writeman[5]  = "";      /* 최종작업자           */  
+     char    president_empno[5]  = "";  /* 사장님사번           */  
+     
+     /* ===========================================================
+      연봉제 관련 추가항목
+        ===========================================================  */
+     double  fixpay;      /* 월정급여   */
+     double  bfixpay;     /* 전월월정급여   */
+     
+     /*  급여지급기준(PKCPBAS) 참조 변수               */
+     
+     char    cpaynum[3];    /* 현급호차수          */
+     char    bonusyn[2];
+    
+
+     char    MaxPayDate[7];       /* 월급여최종지급월   */
+     char    MaxHisPayDate[7];     
+     char    PrevPayMontt[7];     /* 전월               */
+     char    frempno[5];
+     char    toempno[5];
+     int     rcount;
+     /*  9801 item add *****************/
+/*     double  childeduamt;          자녀학자금   */
+/*     double  medpayamt ;           의료비가불금 */
+     double  ovmcamt;             /* 야근식대 */
+     /*  9801 item add *****************/
+     /*  01/21/2000 1:42오후 item add 사우회비 공제 제외자 *****************/
+
+     /* 2008.03.05 고용/산재 계산 이전에 따른 추가 */  
+     double  empldrate      = 0;  /* 고용보험료율     */  
+     double  y_empldrate    = 0;  /* 일반직 고용보험료율   */   
+     double  y_wacirate     = 0;  /* 일반직 산재보험료율   */   
+     double  y_drwacirate     = 0;  /* 일반직 산재보험료율   */   
+     
+     double  y_empldamt     = 0;  /* 일반직 고용보험료   */  
+     double  y_medirate     = 0;  /* 건강 보험료율   */  
+     double  y_longmtrate   = 0;  /* 장기 보험료율   */   
+     double  nprate         = 0;  /* 국민연금 보험료율   */   
+     
+     double  y_waciamt      = 0;  /* 일반직 산재보험료 일반사원   */
+     double  y_drwaciamt      = 0;  /* 일반직 산재보험료 일반사원   */
+     char    exfryymm[6+1]  = "";  /* 만60세이상 시작년월  */  
+     double  basemm;        
+
+EXEC SQL END   DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+
+int   rcount     = 0;
+int   i          = 0;
+char  msg[500+1] = "";
+int   id ;
+char  dir[80];
+
+/*=== dsa2000 2004.10. Rexec대체 서비스를 위한 =============*/
+char  log_rundate[16]     = ""; 
+char  log_progid[16]      = "";
+char  log_writeman[5]     = "";
+char  log_buff[100]       = "";
+int   seqno = 0; 
+
+
+/* 일반직 관리자 확인 필드 */
+char  YManager[2]             = "N";    
+
+
+void main(int argc, char *argv[])
+{
+     char FL_file[255];
+                       
+     if  (argc != 7) {  /* pkc10805 201508 Y000 Yzzz P718 pkc10805 20150916140000 */
+          printf("[Usage] : pkc10805 1.급여년월 2.사번fr 3.사번to 4.작업자  5.프로그램ID 6.시작시간 \n");
+          exit(1);
+     }  
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkc10805");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     sprintf(paydate,"%.6s",argv[1]);
+     sprintf(frempno,"%.4s",argv[2]);
+     sprintf(toempno,"%.4s",argv[3]);
+     sprintf(writeman,"%.4s",argv[4]);
+     
+     /* Dsa2000  2004.02.24.  **********************************/
+     hinsa_log_print(0,"급여생성 프로그램 시작...[pkc10805]");        
+     hinsa_db_connect();
+     /*dsa2000  수정..End......................................*/
+     
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[4]);
+     strcpy(log_progid,   argv[5]);
+     strcpy(log_rundate,  argv[6]);  
+       
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     EXEC SQL 
+     lock table pkmpycalc in exclusive mode nowait;
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"다른 작업자가 DB수정 작업 중입니다...");
+          sprintf(log_buff, " 다른 작업자가 DB수정 작업 중입니다..."); 
+          Write_batlog(seqno++, log_buff);                           /*dsa2000 Rexec 대체*/   
+          error_quit("작업실패...");
+     }
+       
+     printf("월급여 생성중...");
+     sprintf(log_buff, "월급여 생성중..."); 
+     Write_batlog(seqno++, log_buff);      /*dsa2000 Rexec 대체*/      
+     Generate_Records();                
+       
+     /* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] ====="); 
+          Write_batlog(seqno++, log_buff);                     /*dsa2000 Rexec 대체*/
+          error_quit("ERROR ====== [작업 실패] =====\n");
+     }
+     else  
+     {
+          sprintf(log_buff, "OK ====== [월급여생성 작업성공] ====="); 
+          Write_batlog(seqno++, log_buff);                           /*dsa2000 Rexec 대체*/
+          hinsa_exit(0,"OK ====== [월급여생성 작업성공] =====\n");
+     }
+        
+}
+
+/*2012.08.10 일반직관리자 조회모듈 통일
+CheckYManager()
+{
+     char temp_ymanager[5];
+     
+     memset(temp_ymanager,'\0',sizeof(temp_ymanager));
+     
+     EXEC SQL
+     SELECT  YMANAGER 
+       INTO  :temp_ymanager
+       FROM  PKCPBAS;
+     
+     if  (strncmp(log_writeman,temp_ymanager,4)==0)
+     {
+          strcpy(YManager,"Y");
+     }
+     else 
+     {
+          strcpy(YManager,"N");   
+     }
+}
+*/
+
+CheckYManager()
+{
+     char temp_ymanager1[5];
+     char temp_ymanager2[5];
+     char temp_ymanager3[5];
+     char temp_ymanager4[5];
+     char temp_ymanager5[5];
+     
+     memset(temp_ymanager1,'\0',sizeof(temp_ymanager1));
+     memset(temp_ymanager2,'\0',sizeof(temp_ymanager2));
+     memset(temp_ymanager3,'\0',sizeof(temp_ymanager3));
+     memset(temp_ymanager4,'\0',sizeof(temp_ymanager4));
+     memset(temp_ymanager5,'\0',sizeof(temp_ymanager5));
+     
+     EXEC SQL
+     SELECT VALUE1,VALUE2,VALUE3,VALUE4,VALUE5
+       INTO  :temp_ymanager1,:temp_ymanager2,:temp_ymanager3,:temp_ymanager4,:temp_ymanager5
+       FROM PKCVARI
+      WHERE GUBUN='YY' ;
+     
+     if  ((strncmp(log_writeman,temp_ymanager1,4)==0)|| 
+     			(strncmp(log_writeman,temp_ymanager2,4)==0)|| 
+     			(strncmp(log_writeman,temp_ymanager3,4)==0)|| 
+     			(strncmp(log_writeman,temp_ymanager4,4)==0)|| 
+     			(strncmp(log_writeman,temp_ymanager5,4)==0)) 
+     {
+          strcpy(YManager,"Y");
+          printf("debug : YManager\n");
+     }
+     else 
+     {
+          strcpy(YManager,"N");   
+     }
+}
+
+Get_EmpldAmt()
+{
+     /* dsa2000 2007.02. Add  : 명절연봉만 따로 나가는때에 고용보험료 0원으로 처리.*/
+     if  (set_empldamt() != SUCCESS) 
+          return(FAIL);
+     return(SUCCESS);  
+}
+
+/******************************************************************************
+  Parameter로 넘겨 받은 급여지급월에 상응하는 데이타가 있는지 체크하는 루틴.
+******************************************************************************/
+void Check_Existence()
+{
+     EXEC SQL 
+     select   count(*)
+       into  :rcount
+       from  pkmpycalc
+      where  (empno >= :frempno and empno <= :toempno ) 
+        and   paydate = :paydate;
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 읽기오류1...");
+          sprintf(log_buff, "월급여화일 읽기오류1...."); 
+          Write_batlog(seqno++, log_buff);              /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+      
+     if  (rcount == 0)
+          error_quit("해당하는 자료가 없습니다...");
+} 
+
+
+/****************************************************************************
+  사장님의 사번을 구하는 함수.
+*****************************************************************************/
+void Get_PresidentEmpno()
+{
+     EXEC SQL 
+     select  presempno 
+       into  :president_empno
+       from  pkcpbas;
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"사장님사번을 구하는 과정에서 Error...");
+          sprintf(log_buff, "사장님사번을 구하는 과정에서 Error."); 
+          Write_batlog(seqno++, log_buff);                        /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+}
+
+
+/*****************************************************************************
+  각 사원의 고용보험료를 구해 DB에 반영하는 Procedure.  
+*****************************************************************************/
+set_empldamt()
+{
+/* ===========================================================================
+    변경사유 : 고용보험료 산정 관련 프로그램 변경/추가 요청 
+    변경일자 : 1998.07.10    변경자   : 김승회
+    [변경내용] ===>
+  1. 기존방식은 프로그램내에서 고용보험료 산정에 계산되는 항목들을 관리.
+  2. 고용보험 계산항목테이블(PKCEMTBL)에 등록된 기준에 따라 고용보험를 계산.
+ =========================================================================== */
+     EXEC SQL BEGIN DECLARE SECTION;
+          char    stmpjuminid[8+1];
+          double  temp_totamt;   
+     EXEC SQL END DECLARE SECTION;
+     
+     char    str[4+1];
+     double  mm = 0;
+     
+     empldamt    = 0;
+     y_empldamt  = 0;
+     y_waciamt   = 0;
+     y_drwaciamt   = 0;
+     temp_totamt = 0;
+     if  (strcmp(president_empno,empno) != 0)
+     {  
+          EXEC SQL
+          SELECT NVL(CONCAT(DECODE( SUBSTR(:juminid,8,1),
+                 '1','19','2','19','3','20','4','20','19'),
+                 SUBSTR(:juminid,1,6)), '99999999' )
+          into :stmpjuminid
+          FROM    DUAL;
+          if  (sqlca.sqlcode != 0)
+          {
+               printf("[사번] : %s 의  [주민등록번호] : %s \n",empno, juminid);
+               sprintf(log_buff, "[사번] : %s 의  [주민등록번호] : %s 확인요망 \n",empno, juminid);
+               Write_batlog(seqno++, log_buff);               /*dsa2000 Rexec 대체*/
+               return(FAIL);
+          }
+          
+          sprintf(str,"%.4s",stmpjuminid);
+          mm = atoi(str) * 12;
+          sprintf(str,"%.2s",stmpjuminid+4);
+          mm = atoi(str) + mm;
+       
+  /* ===============================================================================
+           Version  date(yy.mm.dd)  programmer  description             relevant doc.no
+        30.00     1998.12.29     김승회     급여지급 항목변경        하나로인사재개발
+  => 급여지급항목변경에 따른 고용보험료 산정대상항목을 추가
+     =============================================================================== */
+          if  (mm > basemm) 
+          {
+          
+               EXEC SQL
+               select nvl(
+                 (    nvl(homesupamt,0) +
+                      decode(upper(nvl(basicamtyn,' ')),'Y',nvl(basicamt+bbasicamt,0),0) +                      
+                      decode(upper(nvl(bonusamtyn,' ')),'Y',nvl(bonusamt,0),0) +                                            
+                      decode(upper(nvl(homesupamtyn,' ')),'Y',nvl(homesupamt,0),0) +
+                      decode(upper(nvl(fixpayyn,' ')),'Y',nvl(fixpay,0)+nvl(bfixpay,0),0)   +                
+                      decode(upper(nvl(ybonamtyn,' ')),'Y',nvl(ybonamt,0),0)   + 
+                      decode(upper(nvl(sbonamtyn,' ')),'Y',nvl(sbonamt,0),0)   +                                         
+                      decode(upper(nvl(ovtmamtyn,' ')),'Y',nvl(ovtmamt,0),0)   +                       
+                      decode(upper(nvl(aidamt1yn,' ')),'Y',nvl(aidamt1,0),0)   + 
+                      decode(upper(nvl(aidamt2yn,' ')),'Y',nvl(aidamt2,0),0)   + 
+                      decode(upper(nvl(aidamt3yn,' ')),'Y',nvl(aidamt3,0),0)   +                       
+                      decode(upper(nvl(mcaramtyn,' ')),'Y',nvl(mcaramt,0),0)   +                       
+                      decode(upper(nvl(lectsupamtyn,' ')),'Y',nvl(lectsupamt,0),0)   +                                                                                       
+                      decode(upper(nvl(ovmcamtyn,' ')),'Y',nvl(ovmcamt,0),0)   +                      
+                      decode(upper(nvl(taxpayyn,' ')),'Y',nvl(taxpay,0),0)    + 
+                      decode(upper(nvl(notaxpayyn,' ')),'Y',nvl(notaxpay,0),0)   +                                   
+                      decode(upper(nvl(sopayyn,' ')),'Y',nvl(sopaysum,0),0) +  
+                      nvl(ovmcamt    ,0) +  nvl(taxpay1  ,0)+ nvl(taxpay2  ,0) + 
+                      nvl(taxpay3   ,0)+ nvl(taxpay4  ,0)
+                      )
+                      ,0)
+                into  :temp_totamt
+                from  pkmpycalc, pkcemtbl
+               where  empno = :empno;
+               /*=====03/23/2000 1:52오전 독립비상임이사는 고용보험 적용안됨====
+                 and paycl <> '10' ;
+                 ===============================================================*/
+               /*2004.06.18 강륜종(dsa2000) 직급코드값 변동에 따른 수정.  */
+               /*   and paycl <> '0Z' ;           */
+                 
+                 /* if (sqlca.sqlcode != 0)  */
+               if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403) )
+               {
+                    printf("[사번] : %s 의  고용보험료 구하기 에러... \n",empno);
+                    print_errmsg(sqlca.sqlcode,"고용보험료 계산오류...");
+                    sprintf(log_buff, "고용보험료 계산오류..."); 
+                    Write_batlog(seqno++, log_buff);            /*dsa2000 Rexec 대체*/
+                    return(FAIL);
+               }     
+               
+
+                    y_empldamt = temp_totamt * y_empldrate;
+                    /*printf("[사번] : %s ,%f ,%f,%f \n",empno,y_empldamt,y_empldrate,temp_totamt); */
+                    y_waciamt  = temp_totamt * y_wacirate;                    
+                    
+                    EXEC SQL
+                    UPDATE  pkmpycalc a
+                       SET  EMPLDAMT = FLOOR(:y_empldamt/10)*10,  /*2008.03.18 원단위 절삭 */ 
+                            DEDAMT1  = FLOOR(:y_waciamt/10)*10   /*2008.03.18 원단위 절삭 */   
+                    WHERE  empno=:empno 
+                      and  empno in ( select empno from pimpmas where tjobduty <> '15');               
+                      
+                      
+                   EXEC SQL
+                    UPDATE  pkmpycalc a
+                       SET  EMPLDAMT = FLOOR(:y_empldamt/10)*10, /*2008.03.18 원단위 절삭 */
+                             DEDAMT1  = FLOOR(:temp_totamt * :y_drwacirate /10)*10  /* 2008.03.18 원단위 절삭 운전직 산재 */   
+                    WHERE  empno=:empno 
+                      and  empno in ( select empno from pimpmas where tjobduty = '15');                  
+          }
+     }
+     return(SUCCESS);
+}
+
+
+void Process_InsCalc()
+{
+     EXEC SQL DECLARE cursor4 CURSOR FOR 
+     select  nvl(b.empno,'*'),    replace(nvl(a.juminid,'####'),' ','')
+       from  pkmpmas a, pkmpycalc b
+      where  (b.empno >= :frempno and b.empno <= :toempno)
+        and  a.empno = b.empno;     
+     
+     EXEC SQL OPEN cursor4;
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != 1405))
+     {
+          print_errmsg(sqlca.sqlcode,"Cursor cursor4 Open Error...");
+          sprintf(log_buff, "Cursor cursor4 Open Error 2.....");
+          Write_batlog(seqno++, log_buff);                       /*dsa2000 Rexec 대체*/
+          EXEC SQL CLOSE cursor4;
+          error_quit("작업실패...");
+     }
+     
+     rcount = 0;
+     while(1)
+     {
+          EXEC SQL FETCH  cursor4 
+          INTO  :empno, :juminid;
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE cursor4;
+               printf("처리된 작업대상자 : [%d] 명 \n",rcount);
+               return;
+          }      
+          
+          if  (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor cursor4 Data Fetch Error 1...");
+               EXEC SQL CLOSE cursor4;
+               error_quit("작업실패...");
+          }
+          
+          if  (Get_EmpldAmt() == SUCCESS)
+               rcount++;
+          else
+          {
+               EXEC SQL CLOSE cursor4;
+               error_quit("작업실패...");
+          }
+     }
+}
+
+void Process_Calc()
+{
+     char  str[4+1] = "";
+     
+     Check_Existence();
+     Get_PresidentEmpno();
+     
+     
+     /* ===============================================================================
+             의료보험,국민연금 계산 로직 추가 
+        =============================================================================== */
+     EXEC SQL    
+     update pkmpycalc
+        set   
+            kita1       = (
+                          nvl(basicamt,0) + nvl(bbasicamt,0)   + 
+                          nvl(bonusamt,0) +                        
+                          nvl(ovtmamt,0) +  
+                          nvl(aidamt1,0) + nvl(aidamt2,0) + nvl(aidamt3,0) + 
+                          nvl(mcartaxamt,0) +  
+                          nvl(lectsupamt,0) + nvl(sbontaxamt,0) + 
+                          nvl(taxpay1,0) + nvl(taxpay2,0) +nvl(taxpay3,0) + /*2013.02.22.hjku. 문경란씨 요청으로 제외함. nvl(taxpay4,0) +  *//* +  nvl(taxpay3   ,0)+ nvl(taxpay4  ,0))+ */
+                          nvl(sopaysum,0)+ nvl(ovmcamt,0) +
+                          nvl(fixpay,0)  + nvl(bfixpay ,0) +
+                          nvl(aidamt1,0) +
+                          nvl(ticketamt,0) -                                  
+                          nvl(dedamt2,0) - nvl(dedamt3,0)              
+                          ),                                        /*  homesupamt +  2010.07.28건강보험 국민연금 계산 로직 추가  kita1 급여 해당 항목 합계 nvl(taxpay2  ,0) + */ 
+              kita2       = (
+                          nvl(basicamt,0) + nvl(bbasicamt,0)   + 
+                          nvl(bonusamt,0) + nvl(homesupamt,0) +                        
+                          nvl(ovtmamt,0) +  
+                          nvl(aidamt1,0) + nvl(aidamt2,0) + nvl(aidamt3,0) + 
+                          nvl(mcartaxamt,0) +  
+                          nvl(lectsupamt,0) + nvl(sbontaxamt,0) + 
+                          (nvl(taxpay1  ,0)+ nvl(taxpay2  ,0)+ nvl(taxpay3   ,0)+ nvl(taxpay4  ,0))+
+                          nvl(sopaysum  ,0) + nvl(ovmcamt,0) +
+                          nvl(fixpay,0) + nvl(bfixpay ,0) +
+                          nvl(aidamt1,0) +
+                          nvl(ticketamt,0) -                                  
+                          nvl(dedamt2,0) - nvl(dedamt3,0)              
+                          )                                        /* 2010.07.28건강보험 국민연금 계산 로직 추가  kita1 급여 해당 항목 합계 nvl(taxpay2  ,0) + */                           
+      where  empno >= :frempno and empno <= :toempno;                     
+      
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"건강보험료 계산 오류1...");
+          sprintf(log_buff,"건강보험료 계산 오류1...");
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }  
+     
+	   EXEC SQL	 /* 건강보험 요율 넣는 로직 추가 KTH 2012.06.01*/	   
+  	 select nvl(medirate,0)/100 ,nvl(longmtrate,0)/100
+       into :y_medirate, :y_longmtrate
+       from pkcmdbas;
+       
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"건강보험료 계산기준 읽기오류...");
+          sprintf(log_buff, "건강보험료 계산기준 읽기오류...");
+          Write_batlog(seqno++, log_buff);                    /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }       
+       
+     EXEC SQL	  /* 국민연금 요율 넣는 로직 추가 KTH 2012.06.01*/	   
+     SELECT NVL(NPRATE,0)/100 NPRATE
+       INTO :nprate  
+     FROM PKCNPBAS;  
+     
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"국민연금 계산기준 읽기오류...");
+          sprintf(log_buff, "국민연금 계산기준 읽기오류...");
+          Write_batlog(seqno++, log_buff);                    /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }              
+                 
+     EXEC SQL    
+     update pkmpycalc
+        set meddamt =  trunc(kita2 *:y_medirate,-1)+trunc(trunc(kita2 *:y_medirate,-1)*:y_longmtrate,-1) ,
+                       anudamt =  trunc(kita1 *:nprate,-1)   /* 건강보험 국민연금 계산 로직 추가 */ 
+      where  empno >= :frempno and empno <= :toempno;                     
+      
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"건강보험료 계산 오류1...");
+          sprintf(log_buff,"건강보험료 계산 오류1...");
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }       
+     
+     
+     EXEC SQL    
+     update pkmpycalc c set anudamt = (select ANUSELFAMT from pkmnpymas m where m.empno=c.empno) 
+      where empno in (select empno from pkmnpymas m )  
+      and  empno >= :frempno and empno <= :toempno;                          
+     if  ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          print_errmsg(sqlca.sqlcode,"국민연금  계산 고정급  오류1...");
+          sprintf(log_buff,"국민연금 계산 오류1...");
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }       
+     
+     
+     EXEC SQL
+     select   nvl(empldrate,0),nvl(y_empldrate,0),nvl(y_wacirate,0),nvl(y_drwacirate,0)
+       into  :empldrate, :y_empldrate, :y_wacirate , :y_drwacirate
+       from  pkcemtbl;
+     
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"고용보험료 계산기준 읽기오류...");
+          sprintf(log_buff, "고용보험료 계산기준 읽기오류...");
+          Write_batlog(seqno++, log_buff);                    /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+                         
+        
+        
+        
+             
+     
+     /* ===============================================================================
+             급여지급 항목변경 : => 급여지급항목변경에 따른 고용보험료 산정대상항목을 추가
+        =============================================================================== */
+     EXEC SQL
+     select   nvl(empldrate,0),nvl(y_empldrate,0),nvl(y_wacirate,0),nvl(y_drwacirate,0)
+       into  :empldrate, :y_empldrate, :y_wacirate , :y_drwacirate
+       from  pkcemtbl;
+     
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"고용보험료 계산기준 읽기오류...");
+          sprintf(log_buff, "고용보험료 계산기준 읽기오류...");
+          Write_batlog(seqno++, log_buff);                    /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+     
+     EXEC SQL
+     select to_date(:exfryymm,'YYYYMM')
+       from  dual;
+     
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"고용보험 만60세 이상 시작월 등록오류...");
+          sprintf(log_buff, "고용보험 만60세 이상 시작월 등록오류...");
+          Write_batlog(seqno++, log_buff);                    /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+     
+     sprintf(str,"%.4s",exfryymm);
+     basemm = atoi(str) * 12;
+     sprintf(str,"%.2s",exfryymm+4);
+     basemm = atoi(str) + basemm;
+     basemm = basemm - (12*4);
+     
+     EXEC SQL
+     update  pkcpbas
+     set  paycalctime = to_char(sysdate,'YYYYMMDDHH24MISSD');
+     
+     if (sqlca.sqlcode != 0) 
+     {
+         print_errmsg(sqlca.sqlcode,"급여지급기준 쓰기오류...");
+         sprintf(log_buff, "급여지급기준 쓰기오류...."); 
+         Write_batlog(seqno++, log_buff);               /*dsa2000 Rexec 대체*/
+         error_quit("작업실패...");
+     }  
+     
+     Process_InsCalc();
+}
+
+
+
+/*****************************************************************************
+  Generate_Records()
+*****************************************************************************/
+void Generate_Records()
+{
+     EXEC SQL 
+     delete from pkmpycalc
+      where empno >= :frempno and empno <= :toempno;
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          print_errmsg(sqlca.sqlcode,"월급여 기존자료 삭제실패...");
+          sprintf(log_buff, "월급여 기존자료 삭제실패...");
+          Write_batlog(seqno++, log_buff);                 /*dsa2000 Rexec 대체*/   
+          error_quit("작업실패...");
+     }
+     
+     CheckYManager();
+     printf("일반직 관리자 확인\n");
+     
+     
+     Gen_EmpRecord();  
+     /* ===============================================================================
+              Version  date(yy.mm.dd)  programmer  description             relevant doc.no
+           30.00     1998.12.29     김승회     급여지급 항목변경        하나로인사재개발
+     => 일할계산부분은 차후에 반영
+        =============================================================================== */
+     /*
+     Extract_DayPayEmp();
+     */
+                 
+                         
+     CalMidEnt_DayPay(); /* 일할계산 */
+          
+     /*2013.03.22.hjku. 문경란씨 요청으로 4대보험 업로드된 파일로 반영
+     Process_Calc(); 건강,국민연금, 고용보험/산재 보험 계산 */
+     
+     Get_Pays();
+     
+     Get_DedSum();
+     
+     
+     
+     printf("과세 비과세 Sum 계산 완료\n");
+     
+
+     
+     printf("공제금 합 계산 완료\n");
+}
+
+
+/*****************************************************************************
+  금월 해당 사번의 월급여레코드를 생성하는 함수.
+******************************************************************************/  
+void Gen_EmpRecord()
+{
+     EXEC SQL 
+     update  pkcpbas
+        set  paycretime = to_char(sysdate,'YYYYMMDDHH24MISSD');
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"급여지급기준 쓰기오류...");
+          sprintf(log_buff, " 급여지급기준 쓰기오류....");
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/   
+          error_quit("작업실패...");
+     }
+  
+  /* ===============================================================================
+           Version  date(yy.mm.dd)  programmer  description             relevant doc.no
+        30.00     1998.12.29     김승회     급여지급 항목변경        하나로인사재개발
+
+  => 1. 추가항목 : fixpay, bfixpay, quaterpay, holipay, roleamt 
+     2. 삭제항목 : 연봉제관련 변경된 급여지급항목 참조
+     =============================================================================== */
+     EXEC SQL 
+     insert into pkmpycalc 
+      (
+           paydate, empno, korname, paycl, pstate, 
+           orgnum, deptcode, boncode, bldcode, jobdept, 
+           payyn, paybank, payacnt, paybank1, payacnt1,
+           basicamt,  bonusamt,   homesupamt,
+           ybonamt,   sbonamt, 
+           ovtmamt,  aidamt1, aidamt2, aidamt3, 
+           mcaramt,mcartaxamt, lectsupamt,          
+           dedamt1, dedamt2, dedamt3, 
+           dedamt4, dedamt5,anudamt, meddamt,empldamt,/*2013.03.22.hjku. 문경란씨 요청,고용보험도 마스터에서 가져오도록 수정*/ 
+           taxpay, notaxpay, cretime, payra, sopaysum,  
+           ovmcamt,   ovmcded, 
+           fixpay, bfixpay,
+           aidamt11, aidamt12, aidamt13, aidamt14,
+           taxpay1, taxpay2, taxpay3, taxpay4, 
+           notaxpay1, notaxpay2, notaxpay3, notaxpay4, 
+           sopaysum1,
+           lectsupamt1,lectsupamt2,lectsupamt3,lectsupamt4
+           )
+     select
+           :paydate, empno, korname, paycl, pstate,
+           orgnum, deptcode, boncode, bldcode, jobdept, 
+           payyn, paybank, payacnt, paybank1, payacnt1,
+           basicamt,  bonusamt,   homesupamt, 
+           ybonamt, sbonamt,  
+           ovtmamt,  aidamt1, aidamt2, aidamt3, 
+           mcaramt,     mcartaxamt, lectsupamt,            
+           dedamt1, dedamt2, dedamt3, 
+           dedamt4, dedamt5,anudamt,meddamt,empldamt,/*2013.03.22.hjku. 문경란씨 요청,고용보험도 마스터에서 가져오도록 수정*/ 
+           taxpay, notaxpay, 
+           to_char(sysdate,'YYYYMMDDHH24MISSD'), payra, soguppay, 
+           ovmcamt,  ovmcded, 
+           fixpay, bfixpay,
+           aidamt11, aidamt12, aidamt13, aidamt14, 
+           taxpay1, taxpay2, taxpay3, taxpay4, 
+           notaxpay1, notaxpay2, notaxpay3, notaxpay4, 
+           soguppay1,
+           lectsupamt1,lectsupamt2, lectsupamt3,lectsupamt4                         
+      from pkmpmas
+     where upper(payyn) = 'Y'
+       and substr(empno,1,1) like 'Y%'
+       and (empno >= :frempno and empno <= :toempno);
+       
+     
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 생성오류...");
+          sprintf(log_buff, " 월급여화일 생성오류....");
+          Write_batlog(seqno++, log_buff);              /*dsa2000 Rexec 대체*/   
+          error_quit("작업실패...");
+     }
+     
+     EXEC SQL
+     select  count(*)
+       into  :rcount
+       from  pkmpycalc
+      where  (empno >= :frempno and empno <= :toempno);      /*Dsa2000 추가..선택한 사원만 계산이 되도록..*/
+     
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 읽기오류1...");
+          sprintf(log_buff, " 월급여화일 읽기오류1....");
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/   
+          error_quit("작업실패...");
+     }
+     
+     printf("월급여 생성건수 : [%d] \n",rcount);
+     sprintf(log_buff, "월급여 생성건수 : [%d] \n",rcount);
+     Write_batlog(seqno++, log_buff);                      /*dsa2000 Rexec 대체*/
+}
+
+/******************************************************************************
+              일할계산내역화일에서 일할계산자를 추출하는 함수. (사용 안하고 있음)
+******************************************************************************/
+void Extract_DayPayEmp()
+{
+
+/*
+  select   a.empno, nvl(a.paycalckind,' '), nvl(a.ducalckind,' '), 
+   nvl(a.bpaycalckind,' '), nvl(a.bducalckind,' '),
+   cbasicsum, cinfosum, cdutysum, 
+   sobasicamt, soinfoamt, sodutyamt  
+  from  pkhpday a, pkmpycalc b */
+   
+     EXEC SQL DECLARE cursor1 CURSOR FOR 
+     SELECT  A.EMPNO,    NVL(A.PAYCALCKIND,' '), NVL(A.DUCALCKIND,' '), 
+             NVL(A.BPAYCALCKIND,' '),NVL(A.BDUCALCKIND,' '),
+             NVL(CBASICSUM,0),   
+             NVL(SOBASICAMT,0)
+       FROM  PKHPDAY A, pkmpycalc B   
+      WHERE  A.PAYDATE = :paydate AND A.EMPNO = B.EMPNO 
+        AND (A.EMPNO >= :frempno AND B.EMPNO <= :toempno);
+     
+     EXEC SQL OPEN cursor1;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+         (sqlca.sqlcode != -1405))
+     {
+          print_errmsg(sqlca.sqlcode,"Cursor cursor1 Open Error...");
+          sprintf(log_buff, " Cursor cursor1 Open Error....");
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/   
+          EXEC SQL CLOSE cursor1;
+          error_quit("작업실패...");
+      }
+     
+     rcount = 0;
+     
+     while(1)
+     {
+          EXEC SQL FETCH cursor1 
+          INTO    :empno, :paycalckind, :ducalckind, 
+                  :bpaycalckind, :bducalckind, 
+                  :basicamt, :bbasicamt;
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE cursor1;
+               printf("일할계산 대상자 : [%d]명 \n",rcount);
+               sprintf(log_buff, "일할계산 대상자 : [%d]명 \n",rcount);
+               Write_batlog(seqno++, log_buff);                        /*dsa2000 Rexec 대체*/
+               return;
+          }  
+          
+          if  (sqlca.sqlcode != 0) 
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor cursor1 Data Fetch Error...");
+               EXEC SQL CLOSE cursor1;
+               error_quit("작업실패...");
+          }  
+          
+          if  (Update_Record1() == FAIL)
+          {
+               EXEC SQL CLOSE cursor1;
+               error_quit("작업실패...");
+          }
+          rcount++;
+     }
+}
+
+/***************************************************************************
+  Update_Record1() Function.
+****************************************************************************/
+Update_Record1()
+{
+     EXEC SQL 
+     UPDATE   pkmpycalc
+        SET  
+            PAYCALCKIND   = :paycalckind, 
+            DUCALCKIND   = :ducalckind,
+            BPAYCALCKINd   = :bpaycalckind, 
+            BDUCALCKIND   = :bducalckind, 
+            BASICAMT   = :basicamt
+      WHERE EMPNO = :empno;
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 쓰기 오류1...");
+          sprintf(log_buff, " 월급여화일 쓰기 오류1...."); 
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/   
+          return(FAIL);
+     }
+     else
+          return(SUCCESS);
+}
+
+
+
+/******************************************************************************
+              중도입사자 일할계산 임당.
+******************************************************************************/
+void CalMidEnt_DayPay()
+{
+     int totday = 0;
+     /*
+     0. 당월만근일수  
+     1. 당월중도입사자 추출
+     2. 당월내역 수정
+     */
+     
+     EXEC SQL 
+     SELECT  TO_CHAR(LAST_DAY(TO_DATE(:paydate,'YYYYMM')),'DD')
+       INTO  :totday
+       FROM  DUAL;
+       
+       
+     EXEC SQL  
+     SELECT  TO_CHAR(ADD_MONTHS(TO_DATE(:paydate,'yyyymm'),-1),'yyyymm') 
+       INTO  :predate
+       FROM  DUAL;       
+     
+/* 2013.05.10.hjku BM 전적자 급여로 임시적으로 삭제
+// 식교비 계산 2010.04.10 kth  전사원 식교비 수식          
+     EXEC SQL 
+     UPDATE  PKMPYCALC B
+     SET  (
+      MCARAMT,
+      MCARTAXAMT
+      )=
+      (
+       SELECT CEIL(400000 -(16000 * SUM((NVL(D.HEALTH,0) + NVL(D.HALF*0.5,0)+NVL(D.BIRTH,0)+
+                                     NVL(D.CELEB,0) +  NVL(D.YEAR,0)+NVL(D.SICK,0) +
+                                     NVL(D.ABSENCE,0))))),
+              CEIL(400000 -(16000 * SUM((NVL(D.HEALTH,0) + NVL(D.HALF*0.5,0)+NVL(D.BIRTH,0)+
+                                     NVL(D.CELEB,0) +  NVL(D.YEAR,0)+NVL(D.SICK,0) +
+                                     NVL(D.ABSENCE,0))))) - MIN(E.MCARNOTAX )                                                                         
+         FROM PKHDUTY D ,(SELECT MCARNOTAX FROM PKCPBAS) E  
+        WHERE D.DUYYMM  = :predate
+          AND D.EMPNO = B.EMPNO) 
+     WHERE  EMPNO IN 
+     (
+      SELECT  EMPNO
+      FROM  PKMPMAS A
+      WHERE  A.PAYYN ='Y'
+        AND  A.EMPNO LIKE 'Y%'         
+        AND  A.EMPNO = B.EMPNO )
+        and (empno >= :frempno and empno <= :toempno);
+*/  
+
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+      print_errmsg(sqlca.sqlcode,"중도입사자 일할계산 연봉대상자...  ");
+      error_quit("작업실패...");
+     }     
+     
+     
+/*       
+// 중도 입사자 일할 계산 2010.04.10 kth             
+     EXEC SQL 
+     UPDATE  PKMPYCALC B
+     SET  (
+      FIXPAY,
+      -- NOTAXPAY1,
+      MCARAMT,
+      MCARTAXAMT
+      )=
+      (
+      SELECT  CEIL(A.FIXPAY     * (:totday - TO_NUMBER(SUBSTR(A.EMPDATE,7,2))+1)  / :totday),
+              -- Trunc(A.NOTAXPAY1 * (:totday - TO_NUMBER(SUBSTR(A.EMPDATE,7,2))+1)  / :totday), 
+              CEIL(400000 * (:totday - TO_NUMBER(SUBSTR(A.EMPDATE,7,2))+1)  / :totday),
+              CEIL(400000 * (:totday - TO_NUMBER(SUBSTR(A.EMPDATE,7,2))+1)  / :totday) - E.MCARNOTAX              
+        FROM  PKMPMAS A,(SELECT MCARNOTAX FROM PKCPBAS) E 
+       WHERE  A.PAYYN ='Y'
+         AND  A.EMPNO LIKE 'Y%' 
+         AND  A.EMPDATE >= :paydate||'01'
+         AND  A.EMPNO = B.EMPNO)
+     WHERE  EMPNO IN 
+     (
+      SELECT  EMPNO
+      FROM  PKMPMAS A
+      WHERE  A.PAYYN ='Y'
+        AND  A.EMPNO LIKE 'Y%' 
+        AND  A.EMPDATE >= :paydate||'01'
+        AND  A.EMPNO = B.EMPNO )
+        and (empno >= :frempno and empno <= :toempno);
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+      print_errmsg(sqlca.sqlcode,"중도입사자 일할계산 연봉대상자...  ");
+      error_quit("작업실패...");
+     }
+     
+// 중도 퇴사자 일할 계산 2010.06.10 kth
+    EXEC SQL 
+     UPDATE  PKMPYCALC B
+     SET  (
+      FIXPAY,
+      -- NOTAXPAY1, 
+      MCARAMT,
+      MCARTAXAMT   
+      )=
+      (
+      SELECT  CEIL(A.FIXPAY     *  TO_NUMBER(SUBSTR(A.RETDATE,7,2))  / :totday),
+              -- Trunc(A.NOTAXPAY1 *  TO_NUMBER(SUBSTR(A.RETDATE,7,2))  / :totday), 
+              CEIL(C.MCARAMT    *  TO_NUMBER(SUBSTR(A.RETDATE,7,2))  / :totday), 
+              CEIL(C.MCARAMT    *  TO_NUMBER(SUBSTR(A.RETDATE,7,2))  / :totday)-MCARNOTAX
+        FROM  PKMPMAS A, (SELECT MCARNOTAX FROM PKCPBAS) E ,
+                        (SELECT EMPNO,CEIL(400000 -(16000*
+                                    (NVL(D.HEALTH,0) + NVL(D.HALF,0)*0.5+NVL(D.BIRTH,0)+
+                                     NVL(D.CELEB,0) +  NVL(D.YEAR,0)+NVL(D.SICK,0) +
+                                     NVL(D.ABSENCE,0)))) MCARAMT
+                               FROM PKHDUTY D   
+                              WHERE D.DUYYMM =:predate
+                              ) C
+       WHERE  A.PAYYN ='Y'
+         AND  A.EMPNO LIKE 'Y%' 
+         AND  SUBSTR(A.RETDATE,1,6) = :paydate
+         AND  A.EMPNO = B.EMPNO
+         AND  A.EMPNO = C.EMPNO)
+     WHERE  EMPNO IN 
+     (
+      SELECT  EMPNO
+      FROM  PKMPMAS A
+      WHERE  A.PAYYN ='Y'
+        AND  A.EMPNO LIKE 'Y%' 
+        AND  SUBSTR(A.RETDATE ,1,6) = :paydate
+        AND  A.EMPNO = B.EMPNO )
+     and (empno >= :frempno and empno <= :toempno);
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+         print_errmsg(sqlca.sqlcode,"중도퇴사자 일할계산 연봉대상자...  ");
+         error_quit("작업실패...");
+     }  
+*/      
+ 
+// 중도 입사자 일할 계산 
+// 2015.09.08 jissi 이지연씨요청 400000 월식교비 고정값=>개인별 연간식교비/12=242000로 변경
+     EXEC SQL 
+     UPDATE  PKMPYCALC B
+     SET  (
+      FIXPAY,
+      /*NOTAXPAY1,*/
+      /*MCARAMT,  2015.09.16 jissi 이지연씨요청 식교비 계산값이 아닌 식교비 급여자료파일 업로드한 자료로 등록되도록 생성작업 삭제*/
+      MCARTAXAMT
+      )=
+      (
+      SELECT  CEIL(A.FIXPAY     * (:totday - TO_NUMBER(SUBSTR(A.EMPDATE,7,2))+1)  / :totday),
+              /*Trunc(A.NOTAXPAY1 * (:totday - TO_NUMBER(SUBSTR(A.EMPDATE,7,2))+1)  / :totday),*/
+              /*CEIL(NVL(Y.TONGAMT12,0)
+                   * (:totday - TO_NUMBER(SUBSTR(A.EMPDATE,7,2))+1)  / :totday),*/
+              GREATEST(CEIL(NVL(Y.TONGAMT12, 0)  
+                            * (:totday - TO_NUMBER(SUBSTR(A.EMPDATE,7,2))+1)  / :totday) - E.MCARNOTAX,0)              
+        FROM  PKMPMAS A,(SELECT MCARNOTAX FROM PKCPBAS) E ,
+              (SELECT EMPNO, (TONGAMT1/12) TONGAMT12 FROM PKHYPHIS 
+                WHERE yearpaynum = (SELECT yearpaynum FROM PKCPBAS) ) Y
+       WHERE  A.PAYYN   =    'Y'
+         AND  A.EMPNO   LIKE 'Y%' 
+         AND  A.EMPDATE >=   :paydate||'01'
+         AND  A.EMPNO   =    Y.EMPNO(+)
+         AND  A.EMPNO   =    B.EMPNO)
+     WHERE  EMPNO IN 
+     (
+      SELECT  EMPNO
+        FROM  PKMPMAS A
+       WHERE  A.PAYYN   =    'Y'
+         AND  A.EMPNO   LIKE 'Y%' 
+         AND  A.EMPDATE >=   :paydate||'01'
+         AND  A.EMPNO   =    B.EMPNO )
+         and (empno     >=   :frempno  and  empno    <=   :toempno);
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+      print_errmsg(sqlca.sqlcode,"중도입사자 일할계산 연봉대상자...  ");
+      error_quit("작업실패...");
+     }
+     
+// 중도 퇴사자 일할 계산
+// 2015.09.08 jissi 이지연씨요청 400000 월식교비, 16000일식교비 고정값=>개인별 연간식교비/12=242000, (연간식교비/12)/22=11000로 변경
+    EXEC SQL 
+     UPDATE  PKMPYCALC B
+     SET  (
+      FIXPAY,
+      /*NOTAXPAY1,*/
+      /*MCARAMT,  2015.09.16 jissi 이지연씨요청 식교비 계산값이 아닌 식교비 급여자료파일 업로드한 자료로 등록되도록 삭제*/
+      MCARTAXAMT   
+      )=
+      (
+      SELECT  CEIL(A.FIXPAY     *  TO_NUMBER(SUBSTR(A.RETDATE,7,2))  / :totday),
+              /*Trunc(A.NOTAXPAY1 *  TO_NUMBER(SUBSTR(A.RETDATE,7,2))  / :totday),*/
+              /*CEIL(C.MCARAMT    *  TO_NUMBER(SUBSTR(A.RETDATE,7,2))  / :totday),*/
+              GREATEST(CEIL(C.MCARAMT    *  TO_NUMBER(SUBSTR(A.RETDATE,7,2))  / :totday)-MCARNOTAX,0)
+        FROM  PKMPMAS A,(SELECT MCARNOTAX FROM PKCPBAS) E ,
+                        (SELECT D.EMPNO,CEIL(NVL(Y.Tongamt12,0) -(NVL(Y.Tongamt22,0)*
+                               (NVL(D.HEALTH,0) + NVL(D.HALF,0)*0.5+NVL(D.BIRTH,0)+
+                                NVL(D.CELEB,0)  + NVL(D.YEAR,0)    +NVL(D.SICK,0) +
+                                NVL(D.ABSENCE,0)))) MCARAMT
+                           FROM PKHDUTY D, (SELECT empno, TONGAMT1/12 Tongamt12, (TONGAMT1/12)/22 Tongamt22 
+                                              FROM PKHYPHIS WHERE yearpaynum = (SELECT yearpaynum FROM PKCPBAS)) Y 
+                          WHERE D.DUYYMM =:predate
+                            AND D.EMPNO  = Y.EMPNO
+                        ) C
+       WHERE  A.PAYYN =    'Y'
+         AND  A.EMPNO LIKE 'Y%' 
+         AND  SUBSTR(A.RETDATE,1,6) = :paydate
+         AND  A.EMPNO =    B.EMPNO
+         AND  A.EMPNO =    C.EMPNO)
+     WHERE  EMPNO IN 
+     (
+      SELECT  EMPNO
+      FROM  PKMPMAS A
+      WHERE  A.PAYYN ='Y'
+        AND  A.EMPNO LIKE 'Y%' 
+        AND  SUBSTR(A.RETDATE ,1,6) = :paydate
+        AND  A.EMPNO = B.EMPNO )
+     and (empno >= :frempno and empno <= :toempno);
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+         print_errmsg(sqlca.sqlcode,"중도퇴사자 일할계산 연봉대상자...  ");
+         error_quit("작업실패...");
+     }  
+     
+     
+// 식교비 과세액 0 처리  2010.06.10 kth
+    EXEC SQL 
+     UPDATE  PKMPYCALC B
+        SET  MCARTAXAMT =0
+      WHERE  MCARTAXAMT < 0 ;
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+         print_errmsg(sqlca.sqlcode,"식교비 과세액 0 처리 ...  ");
+         error_quit("작업실패...");
+     }        
+     
+         
+}
+
+
+
+/******************************************************************************
+  과세급여, 과세상여, 비과세급여, 비과세상여를 구해 DB에 반영하는 함수. 
+******************************************************************************/
+void  Get_Pays()
+{
+  /* ===============================================================================
+           Version  date(yy.mm.dd)  programmer  description             relevant doc.no
+        30.01     1999.03.15     김승회      재무ERP 관련 급여항목 추가
+     =============================================================================== */
+     EXEC SQL
+     update pkmpycalc
+        set
+            lectsupamt =  NVL(lectsupamt1,0) + NVL(lectsupamt2,0)+
+                          NVL(lectsupamt3,0) + NVL(lectsupamt4,0),
+            edusupamt  =  NVL(edusupamt1 ,0) + NVL(edusupamt2,0),
+            hsamt      =  NVL(hsorgamt ,0)+ NVL(hsintamt,0),
+            aidamt1    = (NVL(aidamt11 ,0)+ NVL(aidamt12 ,0) + NVL(aidamt13  ,0)+ NVL(aidamt14 ,0)),
+            aidamt2    = (NVL(aidamt21 ,0)+ NVL(aidamt22 ,0) + NVL(aidamt23  ,0)+ NVL(aidamt24 ,0)),
+            taxpay     = (NVL(taxpay1  ,0)+ NVL(taxpay2  ,0) + NVL(taxpay3   ,0)+ NVL(taxpay4  ,0)),
+            notaxpay   = (NVL(notaxpay1,0)+ NVL(notaxpay2,0) + NVL(notaxpay3 ,0)+ NVL(notaxpay4,0)),
+            sopaysum   = (NVL(sopaysum1,0)+ NVL(sopaysum2,0) + NVL(sopaysum3 ,0)+
+                          NVL(sopaysum4,0)+ NVL(sopaysum5,0) + NVL(sopaysum6 ,0))
+      where empno >= :frempno and empno <= :toempno;
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 쓰기오류5...");
+          sprintf(log_buff, " 월급여화일 쓰기오류5...."); 
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+     
+     /* ===============================================================================
+              Version  date(yy.mm.dd)  programmer  description             relevant doc.no
+           30.00     1998.12.29     김승회     급여지급 항목변경        하나로인사재개발
+     
+     => 변경된 급여지급항목 참조
+        =============================================================================== */
+     EXEC SQL 
+     update  pkmpycalc
+        set   
+             basicamt   = 0,             
+             dutyamt   = 0,
+             bdutyamt  = 0,
+             bonusamt  = 0,
+             trainamt  = 0            
+      where  (empno >= :frempno and empno <= :toempno)
+        /*infra   and  paycl >= '09';*/
+        and  paycl >= 'C11';  
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode !=1403))
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 쓰기오류5...");
+          sprintf(log_buff, " 월급여화일 쓰기오류5...."); 
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+     
+     
+     EXEC SQL 
+     update pkmpycalc
+        set   
+            taxpaysum = 
+                          (
+                          basicamt   + bbasicamt  + 
+                          bonusamt   + homesupamt +                        
+                          ovtmamt    +  
+                          aidamt1    + aidamt2 + aidamt3 + 
+                          mcaramt    +                                   /* 2016.09.26 유훈일M요청 델파이 소스와 맞춤  mcartaxamt=> mcaramt     */         
+                          lectsupamt + sbontaxamt + 
+                          taxpay     + sopaysum   + ovmcamt +
+                          fixpay     + nvl(bfixpay ,0) +
+                          nvl(meddamt,0) + nvl(empldamt,0) +             /*2013.05.10.hjku. 오류수정(기타수당1이 두번 합산됨)  aidamt1 +        */
+                          nvl(anudamt,0) + nvl(dedamt1,0)  +             /* 기타 공제 처리 기타 공제 1은 파견직 수수료                          */
+                          nvl(ybonamt,0)                                 /* 2016.09.26 유훈일매니저요청 연차수당 과세합에 추가                  */
+                          /* 2016.09.26 유훈일M요청 과세합계금액에서 공제합 뺌
+                          - ticketamt    -                               * 2010.04.08 kth 4대보험 지급합계넣어줌 기지급식대 차감               * 
+                          nvl(dedamt2,0) - nvl(dedamt3,0)- nvl(dedamt4,0)*/ 
+                          ),                                             /* 4대 보험은 각 회사에서 지급 되기 때문에 계산에서 지급 금액에 넣어줌 */
+            notaxpaysum = 
+                          ( 
+                          sbonamt  - sbontaxamt +                       
+                          /* mcaramt  - mcartaxamt +                       2016.09.26 유훈일M요청 델파이 소스와 맞춤                    */
+                          /* odamt    - odtaxamt   +                ovmcamt  + * 98 01 add 98.09.04 과세*/
+                          notaxpay                                       /*2016.09.26 유훈일M요청 연차수당 과세합에 추가 + ybonamt      */
+                          )                                                                                                       
+      where  empno >= :frempno and empno <= :toempno;
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 쓰기오류6...");
+          sprintf(log_buff, " 월급여화일 쓰기오류6...");
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+     
+     EXEC SQL 
+     update pkmpycalc
+        set paysum   = (taxpaysum+notaxpaysum),
+            realpay  = (taxpaysum+notaxpaysum)    /*명절연봉만 지급시 급여생성만해도 실지급액 업데이트 되도록 항상Update.*/
+      where empno >= :frempno and empno <= :toempno;
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 쓰기오류7...");
+          sprintf(log_buff, " 월급여화일 쓰기오류7....");
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+}
+
+/*****************************************************************************
+  공제금합을 계산하는 루틴.
+*****************************************************************************/
+void Get_DedSum()
+{   
+     EXEC SQL 
+     update  pkmpycalc  
+        set  dedsum = 
+                      ( 
+                       ticketamt +dedamt2 + dedamt3 +dedamt4 
+                       /* empldamt + meddamt  + anudamt + dedamt1 
+                        98.09.04 석식대공제금 + dedamt1 + dedamt2 + dedamt3 +
+                       dedamt4 + dedamt5 */
+                      )
+      where   empno >= :frempno and empno <= :toempno;
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"월급여화일 쓰기오류6...");
+          sprintf(log_buff, " 월급여화일 쓰기오류6..."); 
+          Write_batlog(seqno++, log_buff);                /*dsa2000 Rexec 대체*/
+          error_quit("작업실패...");
+     }
+}
+/***************************************************************************
+  print_errmsg  Function.
+****************************************************************************/
+void print_errmsg(int errcode, char *errmsg)
+{
+     printf("[ERRCODE : %d] %s\n", errcode,errmsg);
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int   Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAIL);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

@@ -1,0 +1,1959 @@
+ /* ----------------------------------------------------------------------------
+ PROGRAM-NAME   : PKE2010G(연차대상자 추출/계산)  
+                : 작업시간이 20분정도 소요됨...(process_knte()에서 많은 시간소요됨)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 상여금
+ Programmer     : 이랑교
+ Version        : 10.01
+ Date           : 1998.05.26
+
+[USING LIB]
+MIS2 : /hper/insa/HINSA/common/lib/src/hperlib/avgpay.pc
+
+[관련테이블]
+SELECT : PKCPBAS  PKMPMAS PKHPHIS  PKHYPHIS          PKMYEMAS 
+         PKHMOHIS PKHDUTY PKHDUSUM PKCMCBAS PKCHOLI  PKHEXDD 
+I/U/D  : PKMYEMAS
+------------------------------------------------------------------------------
+Update Contents
+ 버  전   수 정 일..    수정자   관련근거       수정내용
+ 01.00    1997.02.02.  김승회   설계명세서      최초개발본      
+ 10.01    1998.05.26.  이랑교   전1998.05.13   반연차항목추가
+ 10.20    2000.07.14.  유효성                  분기/반기결산시 계산로직 추가
+ 10.30    2002.08.28.  유효성   전2002-3755    전문계약직 추가       
+ 10.40    2002.11.19.  박수향                  연간근로일수-->pkhduty(근태)의 근로일수로 변경 (미입력제외함)
+                NVL(CONYN,'N') ='Y' 결재여부는 연차수당계산시에는 체크안함(최상용 과장 요청).
+ 10.41    2004.02.24   강륜종                  Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.                
+ 11.00    2004.06.18   강륜종(dsa2000)         직급코드값 변동에 따른 수정.  
+                                         코드 10이 사외이사에서 부장으로 변경.   사외이사는 0Z로 코드 변경.    
+ 12.00    2004.11.     강륜종(dsa2000)         Rexec대체 서비스를 위한 수정작업. 
+ 20.00    2005.01.05.  dsa2000                 연차근무비율 80% 이상이면 10일 => 15일로 인상.
+                연차근무비율 80% 이상 체크 안하도록 수정(무조건 15일 지급하게..이석희 대리 요청)
+                근무기준일80% 미만자도 지급.
+ 21.00    2005.01.13.  DSA2000                 정보통신수당(ITAMT) 추가. --2005년 01월부터 월차폐지후 신설.
+----------------------------------------------------------------------------- */
+
+#include <string.h> 
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define  SUCCESS     -1*/
+#define  FAIL        -2
+
+/********* Function Prototype 정의 ************/
+float  get_sundaycnt(char*, char*);
+float  get_sun(char*, char*);/* parksh20021119*/
+
+float  get_dupholiday(char*,char*);
+void  get_dayname(char *,char *);
+void  get_payclkind(char *,char *);
+void   add_days(char*,int,char*);
+void  set_to_empdate(char *);
+float   get_exdd();
+
+float  get_ocaramt();
+float  get_pay3sum();
+float  get_bon12sum();
+float  get_avggross();
+float  get_commonpay(char *empno);
+float  get_term(char *,char *);
+float  get_duty(char *,char *);     /* parksh20021119*/
+
+void  process_gen();
+void  delete_records();
+void  gen_records();
+float  get_yytotdd(char*,char*);
+float  get_dutotdd(char*,char*);  /* parksh20021119*/
+void  process_payclkind();
+void  process_knte();
+void  calc_yeamt();
+
+
+/*********************************************
+  Global Variable
+**********************************************/
+EXEC SQL BEGIN DECLARE SECTION;
+
+     char   workyy[5]      = "";     /*   기준년도           */
+     char   empno[5]       = "";     /*   사번               */
+     char   korname[13]    = "";     /*   성명               */
+   /*infra   char  paycl[3]       = "";    */  /*   직급               */  
+     char  paycl[4]        = "";     /*   BAND               */
+     float  paygr;      /*   호봉               */
+     char   paynum[3]      = "";     /*   급호차수           */
+     char   orgnum[4]      = "";     /*   조직차수           */
+     char   deptcode[7]    = "";     /*   부서코드           */
+     char   payclkind[2]   = "";     /*   직제               */
+     char   pstate[3]      = "";     /*   인사상태           */
+     char   empdate[9]     = "";     /*   입사일             */
+     char   payyn[2]       = "";     /*   급여지급여부       */
+     char   yearyn[2]      = "";     /*   연차수당지급여부   */
+                                     /*   연차계산기준       */
+     char   yearkind[2]    = "";     /*   연차계산구분       */
+     float  yytotdd;                 /*   연간근로일수       */
+     char   yyfrdate[9]    = "";     /*   근무기준일 from    */
+     char   yytodate[9]    = "";     /*   근무기준일 to      */
+     float  yybasedd;                /*   근무기준일수  */
+                                     /*   연차일수           */
+     float  yydeddd;                 /*   해당년도 연차공제일수 */
+     float  yyexdd;                  
+     float  yyrealdd;                /*   실근무일수         */
+     float  yyate;                   /*   근무비율           */
+     float  yearcredd;               /*   연차발생일수       */
+                                     /*   가산일수            */
+     float  dutytotdd;               /*   총근속일수(2003이전)         */
+     float  dutyexdd;                /*   근속제외일수       */
+     float  dutydeddd;               /*   입사이후의 총연차공제일수(2002년까지의 연차공제일수 + 이후 연차공제일수) */
+     float  dutyrealdd;              /*   실근속일수         */
+     float  yearadddd;               /*   연차가산일수       */
+     
+     float  dutytotddtmp;            /*   2003이후 총근속일수 parksh 20021120  */
+     float  dutyexddtmp;             /*   2003이후 근속제외일수 parksh 20021120 */
+     float  dutydedddtmp;            /*   2003이후 연차공제일수 parksh 20021120 */
+     float  dutyrealddtmp;           /*   2003이후 근속일수 parksh 20021120 */
+     
+                                     /*   연차정산           */
+     float  yeartotdd;               /*   연차대상일수       */
+     float  yearusedd;               /*   연차사용일수       */
+     float  yeardpsdd;               /*   연차적치일수       */
+                                     /*   월차정산           */
+     float  mondpsdd;                /*   월차적치일수       */
+                                     /*   연월차정산         */
+     float  ymdpsdd;                 /*   연월차정산일수     */ 
+                                     /*   수당계산           */
+     float  pay3sum;                 /*   3개월급여합        */
+     float  bon12sum;                /*   12개월상여합       */
+     float  avggross;                /*   평균임금           */
+     float  commonpay;               /*   통상임금           */
+     float  basepay;                 /*   수당기준임금       */
+     float  ymamt;                   /*   연월차수당         */
+                                     /*   수당지급           */
+     char   holdkind[2]    = "";     /*   유보방식           */
+     float  holdrate;                /*   기준유보율         */
+     float  holdamt;                 /*   기준유보액         */
+     float  realamt;                 /*   실지급액           */
+                                     /*   최종작업           */
+     char   writetime[16]   = "";     /*   최종작업일시       */
+     char   writeman[5]     = "";     /*   최종작업자         */
+     char   jobstep[2]      = "";     /* 작업단계범위   */
+     char   frempno[5]      = "";     /* 사번FROM   */
+     char   toempno[5]      = "";     /* 사번TO   */
+     char   halfyn[1+1]     = "";     /* 가정산[Y/N]   */
+            
+     char   bldcode[3]      = "";     /* 근무지코드   */
+     float  trafdays;                 /* 교통비지급일수  */  
+     float  avgodamt;                 /* 평균O/D 지원금  */
+     char   baseyymm[6+1]   = "";
+     char   ENDDATE[4+1]    = "";
+
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+char  to_empdate[8+1]   = "";   /* 연차수당대상자의 기준입사일 */
+int  s_count;
+int  f_count;
+int  id;
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno               = 0; 
+char    DsaTime[16]         = ""; 
+
+void main(int argc,char *argv[])
+{
+     char FL_file[255];
+         
+     if  (argc != 10) {  /*/hper8/HINSA/proc/bin/Kbin/pke2010g 2004 3 0000 zzzz 1 200410 D006 pke2010g 2004110500000 */
+          printf("[Usage] : pke2010g 1.기준년도 2.작업구분[1.생성,2.계산,3.all ] 3.사번fr 4.사번to \n");
+          printf("[Usage] :          5.연차계산구분[] 6.기준월(최종급여반영월) 7.작업자 8.프로그램ID 9.시작시간\n");   
+          exit(1);
+     }   /*== 2000.7.14 추가 => 분기/반기결산시 기준월(최종급여반영월)을 입력받음 ================*/  
+     
+     sprintf(workyy,"%s",  argv[1]);  
+     sprintf(jobstep,"%s",  argv[2]);
+     sprintf(frempno,"%s",  argv[3]);
+     sprintf(toempno,"%s",  argv[4]);
+     sprintf(yearkind,"%s",  argv[5]);
+     sprintf(baseyymm,"%s",  argv[6]);
+     sprintf(writeman,"%s",  argv[7]);
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pke2010g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     /* Dsa2000  2004.02.24.  **********************************/
+     hinsa_log_print(0,"연차대상자 추출/계산 프로그램 시작...");                
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /*dsa2000  수정..End......................................*/
+     
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[7]);
+     strcpy(log_progid,   argv[8]);
+     strcpy(log_rundate,  argv[9]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     EXEC SQL
+     SELECT substr(to_char(LAST_DAY(to_date(:baseyymm, 'YYYYMM')) ,'YYYYMMDD'), 5,4)
+       into :ENDDATE
+       from dual;  
+                 
+     /*
+     EXEC SQL 
+     lock table pkmyemas in exclusive mode nowait;  */   
+     /*========= 2000.7.14.
+     if (strcmp(halfyn,"Y")== 0)
+           {   sprintf(ENDDATE,"0630");                        
+               sprintf(baseyymm,"%.4s06",  workyy);             
+           }
+           else
+           {  sprintf(ENDDATE,"1231");           
+              sprintf(baseyymm,"%.4s12",  workyy);
+             }
+           ==========================*/
+           
+     set_to_empdate(to_empdate);  /* 입사기준일을 구한다 */
+     printf("입사기준일 : %.8s \n",to_empdate);   /* Test dsa2000 */ 
+     
+     if  (strcmp(jobstep,"1") == 0)
+          process_gen();
+     else if (strcmp(jobstep,"2") == 0)
+          calc_yeamt();
+     else
+     {
+          process_gen();   
+          calc_yeamt();  
+     }
+      
+     /* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====");
+          Write_batlog(seqno++, log_buff);                    /*dsa2000 Rexec 대체*/
+          error_quit("ERROR [작업 실패]\n");
+     }
+     else
+     {
+          sprintf(log_buff, "OK ====== [연차생성/계산 작업성공] =====");
+          Write_batlog(seqno++, log_buff);                  /*dsa2000 Rexec 대체*/
+          hinsa_exit(0,"OK  [연차생성/계산 작업성공].\n");   
+     }
+}
+
+void process_gen()
+{
+  
+     delete_records();
+       
+     gen_records();
+     
+     process_payclkind();  
+     
+     process_knte();
+  
+} 
+
+/*****************************************************************************
+  기존의 자료를 삭제하는 함수.
+ *****************************************************************************/
+void delete_records()
+{
+     printf("기존 자료 삭제중...\n");
+     EXEC SQL
+     delete  from pkmyemas
+      where  empno >= :frempno and empno <= :toempno;  
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403)) 
+     {
+          print_errmsg(sqlca.sqlcode,"PKMYEMAS  자료삭제오류...");
+          sprintf(log_buff, "[ERRCODE : %d] PKMYEMAS  자료삭제오류...\n",sqlca.sqlcode); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...");
+     }
+}
+
+/*****************************************************************************
+  set_to_empdate function (입사기준일을 구한다. 해당년도의 10% 되는 날= 입사기준일)
+ *****************************************************************************/
+void set_to_empdate(char *to_empdate)
+{
+     float  totdd, i, j;
+     float  k = 0;  
+     char  t1_date[8+1]  = "";
+     char  t2_date[8+1]  = "";
+     char  buf[50+1]  = "";
+     
+     sprintf(t1_date,"%s",workyy);
+     sprintf(t2_date,"%s",workyy);
+     sprintf(t1_date+4,"0101");
+     sprintf(t2_date+4,ENDDATE);
+     totdd = get_yytotdd(t1_date,t2_date);
+     totdd = ceil(totdd * 0.1);
+     
+     i = j = 0;
+     while (j < totdd)
+     {
+          get_dayname(t1_date,buf);
+          i = is_holiday(t1_date);
+          if  (k == FAIL)
+               error_quit("작업실패...");
+          if ((strcmp(buf,"SUNDAY") != 0) && (i == 0))
+               j++;
+          add_days(t1_date,1,t1_date);
+       
+     }
+     add_days(t1_date,-1,t1_date);
+     sprintf(to_empdate,"%.8s",t1_date);
+}
+
+/*****************************************************************************
+  is_holiday() function.
+ *****************************************************************************/
+is_holiday(char *pdate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          int   count;
+          char  t_date[8+1] = "";
+     EXEC SQL END DECLARE SECTION;
+     sprintf(t_date,"%s",pdate);
+     
+     EXEC  SQL
+     select  count(*)
+       into  :count
+       from  pkcholi  
+      where  holidate = :t_date 
+     and  holikind <> '0' ;
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"휴일테이블 읽기오류...");
+          printf(" 대상날짜 : [%s] \n",t_date);
+          return(FAIL);
+     }
+     return(count);
+}
+
+/*****************************************************************************
+  연차수당 대상자를 생성하는 함수.
+ *****************************************************************************/
+void gen_records()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          float  count;
+          char  t_empdate[8+1] = "";
+     EXEC SQL END DECLARE SECTION;
+     
+     char   t1_date[8+1]  = "";
+     char   t2_date[8+1]  = "";
+     
+     /*******************************
+     급호차수가 급여마스터에 존재... 
+     EXEC SQL
+     SELECT  CPAYNUM
+     INTO  :paynum
+     FROM  PKCPBAS;
+     if (sqlca.sqlcode != 0)
+     {  print_errmsg(sqlca.sqlcode,"현급호차수 읽기오류...");
+      error_quit("작업실패...");
+     }
+     *******************************/
+     printf("연차수당 대상자 생성 중...\n");
+     
+     sprintf(t1_date,"%s",workyy);
+     sprintf(t2_date,"%s",workyy);
+     sprintf(t1_date+4,"0101");
+     sprintf(t2_date+4,ENDDATE);
+     yytotdd = get_yytotdd(t1_date,t2_date);
+     if  (yytotdd == FAIL)
+          error_quit("작업실패...");
+     
+     sprintf(t_empdate,"%s",to_empdate);
+
+/*  =======================================================================
+  연봉제에 의한 수정
+  EXEC SQL 
+  INSERT INTO PKMYEMAS   
+  (WORKYY, EMPNO, KORNAME, PAYCL, PAYGR, EMPDATE, PAYNUM, 
+   ORGNUM, DEPTCODE, PSTATE, PAYYN, YEARKIND, YYTOTDD, COMMONPAY)
+   SELECT :WORKYY, EMPNO, KORNAME, PAYCL, PAYGR, EMPDATE, PAYNUM,
+   ORGNUM, DEPTCODE, PSTATE, PAYYN, :YEARKIND, :YYTOTDD,
+   (BASICAMT+INFOAMT+DUTYAMT)
+  FROM  PKMPMAS
+  WHERE  (EMPNO >= :FREMPNO AND EMPNO <= :TOEMPNO)   
+  AND   (PAYCL BETWEEN '10' AND 'A9')      
+  ======================================================================= */
+  
+     EXEC SQL 
+     insert into pkmyemas(
+            workyy,  empno,    korname, paycl, paygr,     empdate, paynum, 
+            orgnum,  deptcode, pstate,  payyn, yearkind,  yytotdd)
+     select :workyy, empno,    korname, paycl, paygr,     empdate, paynum,
+            orgnum,  deptcode, pstate,  payyn, :yearkind, :yytotdd
+     from   pkmpmas
+     where  (empno >= :frempno and empno <= :toempno)
+/*==========================================================================
+ 10.30    2002.08.28.  유효성  전2002-3755    전문계약직 추가 
+===========================================================================*/  
+/*  and   ((paycl between '11' and '93')  or paycl ='E1') /*2001.1. 계약직 포함*/
+/*  and   ((paycl between '11' and '93')  or paycl ='E1' or paycl ='C1') /*2004.06.18 강륜종(dsa2000) 직급코드값 변동에 따른 수정.  */
+/*infra  and   ((paycl between '10' and '93')  or paycl ='E1' or paycl ='C1') */
+       and  ((paycl between 'C11' and 'D41')  or paycl ='H11' or paycl ='D91')  
+       and  (pstate < '80') ;     
+  /*and  empdate <= :t_empdate;  dsa2000 2005.01.06. 근무기준일80% 미만자도 지급하기 위해...*/
+  
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"연차대상자 생성오류...");
+          sprintf(log_buff, "[ERRCODE : %d] 연차대상자 생성오류...",sqlca.sqlcode); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...");
+     }
+
+/* 2002.1.7. 유효성 주석처리 start --> 인사팀 요청 
+  EXEC SQL DECLARE c5 CURSOR FOR
+  select  empno
+  from  pkmyemas
+  where  workyy = :workyy
+  order by empno;
+
+  EXEC SQL OPEN c5;
+  if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405)) 
+  {
+   print_errmsg(sqlca.sqlcode,"Cursor c5 Open Error...");
+   EXEC SQL CLOSE c5;
+   error_quit("작업실패...");
+  }
+  
+  while(1)
+  {
+   EXEC SQL FETCH c5
+   INTO  :empno;
+   if (sqlca.sqlcode == 1403) 
+   {
+     EXEC SQL CLOSE c5;
+     return;
+   }
+   else if (sqlca.sqlcode != 0)
+   {
+     print_errmsg(sqlca.sqlcode,"Cursor c5 Data Fetch Error...");
+     EXEC SQL CLOSE c5;
+     error_quit("작업실패...");
+   } 
+   
+   EXEC SQL
+   select  count(*)
+   into  :count
+   from  pkhphis
+   where  substr(paydate,1,4) = :workyy and empno = :empno;
+   if (sqlca.sqlcode != 0)
+   {
+     print_errmsg(sqlca.sqlcode,"월급여이력 Check Error...");
+     EXEC SQL CLOSE c5;
+     error_quit("작업실패...");
+   }
+
+   if (count == 0)
+   {
+     EXEC SQL
+     delete  from pkmyemas
+     where  workyy = :workyy and empno = :empno;
+     if (sqlca.sqlcode != 0)
+     {
+      print_errmsg(sqlca.sqlcode,"연차대상자 중 월급여이력 미존재자 삭제실패...");
+      EXEC SQL CLOSE c5;
+      error_quit("작업실패...");
+     }
+   }
+  }
+ 2002.1.7. 유효성 주석처리 end --> 인사팀 요청 */
+}
+
+/*****************************************************************************
+  연간근로일수를 구하는 함수(휴일제외한)
+ *****************************************************************************/
+float get_yytotdd(char *frdate, char *todate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          float count;
+          char  t1_date[8+1] = "";
+          char  t2_date[8+1] = "";
+     EXEC SQL END DECLARE SECTION;
+     
+     float  result = 0.0;  
+     float  tmp    = 0.0 ;
+     /*float  getsun  = 0.0 ; parksh  */
+     
+     sprintf(t1_date,"%s",frdate);
+     sprintf(t2_date,"%s",todate);
+     result = get_term(t1_date,t2_date);  /*365*/
+     
+     EXEC  SQL
+     select  count(*)
+       into  :count                       /*40*/
+       from  pkcholi  
+      where  (holidate >= :t1_date and holidate <= :t2_date) 
+        and   holikind <> '0' ;
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"당해년도 휴일총일수 읽기오류...");
+          sprintf(log_buff, "[ERRCODE : %d] 당해년도 휴일총일수 읽기오류...",sqlca.sqlcode); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }
+     
+     if ((tmp=get_dupholiday(frdate,todate)) == FAIL)
+          return(FAIL);  
+      
+     /*if ((getsun =get_sundaycnt(frdate,todate)) ==FAIL)
+              return(FAIL);
+     result = result - (count + getsun-tmp) ;   parksh 삭제 */
+        
+     result = result - (count + get_sundaycnt(frdate,todate)-tmp);    
+     
+     return(result);
+}
+
+
+/*****************************************************************************
+  parksh 추가-> 시작일과 종료일까지 근태월의 근로일수
+ *****************************************************************************/
+float get_dutotdd(char *frdate, char *todate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          float count;
+          char  t1_date[8+1] = "";
+          char  t2_date[8+1] = "";   
+     EXEC SQL END DECLARE SECTION;
+     
+     float  result = 0.0;  
+     float  tmp    = 0.0 ;
+           /* float   getsun  =0.0;     parksh 삭제 */
+           
+     sprintf(t1_date,"%s",frdate);
+     sprintf(t2_date,"%s",todate);
+     
+     result = get_duty(t1_date,t2_date);    /* 근태월의 총일수*/
+     
+     
+     /* parksh 20021119  시작일부터 종료일까지의 휴일중 pkhduty(근태월)의 휴일만 구하기*/
+     /*EXEC  SQL       parksh 20021119 막음 
+     select  count(*)
+     into  :count
+     from  pkcholi  
+     where  (holidate >= :t1_date and holidate <= :t2_date)
+     and   holikind <> '0' ;*/
+     
+     EXEC  SQL
+     select  count(*)
+       into  :count
+       from  pkcholi  
+      where  substr(holidate,1,6) in (select duyymm       /* parksh 20021119 추가 */
+                                        from pkhduty 
+                                       where duyymm between substr(:t1_date,1,6) and substr(:t2_date,1,6)
+                                       /*AND NVL(CONYN,'N') ='Y' 결재여부 */
+                                         and empno = :empno) 
+        and  holikind <> '0' ;
+      
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"당해년도 휴일총일수 읽기오류...");
+          sprintf(log_buff, "[ERRCODE : %d] 당해년도 휴일총일수 읽기오류...",sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     
+     /*getsun = get_sun(t1_date,t2_date);
+      
+     printf("\n 근태월 휴일수count[ %5.0f]",count);
+     printf("\n 근태월 총근로일수[ %5.0f]",result);
+     result = result - (count + getsun);  
+     printf("\n 근태월 일요일수[ %5.0f]",getsun);         parksh 삭제 */
+        
+     result = result - (count + get_sun(t1_date,t2_date));
+     
+     return(result);
+}
+
+/*****************************************************************************
+  frdate~todate의 일요일수를 구하는 함수.
+ *****************************************************************************/
+float get_sundaycnt(char *frdate, char *todate)
+{
+     char  fr_date[8+1]   = ""; 
+     char  to_date[8+1]   = "";
+     char  buf[50]       = "";
+     float  fsunday = 0.0 ;
+     float  count = 0.0 ;
+   
+   
+     sprintf(fr_date,"%s",frdate);
+     sprintf(to_date,"%s",todate);
+     
+   /* parksh 20030321  
+     while(1)
+     {
+      get_dayname(fr_date,buf);
+      if (strcmp(buf,"SUNDAY") == 0)
+        break;
+      add_days(fr_date,1,fr_date);  
+     }
+   
+     while(1)
+     {
+      get_dayname(to_date,buf);
+      if (strcmp(buf,"SUNDAY") == 0)
+        break;
+      add_days(to_date,-1,to_date);
+     }
+           
+     count = floor(get_term(fr_date,to_date) / 7) + 1;
+   */
+     EXEC SQL
+     select  
+            floor((to_date(:to_date,'yyyymmdd')-next_day(last_day(add_months(to_date(:fr_date,'yyyymmdd'),-1)),1))/7) + 1 
+       into :count
+       from dual ;
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"당해년도 일요일수 구하기 오류...");
+          sprintf(log_buff, "[ERRCODE : %d] 당해년도 일요일수 구하기 오류...",sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+   
+     return(count);
+}
+
+/*****************************************************************************
+  근태에 등록된 휴일 중 일요일의 수를 구하는 함수.
+ *****************************************************************************/
+float  get_dupholiday(char *frdate,char *todate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          float count;
+          char  t1_date[8+1]   = "";
+          char  t2_date[8+1]   = "";
+          char  holidate[8+1]  = "";
+          char  buf[50+1]      = "";
+     EXEC SQL END DECLARE SECTION;
+     
+     sprintf(t1_date,"%s",frdate);
+     sprintf(t2_date,"%s",todate);
+     
+     EXEC SQL DECLARE c4 CURSOR FOR
+     select  holidate
+       from  pkcholi
+      where  (holidate >= :t1_date and holidate <= :t2_date) 
+        and  holikind <> '0'
+      order  by holidate;
+     
+     EXEC SQL OPEN c4;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405)) 
+     {
+          print_errmsg(sqlca.sqlcode,"Cursor c4 Open Error...");
+          sprintf(log_buff, "[ERRCODE : %d] Cursor c4 Open Error...",sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          EXEC SQL CLOSE c4;
+          return(FAIL);
+     }
+     
+     count = 0;
+     while(1)
+     {
+          EXEC SQL FETCH c4
+          INTO  :holidate;
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE c4;          
+               return(count);
+          }
+          else if (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor c4 Data Fetch Error...");
+               EXEC SQL CLOSE c4;
+               return(FAIL);
+          }
+          
+          get_dayname(holidate,buf);
+          if (strcmp(buf,"SUNDAY") == 0)
+            count++;  
+     }  
+}
+
+/****************************************************************************
+       요일명을 구하는 함수.
+ ***************************************************************************/
+void   get_dayname(char *indate,char *result)
+{
+  EXEC SQL BEGIN DECLARE SECTION;
+       char idate[8+1]     = "";
+       char ddname[20]   = "";
+  EXEC SQL END   DECLARE SECTION;
+  int count;
+  
+  sprintf(idate,"%s",indate);
+  EXEC SQL 
+  select   to_char(to_date(:idate,'YYYYMMDD'),'DAY')
+    into  :ddname
+    from  dual;
+
+  count = 0;
+  while (ddname[count] != ' ')
+       count++;
+       
+  ddname[count] = '\0';
+  sprintf(result,"%s",ddname);
+}
+
+/*****************************************************************************
+  연차테이블에 직제를 반영하는 함수.
+ *****************************************************************************/
+void process_payclkind()
+{
+     EXEC SQL DECLARE c1 CURSOR FOR
+     select  empno, korname, paycl
+       from  pkmyemas
+      where  empno >= :frempno and empno <= :toempno
+      order  by empno;
+     
+     EXEC SQL OPEN c1;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405)) 
+     {
+          EXEC SQL CLOSE c1;
+          print_errmsg(sqlca.sqlcode,"Cursor c1 Open Error...");
+          sprintf(log_buff, "[ERRCODE : %d] Cursor c1 Open Error...",sqlca.sqlcode); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          EXEC SQL CLOSE c1;
+          error_quit("작업실패...");
+     }
+     
+     while(1)
+     {
+          EXEC SQL FETCH c1
+          INTO  :empno, :korname, :paycl;
+          
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE c1;
+               return;
+          } 
+          else if (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor c1 Data Fetch Error...");
+               EXEC SQL CLOSE c1;
+               error_quit("작업실패...");
+          }
+          
+          get_payclkind(paycl,payclkind);  
+          if  (strcmp(payclkind,"*") == 0)
+          {
+               EXEC SQL CLOSE c1;
+               return;
+          }
+          else
+          {
+               EXEC SQL
+               update  pkmyemas
+                  set  payclkind = :payclkind
+                where  empno = :empno;
+               if  (sqlca.sqlcode != 0)
+               {
+                    print_errmsg(sqlca.sqlcode,"직제 Update Error...");
+                    EXEC SQL CLOSE c1;
+                    error_quit("작업실패...");
+               }
+          }
+     }
+}
+
+/*****************************************************************************
+  직제를 구하는 함수.
+ *****************************************************************************/
+void get_payclkind(char *kind,char *result)
+{
+   /*  =======================================================================
+     연봉제에 의한 수정
+   
+     if ((strcmp(kind,"10") >= 0) && (strcmp(kind,"99") <= 0))
+      sprintf(result,"1");
+     else if ((strcmp(kind,"A1") >= 0) && (strcmp(kind,"A9") <= 0))
+      sprintf(result,"2");
+     else
+     {
+      printf(" %s (%s) 에 대한 직제코드값을 구할 수 없습니다.\n",
+      korname,empno);
+      sprintf(result,"*");  
+     }
+     =======================================================================   */
+     if ((strcmp(kind,"10") >= 0) && (strcmp(kind,"93") <= 0)    
+          || (strcmp(kind,"E1") == 0) || (strcmp(kind,"C1") == 0))
+          sprintf(result,"1");
+     else
+     {
+          printf(" %s (%s) 에 대한 직제코드값을 구할 수 없습니다.\n",korname,empno);
+          /*sprintf(log_buff, " %s (%s) 에 대한 직제코드값을 구할 수 없습니다.\n",korname,empno);
+                     Write_batlog(seqno++, log_buff); dsa2000 Rexec 대체*/
+          sprintf(result,"*");  
+     }
+}
+
+/*****************************************************************************
+  근태관련사항를 처리하는 함수.
+ *****************************************************************************/
+void process_knte()
+{   
+     printf("근태관련사항 처리중...\n");
+     EXEC SQL DECLARE c2 CURSOR FOR
+     select  empno, korname, empdate, yytotdd 
+       from  pkmyemas
+      where  empno >= :frempno and empno <= :toempno
+      order  by empno;
+     
+     EXEC SQL OPEN c2;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405)) 
+     {
+          print_errmsg(sqlca.sqlcode,"Cursor c2 Open Error...");
+          EXEC SQL CLOSE c2;
+          error_quit("작업실패...");
+     }
+     
+     while(1)
+     {
+           EXEC SQL FETCH c2
+           INTO  :empno, :korname, :empdate, :yytotdd;
+           
+           if  (sqlca.sqlcode == 1403) 
+           {   
+                EXEC SQL CLOSE c2;
+                return;
+           }
+           else if (sqlca.sqlcode != 0)
+           {
+                print_errmsg(sqlca.sqlcode,"Cursor c2 Data Fetch Error...");
+                EXEC SQL CLOSE c2;
+                error_quit("작업실패...");
+           }
+           
+           if  (set_knteitems() != SUCCESS)
+           {
+                /*sprintf(log_buff, " %s (%s) 에 대한 set_knteitems() Error...\n",korname,empno);
+                          Write_batlog(seqno++, log_buff);   dsa2000 Rexec 대체*/
+                EXEC SQL CLOSE c2;
+                error_quit("작업실패...");
+           }
+           s_count++;
+     }
+   
+}
+
+/*****************************************************************************
+  근태관련사항를 구하는 함수.
+ *****************************************************************************/
+set_knteitems()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t_date[8+1]   = "";
+          float  count;
+          float  tempcnt;
+     EXEC SQL END DECLARE SECTION;
+     
+     char  basedate[8+1] = "";
+     char  tmpdate[8+1] = "";
+     
+     sprintf(basedate,"%s",workyy);
+     sprintf(basedate+4,"0101");
+     
+     if  (strcmp(empdate,basedate) <= 0)      /* 근무기준일FROM */
+          sprintf(yyfrdate,"%s",basedate);
+     else
+          sprintf(yyfrdate,"%s",empdate);
+     
+     sprintf(basedate+4,ENDDATE);       /* 근무기준일TO    */
+     sprintf(yytodate,"%s",basedate);                               
+     
+     yybasedd = get_dutotdd(yyfrdate,yytodate);  /* 근무기준일수  parksh 20021120수정  
+                                                       get_yytotdd(년근무기준일수) -> get_dutotdd(년중 근태월의 근무기준일수)*/
+     if  (yybasedd == FAIL)
+          error_quit("작업실패...");
+     
+     EXEC  SQL          /* 연차공제일수  */
+     select  ymdedcnt  
+       into  :yydeddd
+       from  pkhdusum
+      where  empno = :empno and duyy = :workyy;  
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          print_errmsg(sqlca.sqlcode,"연차공제일수 읽기오류...");
+          printf(" %s (%s) 에 대한 연간근태내역을 구할 수 없습니다.\n", korname,empno);
+          sprintf(log_buff, "[ERRCODE : %d] 연차공제일수 읽기오류...",sqlca.sqlcode); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }
+     else if (sqlca.sqlcode == 1403)
+          yydeddd = 0;
+     
+           /* 
+           yyexdd = get_exdd() 
+           yyrealdd = yybasedd - yydeddd - yyexdd ;  실근무일수 parksh 20021120 막음  */
+           
+     yyrealdd = yybasedd - yydeddd ;                /* parksh 20021120 실근무일수 구하기 */   
+     
+     yyate   = ceil((yyrealdd / yytotdd * 100)*100)/100 ;  /* 근무비율  */ 
+     
+     /*dsa2000   2005.01.05.  연차기본발생일 10일=>15일로 증가, 80%이상 무조건 15일로 (월차폐지로 인하여) */
+     /* 연차발생일수  */
+     /*if (yyate == 100)      
+      yearcredd = 10;
+     else if ((yyate < 100) && (yyate >= 90)) 
+      yearcredd = 8;
+     else if (yyate < 90) 
+      yearcredd = 0;
+     else
+     {  printf(" %s (%s)  에 대한 근무비율값에 이상이 있습니다.\n" ,korname,empno);
+      return(FAIL);
+     }*/
+     
+     yearcredd = 15;   /*모든사원 기본으로 15개 지급함.(80% 조항 삭제)  dsa2000  2005.01.06.*/
+     /*if  (yyate >= 80)
+      yearcredd = 15;
+     else if (yyate < 80) 
+      yearcredd = 0;
+     else
+     {
+      printf(" %s (%s)  에 대한 근무비율값에 이상이 있습니다.\n" ,korname,empno);
+      return(FAIL);
+     }*/
+     
+         
+     /****************** 2002까지는 기존로직, 2003년부터 총근속일수는 근태월의 근무일수합 *******************/
+           /* parksh 20021120   :  yytodate -> 20021231 */
+     sprintf(tmpdate,"%.8s","20021231");
+     dutytotdd = get_term(empdate,tmpdate );  
+      
+           /* 근속제외일수   */
+           /*
+            * 근속제외 당해년도 12.31 이후까지 등록된 경우 당해년도 12.31까지만 계산함. */
+           /*  EXEC SQL
+            *  select  nvl(sum(exdays),0)
+            *  into  :dutyexdd
+            *  from  pkhexdd
+            *  where  empno = :empno   
+            *    and   upper(exfixyn) = 'Y'
+            */
+     EXEC SQL
+     select  nvl(sum(to_date(least(:tmpdate,extodate),'YYYYMMDD')  /* parksh :workyy -> 2002 */
+                     - to_date(exfrdate,'YYYYMMDD') +1),0)
+       into  :dutyexdd
+       from  pkhexdd
+      where  empno = :empno   
+        and   upper(exfixyn) = 'Y' ;
+     
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"근속제외일수 읽기오류...");
+          printf(" %s (%s) 에 대한 근속제외일수를 구할 수 없습니다.\n",korname,empno);
+          sprintf(log_buff, "[ERRCODE : %d] 근속제외일수 읽기오류...",sqlca.sqlcode); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }
+     
+     /*2002.1.7. 유효성 추가 start */
+     EXEC  SQL      
+     select  count(*)
+       into  :tempcnt
+       from  pkhdusum
+      where  empno = :empno and duyy <= '2002';   /*parksh :workyy -> 2002 */  
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          print_errmsg(sqlca.sqlcode,"tempcnt 읽기오류...");
+          printf(" %s (%s) 에 대한 tempcnt내역을 구할 수 없습니다.\n", korname,empno);
+          sprintf(log_buff, " %s (%s) 에 대한 tempcnt내역을 구할 수 없습니다.\n", korname,empno); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }
+     
+     if  (tempcnt != 0)
+     {     
+          EXEC  SQL        /* 2002년 까지 연차공제일수  */
+          select  sum(nvl(ymdedcnt,0))  
+            into  :dutydeddd
+            from  pkhdusum
+           where  empno = :empno and duyy <= '2002';  /*parksh :workyy -> 2002 */
+          if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+          {
+               print_errmsg(sqlca.sqlcode,"연차공제일수 읽기오류...");
+               printf(" %s (%s) 에 대한 연간근태내역을 구할 수 없습니다.\n",korname,empno);
+               sprintf(log_buff, " %s (%s) 에 대한 연간근태내역을 구할 수 없습니다.\n", korname,empno); /*dsa2000 Rexec 대체*/
+               Write_batlog(seqno++, log_buff);
+               return(FAIL);
+          }
+          else if (sqlca.sqlcode == 1403)
+               dutydeddd = 0;
+     }
+     else dutydeddd = 0 ; 
+/****  2002.1.7. 유효성 추가 end  */
+
+        dutyrealdd = dutytotdd - dutyexdd - dutydeddd ;       /* 2002년까지의 실근속일수  */
+/*===========================================================================================================*/  
+  
+  
+/******** parksh  2003년부터  ENDDATE 까지의 실근속일수 구하기 (20030101부터 근태체크 방법이 다르므로)  *********/
+     sprintf(tmpdate,"%.8s","20030101");
+     dutytotddtmp = get_duty(tmpdate,yytodate);  /*20030101 부터 enddate 까지의 총근무일수 */
+          
+           /* parksh  2003 ~ workyy까지 근속제외일수 */
+     EXEC  SQL      
+     select  count(*)
+       into  :tempcnt
+       from  pkhdusum
+      where  empno = :empno 
+        and ( duyy > '2002' and duyy <= :workyy);   /*parksh  2003 ~ workyy까지 */  
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          print_errmsg(sqlca.sqlcode,"tempcnt 읽기오류...");
+          printf(" %s (%s) 에 대한 tempcnt내역을 구할 수 없습니다.\n", korname,empno);
+          sprintf(log_buff, " %s (%s) 에 대한 tempcnt내역을 구할 수 없습니다.\n", korname,empno); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }
+     
+     if  (tempcnt != 0)
+     {     
+          EXEC  SQL        /* parksh 2003 ~ workyy까지 연차공제일수  */
+          select  sum(nvl(ymdedcnt,0))  
+            into  :dutydedddtmp
+            from  pkhdusum
+           where  empno = :empno and ( duyy >= '2003' and duyy <= :workyy);  
+          if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+          {
+               print_errmsg(sqlca.sqlcode,"연차공제일수 읽기오류...");
+               printf(" %s (%s) 에 대한 연간근태내역을 구할 수 없습니다.\n", korname,empno);
+               sprintf(log_buff, " %s (%s) 에 대한 연간근태내역을 구할 수 없습니다.\n", korname,empno); /*dsa2000 Rexec 대체*/
+               Write_batlog(seqno++, log_buff);
+               return(FAIL);
+          }
+          else if (sqlca.sqlcode == 1403)
+               dutydedddtmp = 0; /*dutydeddd = 0;   Dsa2000: parksh가 dutydeddd로 수정한것을 dutydedddtmp로 바꿈*/
+     }
+     else dutydedddtmp = 0 ;           /*dutydeddd = 0;   Dsa2000: parksh가 dutydeddd로 수정한것을 dutydedddtmp로 바꿈*/
+          
+     dutyrealddtmp = dutytotddtmp - dutydedddtmp ; /* 2003 ~ enddate까지  실근속일수 */
+
+/*************************************************************************************************************/
+
+     dutytotdd   = dutytotdd  + dutytotddtmp ;    /* empdate ~ enddate 까지의 총근속일수 */
+     dutyrealdd  = dutyrealdd + dutyrealddtmp;    /* empdate ~ enddate 까지의 실근속일수 */
+     dutydeddd   = dutydeddd  + dutydedddtmp ;    /* empdate ~ enddate 까지의 연차공제일수 */
+          /*
+     if  (dutydeddd != 0 )
+     {
+          printf("empno :%s, 총근속일[%f],총실근속일[%f],총연차공제일[%f] \n",empno,dutytotdd,dutyrealdd,dutydeddd); 
+     }   */
+     
+     /* 연차가산일수  */ 
+     if  (yearcredd > 0)
+          yearadddd  = floor(dutyrealdd/365) - 1;
+     else
+          yearadddd = 0;   
+     if  (yearadddd <= 0) 
+          yearadddd = 0;  
+     
+     yeartotdd = yearcredd + yearadddd;   /* 연차대상일수  */
+     
+     EXEC SQL        /* 연차사용일수  */
+     select  nvl(year,0)+nvl(yearhalf,0) * .5        /* select  year   */
+       into  :yearusedd
+       from  pkhdusum
+      where  empno = :empno   
+        and  duyy = :workyy;
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          print_errmsg(sqlca.sqlcode,"연차사용일수 읽기오류...");
+          printf(" %s (%s) 에 대한 연차사용일수를 구할 수 없습니다.\n",korname,empno);
+          sprintf(log_buff, " %s (%s) 에 대한 연차사용일수를 구할 수 없습니다.\n",korname,empno); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }
+     else if (sqlca.sqlcode == 1403)
+          yearusedd = 0;
+     
+     yeardpsdd = yeartotdd - yearusedd;   /* 연차적치일수  */ 
+     
+     /* 월차적치일수   */
+     EXEC SQL
+     select  mondpsdd
+       into  :mondpsdd
+       from  pkhmohis
+      where  empno = :empno 
+        and  workyymm = (  
+                           select  max(workyymm)
+                             from  pkhmohis
+                            where  empno = :empno 
+                              and  substr(workyymm,1,4) = :workyy);
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          print_errmsg(sqlca.sqlcode,"월차이력화일 읽기오류...");
+          printf(" %s (%s) 에 대한 월차이력화일이 존재하지 않습니다.\n",korname,empno);
+          sprintf(log_buff, " %s (%s) 에 대한 월차이력화일이 존재하지 않습니다.\n",korname,empno); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }
+     else if (sqlca.sqlcode == 1403)
+          mondpsdd = 0;
+     
+     ymdpsdd = yeardpsdd + mondpsdd;       /* 연월차정산일수 */
+     
+     
+     /* parksh 20021120 연차적치일수 마이너스값 보정 막음
+     if (mondpsdd < 0)
+     {
+       월차수당내역갱신 
+      if (ymdpsdd < 0)
+        ymdpsdd = 0; 
+     
+       *****************
+      EXEC SQL
+      UPDATE  PKHMOHIS
+      SET  
+        MONCRESUM   = 0,
+        MONUSESUM   = 0,
+        MONGIVESUM   = 0,
+        MONDPSDD  = 0
+      WHERE  EMPNO = :empno AND WORKYYMM = :t_date;
+      if (sqlca.sqlcode != 0)
+      {
+        print_errmsg(sqlca.sqlcode,"월차이력화일 Update Error...");
+        printf("실패한 사람 :  %s [%s] \n",korname,empno);
+        return(FAIL);
+      }
+      ************************ 
+     } */
+     
+     EXEC  SQL
+     update  pkmyemas
+        set  yyfrdate    = :yyfrdate,
+             yytodate    = :yytodate,
+             yybasedd    = :yybasedd,
+             yydeddd     = :yydeddd + :yyexdd ,
+             yyrealdd    = :yyrealdd,
+             yyate       = :yyate,
+             yearcredd   = :yearcredd,
+             dutytotdd   = :dutytotdd,
+             dutyexdd    = :dutyexdd + :dutydeddd ,
+             dutyrealdd  = :dutyrealdd,
+             yeartotdd   = :yeartotdd,
+             yearadddd   = :yearadddd,
+             yearusedd   = :yearusedd,
+             yeardpsdd   = :yeardpsdd,
+             mondpsdd    = :mondpsdd,
+             ymdpsdd     = :ymdpsdd,
+             writeman    = :writeman,
+             writetime   = to_char(sysdate,'YYYYMMDDHH24MISSD')
+      where  empno = :empno;
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"연차내역화일 Update Error1...");
+          printf("실패한 사람 :  %s [%s] \n",korname,empno);
+          sprintf(log_buff, "연차내역화일 Update Error1..."); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }  
+     return(SUCCESS);
+}
+
+/*****************************************************************************
+  연차수당을 계산하는 함수.  
+ *****************************************************************************/
+void calc_yeamt()
+{   
+     EXEC SQL
+     select  trafdays
+       into  :trafdays
+       from  pkcmcbas;  
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"식교비지급기준 읽기오류...");
+          sprintf(log_buff, "식교비지급기준 읽기오류..."); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...");
+     }
+     
+     EXEC SQL 
+     select  avgodamt
+       into  :avgodamt
+       from  pkcpbas;
+     if  (sqlca.sqlcode != 0) 
+     {
+          print_errmsg(sqlca.sqlcode,"급여지급기준 읽기오류(평균임금포함 OD지원금)...");
+          sprintf(log_buff, "급여지급기준 읽기오류(평균임금포함 OD지원금)..."); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...");
+     }
+     
+     s_count = 0;
+     
+     EXEC SQL DECLARE c3 CURSOR FOR
+     select  empno, nvl(empdate,'00000000'), ymdpsdd, paycl
+     from  pkmyemas 
+     where  empno >= :frempno and empno <= :toempno
+     order by empno;
+     
+     EXEC SQL OPEN c3;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405)) 
+     {
+          print_errmsg(sqlca.sqlcode,"Cursor c3 Open Error...");
+          EXEC SQL CLOSE c3;
+          error_quit("작업실패...");
+     }
+     
+     while(1)
+     {
+          EXEC SQL FETCH c3
+          INTO  :empno, :empdate, :ymdpsdd, :paycl; 
+          
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE c3;
+               return;
+          }
+          else if (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor c3 Data Fetch Error...");
+               EXEC SQL CLOSE c3;
+               error_quit("작업실패...");
+          }
+
+/*  =======================================================================
+  연봉제에 의한 수정
+
+   pay3sum = get_pay3sum();
+   if (pay3sum == FAIL) 
+   {  
+   EXEC SQL CLOSE c3;
+   error_quit("작업실패...");
+   }
+
+   bon12sum  = get_bon12sum();
+   if (bon12sum == FAIL) 
+   {  
+     EXEC SQL CLOSE c3;
+     error_quit("작업실패...");
+   }
+  =======================================================================   */
+   
+          get_avgpay(empno,baseyymm,empdate,&avggross);  
+          if  (avggross == FAIL) 
+          {  
+               EXEC SQL CLOSE c3;
+               error_quit("작업실패...");
+          }
+          
+          commonpay = get_commonpay(empno);
+          if  (commonpay == FAIL) 
+          {  
+               EXEC SQL CLOSE c3;
+               error_quit("작업실패...");
+          }
+          
+          if  (avggross > commonpay)
+               basepay = avggross;
+          else
+               basepay = commonpay; 
+          
+          ymamt = ceil( basepay * 8 / 184 * ymdpsdd ); 
+          
+          EXEC SQL 
+          update  pkmyemas
+             set  pay3sum    = 0, 
+                  bon12sum   = 0,
+                  avggross   = :avggross, 
+                  commonpay  = :commonpay,
+                  basepay    = :basepay, 
+                  ymamt      = :ymamt,
+                  writeman   = :writeman, 
+                  writetime  = to_char(sysdate,'YYYYMMDDHH24MISSD') 
+           where  empno = :empno;
+          if  (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode, "연차수당내역 Update Error2...");
+               sprintf(log_buff,  "연차수당내역 Update Error2..."); /*dsa2000 Rexec 대체*/
+               Write_batlog(seqno++, log_buff);
+               EXEC SQL CLOSE c3;
+               error_quit("작업실패...");
+          }
+          s_count++;
+     }
+}
+
+/*****************************************************************************
+  3개월 급여합을 구하는 함수. : 사용안함. avgpay.pc 사용
+ *****************************************************************************/
+float get_pay3sum()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t1_date[7] = "";
+          char  t2_date[7] = "";
+          float  sum;
+          float  count;
+     EXEC SQL END DECLARE SECTION;
+     float  tmp;
+     
+     add_months(baseyymm,-2,t1_date);
+     add_months(baseyymm,0,t2_date);
+     
+     count = 0;
+     EXEC SQL
+     SELECT  COUNT(*)
+       INTO  :count
+       FROM  PKHPHIS
+      WHERE  EMPNO = :empno   
+        AND  (PAYDATE >= :t1_date AND PAYDATE <= :t2_date );   
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"3개월급여합 읽기오류1...");
+          printf("실패한 사람 :  %s [%s] \n",korname,empno);
+          sprintf(log_buff,"3개월급여합 읽기오류1..."); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }  
+     
+     if  (count == 0)
+          return(0);  
+     
+     EXEC SQL 
+     SELECT  SUM(NVL(BASICAMT,0)+NVL(INFOAMT,0)+NVL(DUTYAMT,0)+
+             NVL(BBASICAMT,0)+NVL(BINFOAMT,0)+NVL(BDUTYAMT,0)+
+             NVL(MATEAMT,0)+NVL(PARTAMT,0)+NVL(CHILDAMT,0)+
+             NVL(OVTMAMT,0)+NVL(SPTMAMT,0)+NVL(MCARAMT,0)+
+             NVL(LICEAMT,0)+NVL(MBONAMT,0)+NVL(SOPAY,0)+NVL(ITAMT,0) )
+       INTO  :sum
+       FROM  PKHPHIS
+      WHERE  EMPNO = :empno   
+        AND  (PAYDATE >= :t1_date AND PAYDATE <= :t2_date);     
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"3개월급여합 읽기오류2...");
+          printf("실패한 사람 :  %s [%s] \n",korname,empno);
+          sprintf(log_buff,"3개월급여합 읽기오류2..."); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }
+     
+     tmp = get_ocaramt();
+     if  (tmp == FAIL)
+          return(FAIL);
+     
+     
+     return(sum + tmp);
+}
+
+/*****************************************************************************
+  3개월급여합에서의 자가운전지원금을 처리하는 함수.  
+ *****************************************************************************/
+float get_ocaramt()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char   t_date[7] = "";
+          float  trafamt;
+          float  tmp[3];
+          float  count;
+     EXEC SQL END DECLARE SECTION;
+     int i;
+     
+     for (i = 0;i < 3; i++)
+     {
+          add_months(baseyymm,-i,t_date);
+          EXEC SQL
+          SELECT  COUNT(*)  
+            INTO  :count  
+            FROM  PKHPHIS
+           WHERE  EMPNO = :empno AND PAYDATE = :t_date;   
+          if  (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode, "3개월급여합에서의 자가운전지원금 읽기오류1...");
+               printf("실패한 사람 :  %s [%s] \n",korname,empno);
+               sprintf(log_buff,"3개월급여합에서의 자가운전지원금 읽기오류1..."); /*dsa2000 Rexec 대체*/
+               Write_batlog(seqno++, log_buff);
+               return(FAIL);
+          }
+          
+          
+          if  (count > 0)
+          {
+               EXEC SQL
+               SELECT   ODAMT
+               INTO  :tmp[i]
+               FROM  PKHPHIS
+               WHERE  EMPNO = :empno AND PAYDATE = :t_date;
+               if  (sqlca.sqlcode != 0)
+               {
+                    print_errmsg(sqlca.sqlcode,"3개월급여합에서의 자가운전지원금 읽기오류2...");
+                    printf("실패한 사람 :  %s [%s] \n", korname,empno);
+                    sprintf(log_buff,"3개월급여합에서의 자가운전지원금 읽기오류2..."); /*dsa2000 Rexec 대체*/
+                    Write_batlog(seqno++, log_buff);
+                    return(FAIL);
+               }
+
+/* ****************************
+                 EXEC SQL 
+     SELECT  NVL(TRAFAMT,0)
+     INTO  :trafamt
+     FROM  PKCPBLD
+     WHERE  BLDCODE = :bldcode;
+
+     if (sqlca.sqlcode != 0)
+     {
+      printf(" Module Name : get_ocaramt() \n"); 
+      printf(" TABLE ID : PKCPBLD \n"); 
+      printf(" SQL STATEMENT : SELECT \n");
+      return(FAIL);
+     }
+ **************************** */
+
+               if  (tmp[i] > 0)
+                    tmp[i] = avgodamt;
+               else
+                    tmp[i] = 0;
+        }
+        else
+             tmp[i] = 0;
+     }
+
+     return(tmp[0]+tmp[1]+tmp[2]);
+}
+
+/*****************************************************************************
+  12개월간 상여합을 구하는 함수.  
+ *****************************************************************************/
+float get_bon12sum()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char   t1_date[7] = "";
+          char   t2_date[7] = "";
+          char   tmp[7]     = "";
+          float  sum;
+          float  count;
+     EXEC SQL END DECLARE SECTION;
+     
+     add_months(baseyymm,-11,t1_date);
+     add_months(baseyymm,0,t2_date);
+     
+     EXEC SQL
+     SELECT  SUM(NVL(BONUSAMT,0)  + NVL(INCENTAMT,0)  + NVL(TRAINAMT,0)  +
+           /*NVL(WINTERAMT,0) + NVL(HOMESUPAMT,0) + NVL(YBONAMT12,0) + NVL(SOBON,0)) dsa2000  2006.04.19. WINTERAMT 삭제 영업인세티브 평균임금 미포함.*/ 
+             NVL(YBONAMT12,0) + NVL(SOBON,0)) /* 2006.09. NVL(HOMESUPAMT,0) 삭제  선택적복리후생비로 변경 사용. */
+       INTO  :sum
+       FROM  PKHPHIS
+      WHERE  EMPNO = :empno   
+        AND  (PAYDATE >= :t1_date AND PAYDATE <= :t2_date);  
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"12개월상여합 읽기오류1...");
+          printf("실패한 사람 :  %s [%s] \n",korname,empno);
+          sprintf(log_buff,"12개월상여합 읽기오류1..."); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }
+     
+     /* 전년도 연차수당을 계산 */
+     /* **************************
+     add_months(baseyymm,-12,tmp);
+     EXEC  SQL
+     SELECT  NVL(YBONAMT12,0)
+     INTO  :count
+     FROM  PKHPHIS
+     WHERE  EMPNO = :empno AND PAYDATE = :tmp;
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+      print_errmsg(sqlca.sqlcode,"12개월상여합 읽기오류2...");
+      printf("실패한 사람 :  %s [%s] \n",korname,empno);
+      return(FAIL);
+     }
+     else if (sqlca.sqlcode == 1403)
+      count = 0;
+     ************************** */
+     
+     return(sum);
+}
+/*****************************************************************************
+  평균임금을 구하는 함수.
+ *****************************************************************************/
+float  get_avggross()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char   t1_date[9] = "";
+          char   t2_date[9] = "";
+          char   basedate[9] = "";
+          float  result;
+     EXEC SQL END DECLARE SECTION;
+     
+     int  index;
+     
+     add_months(baseyymm,-12,t1_date); 
+     add_months(baseyymm,-3,t2_date);  
+      
+     sprintf(t1_date+6,"15");
+     sprintf(t2_date+6,"15");
+     sprintf(basedate,"%.4s%s",workyy,ENDDATE);
+     
+     if  (strcmp(empdate,t1_date) <= 0)
+          index = 1;
+     else if ((strcmp(empdate,t1_date) >  0) && 
+              (strcmp(empdate,t2_date) <= 0))
+          index = 2;
+     else
+          index = 3;
+     
+     
+     switch (index)
+     {    
+          case 1 :
+          {
+               result = ceil(pay3sum/3) + ceil(bon12sum/12);
+               break;  
+          }
+          case 2 :/* 6개월*/
+          { 
+               result = ceil(pay3sum/3) + 
+               ceil(bon12sum/
+               get_term(empdate,basedate)*30);
+               break;
+          }  
+          case 3 :  /* 3개월*/
+          {
+               result = ceil((pay3sum + bon12sum) / 
+               get_term(empdate,basedate)*30);
+               break;
+          }  
+     }
+     
+     return(result);
+}
+
+/*****************************************************************************
+  시작일과 종료일까지의 기간을 일단위로 구하는 함수.  
+ *****************************************************************************/
+float get_term(char *frdate, char *todate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t1_date[8+1] = "";
+          char  t2_date[8+1] = "";
+          float result;
+     EXEC SQL END DECLARE SECTION;
+     
+     sprintf(t1_date,"%s",frdate);
+     sprintf(t2_date,"%s",todate);
+     
+     EXEC SQL
+     SELECT  TO_DATE(:t2_date,'YYYYMMDD') - TO_DATE(:t1_date,'YYYYMMDD') + 1
+       INTO  :result
+       FROM  DUAL;
+     
+     return(result);
+}
+
+/*****************************************************************************           
+  시작일과 종료일까지의  근태월(pkhduty)의 일수를 구하는 함수.                        
+ *****************************************************************************/
+float  get_duty(char *frdate, char *todate)        
+{                                       
+     EXEC SQL BEGIN DECLARE SECTION;
+          char   t1_date[8+1] = "";
+          char   t2_date[8+1] = "";
+          float  result;
+          float  notin;     /* 미입력한 일수*/
+     EXEC SQL END DECLARE SECTION;
+     
+     sprintf(t1_date,"%.6s",frdate);
+     sprintf(t2_date,"%.6s",todate);
+     
+     EXEC SQL    /*근태월의 lastday 합*/
+     SELECT NVL(SUM(to_char(LAST_DAY(to_date(duyymm,'YYYYMM')),'DD')),0)
+       INTO :result
+       FROM pkhduty
+      WHERE duyymm between :t1_date and :t2_date
+       /* AND NVL(CONYN, 'N') ='Y' 결재여부*/
+        AND empno = :empno ;
+     
+     if  (sqlca.sqlcode != 0)
+     {
+          print_errmsg(sqlca.sqlcode,"근속월의 일수 읽기오류...");
+          printf(" %s (%s) 에 대한 근속월의 일수를 구할 수 없습니다.\n",korname,empno);
+          sprintf(log_buff,"근속월의 일수 읽기오류..."); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          return(FAIL);
+     }
+     
+     EXEC SQL    /* 근태월중 미입력 일수 */ 
+     SELECT  NVL(SUM(decode(dd1,99,1,0) + decode(dd2,99,1,0) + decode(dd3,99,1,0) + decode(dd4,99,1,0) + decode(dd5,99,1,0) 
+             + decode(dd6,99,1,0) + decode(dd7,99,1,0) + decode(dd8,99,1,0) + decode(dd9,99,1,0) + decode(dd10,99,1,0) 
+             + decode(dd11,99,1,0)+ decode(dd12,99,1,0)+ decode(dd13,99,1,0)+ decode(dd14,99,1,0)+ decode(dd15,99,1,0) 
+             + decode(dd16,99,1,0)+ decode(dd17,99,1,0)+ decode(dd18,99,1,0)+ decode(dd19,99,1,0)+ decode(dd20,99,1,0) 
+             + decode(dd21,99,1,0)+ decode(dd22,99,1,0)+ decode(dd23,99,1,0)+ decode(dd24,99,1,0)+ decode(dd25,99,1,0) 
+             + decode(dd26,99,1,0)+ decode(dd27,99,1,0)+ decode(dd28,99,1,0)+ decode(dd29,99,1,0)+ decode(dd30,99,1,0) 
+             + decode(dd31,99,1,0)  ),0)
+            INTO  :notin
+      FROM  pkhduty 
+     WHERE  duyymm between :t1_date and :t2_date
+       /*  AND NVL(CONYN, 'N') ='Y' 결재여부*/
+       AND  empno = :empno
+       AND ( dd1  ='99' or dd2  ='99' or dd3  ='99' or dd4  ='99' or dd5  ='99' or 
+             dd6  ='99' or dd7  ='99' or dd8  ='99' or dd9  ='99' or dd10 ='99' or 
+             dd11 ='99' or dd12 ='99' or dd13 ='99' or dd14 ='99' or dd15 ='99' or 
+             dd16 ='99' or dd17 ='99' or dd18 ='99' or dd19 ='99' or dd20 ='99' or
+             dd21 ='99' or dd22 ='99' or dd23 ='99' or dd24 ='99' or dd25 ='99' or 
+             dd26 ='99' or dd27 ='99' or dd28 ='99' or dd29 ='99' or dd30 ='99' or dd31 ='99') ;       
+         
+     result   = result-notin ;
+       
+     return(result);    
+}       
+ 
+/*****************************************************************************           
+  시작일과 종료일까지의  근태월(pkhduty)의 일요일수를 구하는 함수(근태에 등록된 휴일 중 일요일의 수 제외).                        
+ *****************************************************************************/          
+
+float  get_sun(char *frdate, char *todate)        
+{                                            
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t1_date[8+1] = "";
+          char  t2_date[8+1] = "";
+          char    duty_mm[6+1]= "";
+          char    duty_dd[2];
+          char    duty_fr[8+1]= "";
+          char    duty_to[8+1]= "";  
+          float  temp_sunday=0.0;
+          float  temp_dupsun=0.0;
+          float  result = 0.0 ;
+          float    count = 0.0 ;
+     EXEC SQL END DECLARE SECTION;
+     
+     sprintf(t1_date,"%.6s",frdate);
+     sprintf(t2_date,"%.6s",todate);
+     
+     EXEC SQL DECLARE c8 CURSOR FOR
+     SELECT duyymm 
+       FROM pkhduty
+      WHERE empno = :empno
+        AND duyymm BETWEEN :t1_date AND :t2_date;
+       /* AND NVL(CONYN,'N') ='Y'결재여부*/
+        
+     EXEC SQL OPEN c8;
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405)) 
+     {
+          print_errmsg(sqlca.sqlcode,"Cursor c8 Open Error...");
+          EXEC SQL CLOSE c8;
+          return(FAIL);
+     }
+     count=0;  
+     while(1)
+     {
+          EXEC SQL FETCH c8
+          INTO  :duty_mm;
+          
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE c8;
+               
+               return(result);
+          }
+          else if (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor c4 Data Fetch Error...");
+               EXEC SQL CLOSE c8;
+               return(FAIL);
+          }
+          
+          EXEC SQL
+          SELECT  to_char(LAST_DAY(to_date(:duty_mm,'YYYYMM')),'YYYYMMDD')  /*근태월의 마지막날짜구하기*/
+            INTO  :duty_to
+            FROM  dual;
+           
+          sprintf(duty_fr,"%.6s01", duty_mm); /* 근태월의 01일*/
+          sprintf(duty_to,"%.8s", duty_to);   /* 근태월의 마지막일 */
+          
+          /*printf("empno :%s, temp_sunday:%5.0f, get_sundaycnt:%5.0f\n", empno, temp_sunday, get_sundaycnt(duty_fr,duty_to));
+          */
+          
+          temp_sunday = temp_sunday + get_sundaycnt(duty_fr,duty_to);
+          temp_dupsun = temp_dupsun + get_dupholiday(duty_fr,duty_to);
+          
+          result = temp_sunday - temp_dupsun;
+     }  
+       
+       /*result = temp_sunday - temp_dupsun;
+       */
+     return(result);    
+}
+        
+/*****************************************************************************
+  통상임금을 구하는 함수.
+ *****************************************************************************/
+float get_commonpay(char *empno)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          float  result;
+     EXEC SQL END DECLARE SECTION;
+  
+/*  =======================================================================
+  연봉제에 의한 수정
+ 
+  EXEC SQL
+  SELECT  NVL(BASICAMT,0)+NVL(INFOAMT,0)+NVL(DUTYAMT,0)+NVL(PROMAMT,0)
+  INTO  :result
+  FROM  PKMPMAS
+  WHERE  EMPNO = :empno;
+  =======================================================================   */
+     result = 0;
+     
+     EXEC SQL
+     /* select   ceil(realtotpay/23) */
+     /* 2014.11.19 하은영 통상임금 규정변경으로 인한 시스템 적용 (18 -> 12, 통상임금, 통상임금수당도 포함)         
+     select  ceil(totpay/18)  */
+     select  CEIL((TOTPAY + TONGAMT1 + TONGAMT2 + TONGAMT3) /12)
+       into  :result
+       from  pkhyphis
+      where  empno = :empno 
+        and  yearpaynum = (select to_char(yearpaynum) from pkcpbas);
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode !=1403))
+     {
+          printf("get_commonpay() -> 통상임금 Read Error \n"); 
+          printf("[ERROR_CODE] : (%d) \n",sqlca.sqlcode);
+          return(FAIL);
+     }
+   
+     if  (sqlca.sqlcode == 1403)
+     {
+          printf(" empno : [%s]의 해당년도 연봉자료가 존해하지 않음...\n",empno);
+          result = 0;
+     }
+
+/*  =======================================================================
+  연봉제에 의한 수정
+
+  if (strncmp(paycl,"A",1) == 0)
+   result = result - 125000; 
+  =======================================================================   */
+
+     return(result); 
+}
+
+/*****************************************************************************
+  기준일+M 일을 구하는 함수.
+ *****************************************************************************/
+void add_days(char* indate,int m, char* rdate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t_date[8+1]  = "";
+          float  t_adddays;
+     EXEC SQL END DECLARE SECTION;
+     
+     sprintf(t_date,"%s",indate);
+     t_adddays = m;
+     
+     EXEC SQL
+     SELECT   TO_CHAR(TO_DATE(TO_CHAR(TO_DATE(:t_date,'YYYYMMDD')+
+                      :t_adddays,'YYYYMMDD'),'YYYYMMDD'),'YYYYMMDD')
+       INTO  :t_date
+       FROM  DUAL;
+     
+     sprintf(rdate,"%s",t_date);
+}
+
+/* ****************************************************************************
+  get_exdd   function. 근속제외일수 구하기
+ **************************************************************************** */
+float get_exdd()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char   t_exfrdate[8+1]   = "";
+          char   t_extodate[8+1]   = "";
+          float  count;
+     EXEC SQL END DECLARE SECTION;
+     
+     char  t1[8+1];
+     char  t2[8+1];
+     float  exdays;
+     float  tmp  = 0.0 ;
+     
+     sprintf(t1,"%.4s0101",workyy);
+     sprintf(t2,"%.4s%s",workyy,ENDDATE);
+     
+     EXEC SQL DECLARE c6 CURSOR FOR
+     SELECT  EXFRDATE, EXTODATE
+       FROM  PKHEXDD
+      WHERE  EMPNO = :empno      
+        AND  UPPER(EXFIXYN) = 'Y'   
+        AND  (SUBSTR(EXFRDATE,1,4) = :workyy  OR
+              SUBSTR(EXTODATE,1,4) = :workyy  OR    
+              :workyy between substr(exfrdate,1,4) 
+        and  SUBSTR(EXTODATE,1,4));
+     
+     EXEC SQL OPEN c6;
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405)) 
+     {
+          print_errmsg(sqlca.sqlcode,"Cursor c6 Open Error...");
+          printf(" %s (%s) 에 대한 근속제외일수 읽기오류...\n", korname,empno);
+          sprintf(log_buff," %s (%s) 에 대한 근속제외일수 읽기오류...\n", korname,empno); /*dsa2000 Rexec 대체*/
+                     Write_batlog(seqno++, log_buff);
+          EXEC SQL CLOSE c6;
+          error_quit("작업실패...");
+     }
+     
+     exdays = 0;
+     while(1)
+     {
+          EXEC SQL FETCH c6
+          INTO  :t_exfrdate, :t_extodate;
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE c6;
+               return(exdays);
+          }
+          else if (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor c6 Data Fetch Error...");
+               printf(" %s (%s) 에 대한 근속제외일수 읽기오류...\n", korname,empno);
+               sprintf(log_buff," %s (%s) 에 대한 근속제외일수 읽기오류...\n", korname,empno); /*dsa2000 Rexec 대체*/
+               Write_batlog(seqno++, log_buff);
+               EXEC SQL CLOSE c6;
+               error_quit("작업실패...");
+          } 
+          
+          if ((strcmp(t_exfrdate,t1) >= 0) && (strcmp(t_extodate,t2) <= 0))
+          {
+               exdays += get_term(t_exfrdate,t_extodate);
+            
+               EXEC  SQL
+               select  count(*)
+                 into  :count
+                 from  pkcholi  
+                where  (holidate >= :t_exfrdate and holidate <= :t_extodate) 
+                  and  holikind <> '0' ;
+               if  (sqlca.sqlcode != 0)
+               {
+                    print_errmsg(sqlca.sqlcode,"당해년도 휴일총일수 읽기오류1...");
+                    sprintf(log_buff," %s (%s) 에 대한 근속제외일수 읽기오류...\n", korname,empno); /*dsa2000 Rexec 대체*/
+                    Write_batlog(seqno++, log_buff);
+                    return(FAIL);
+               }
+               
+               if ((tmp=get_dupholiday(t_exfrdate,t_extodate)) == FAIL)
+                    return(FAIL);  
+               
+               
+               exdays = exdays - (count + get_sundaycnt(t_exfrdate,t_extodate)-tmp);      
+          }   
+          
+          else if ((strcmp(t_exfrdate,t1) >= 0) && (strcmp(t_extodate,t2) > 0))
+          {
+               exdays += get_term(t_exfrdate,t2);
+                      
+               EXEC  SQL
+               select  count(*)
+                 into  :count
+                 from  pkcholi  
+                where  (holidate >= :t_exfrdate and holidate <= :t2) 
+                  and   holikind <> '0' ;
+               if  (sqlca.sqlcode != 0)
+               {
+                    print_errmsg(sqlca.sqlcode,"당해년도 휴일총일수 읽기오류1...");
+                    sprintf(log_buff,"당해년도 휴일총일수 읽기오류1...",sqlca.sqlcode); /*dsa2000 Rexec 대체*/
+                    Write_batlog(seqno++, log_buff);
+                    return(FAIL);
+               }
+               
+               if ((tmp=get_dupholiday(t_exfrdate,t2)) == FAIL)
+                    return(FAIL);     
+               
+               exdays = exdays - (count + get_sundaycnt(t_exfrdate,t2)-tmp);      
+            
+          }   
+             
+          else if ((strcmp(t_exfrdate,t1) < 0) && (strcmp(t_extodate,t2) <= 0))
+          {
+               exdays += get_term(t1,t_extodate);
+               
+               EXEC  SQL
+               select  count(*)
+                 into  :count
+                 from  pkcholi  
+                where  (holidate >= :t1 and holidate <= :t_extodate) 
+                  and  holikind <> '0' ;
+               
+               if  (sqlca.sqlcode != 0)
+               {
+                    print_errmsg(sqlca.sqlcode,"당해년도 휴일총일수 읽기오류1...");
+                    sprintf(log_buff,"당해년도 휴일총일수 읽기오류1...",sqlca.sqlcode); /*dsa2000 Rexec 대체*/
+                    Write_batlog(seqno++, log_buff);
+                    return(FAIL);
+               }
+               
+               if ((tmp=get_dupholiday(t1,t_extodate)) == FAIL)
+                    return(FAIL);     
+               
+               exdays = exdays - (count + get_sundaycnt(t1,t_extodate)-tmp); 
+          }
+             
+          else if ((strcmp(t_exfrdate,t1) < 0) && (strcmp(t_extodate,t2) > 0))
+          {
+               exdays += get_term(t1,t2);
+                   
+               EXEC  SQL
+               select  count(*)
+                 into  :count
+                 from  pkcholi  
+                where  (holidate >= :t1 and holidate <= :t2) 
+                  and  holikind <> '0' ;
+               if  (sqlca.sqlcode != 0)
+               {
+                    print_errmsg(sqlca.sqlcode,"당해년도 휴일총일수 읽기오류2...");
+                    sprintf(log_buff,"당해년도 휴일총일수 읽기오류2...",sqlca.sqlcode); /*dsa2000 Rexec 대체*/
+                    Write_batlog(seqno++, log_buff);
+                    return(FAIL);
+               }
+               
+               if ((tmp=get_dupholiday(t1,t2)) == FAIL)
+                    return(FAIL);     
+               
+               exdays = exdays - (count + get_sundaycnt(t1,t2)-tmp); 
+               
+          }  
+     }
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

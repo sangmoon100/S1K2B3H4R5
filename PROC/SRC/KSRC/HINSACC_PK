@@ -1,0 +1,66 @@
+/* 정규직급여 2015.10. 기준 */
+hinsacc erp_pke2010g
+hinsacc pka4060g
+hinsacc pkc1030g
+hinsacc pkc10801
+hinsacc pkc10802
+hinsacc pkc10803
+hinsacc pkc10805
+hinsacc pkc3010g
+hinsacc pkc4040g
+hinsacc pkc6050a
+hinsacc pke1020g
+hinsacc pke2010g
+hinsacc pkg3070g
+hinsacc pkg3075g
+hinsacc pki2050g
+hinsacc pko4040g
+hinsacc pkq1050g
+hinsacc pkq2070g
+hinsacc pkq2072g
+hinsacc pkq2073g
+hinsacc pkq2074g
+hinsacc pkq2075g
+hinsacc pkq2100g
+hinsacc pkq4020g
+hinsacc pkq4020g_es
+hinsacc pkq5040g
+hinsacc pkq5090g
+hinsacc pkq5150a
+#hinsacc pksendmsg
+hinsacc pkw1030g
+hinsacc pkw1060g
+hinsacc pkw1100g
+
+mv erp_pke2010g /hper/insa/HINSA/proc/bin/Kbin
+mv pka4060g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkc1030g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkc10801     /hper/insa/HINSA/proc/bin/Kbin
+mv pkc10802     /hper/insa/HINSA/proc/bin/Kbin
+mv pkc10803     /hper/insa/HINSA/proc/bin/Kbin
+mv pkc10805     /hper/insa/HINSA/proc/bin/Kbin
+mv pkc3010g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkc4040g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkc6050a     /hper/insa/HINSA/proc/bin/Kbin
+mv pke1020g     /hper/insa/HINSA/proc/bin/Kbin
+mv pke2010g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkg3070g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkg3075g     /hper/insa/HINSA/proc/bin/Kbin
+mv pki2050g     /hper/insa/HINSA/proc/bin/Kbin
+mv pko4040g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkq1050g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkq2070g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkq2072g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkq2073g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkq2074g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkq2075g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkq2100g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkq4020g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkq4020g_es  /hper/insa/HINSA/proc/bin/Kbin
+mv pkq5040g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkq5090g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkq5150a     /hper/insa/HINSA/proc/bin/Kbin
+#mv pksendmsg    /hper/insa/HINSA/proc/bin/Kbin
+mv pkw1030g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkw1060g     /hper/insa/HINSA/proc/bin/Kbin
+mv pkw1100g     /hper/insa/HINSA/proc/bin/Kbin

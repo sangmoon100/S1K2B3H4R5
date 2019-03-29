@@ -1,0 +1,193 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKC3010G(급여이력 보관)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 급여 이력
+ Programmer     : 김승회
+ Version        : 1.00
+ Date           : 1997.02.02
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   1.00       1997.02.02         김승회          최초개발본      설계명세서
+   1.01       2004.02.24         강륜종          Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드. 
+   2.00       2004.11.        강륜종(dsa2000)    Rexec대체 서비스를 위한 수정작업.
+============================================================================= */
+
+#include <stdio.h> 
+#include <string.h> 
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define  SUCCESS     -1*/
+#define  FAIL        -2
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno = 0; 
+
+EXEC SQL BEGIN DECLARE SECTION;
+     char  paydate[9]       = "";   /* 급여지급일자  6자리에서 8자리로 변경 [2018-09-13 이상용] */  
+     char  writetime[16]    = "";   /* 최종작업일시   */
+     char  writeman[5]      = "";   /* 최종작업자   */
+     
+     char  frempno[5]       = "";   /* 사번FROM   */
+     char  toempno[5]       = "";   /* 사번TO   */
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+void main(int argc,char *argv[])
+{
+     int  id;
+     char dir[80];  
+     char FL_file[255];
+     
+     if  (argc != 7) {  /* /hper8/HINSA/proc/bin/Kbin/pkc3010g 200410 0000 zzzz D006 pkc3010g 2004110100000 */
+          printf("[Usage] : pkc3010g 1.급여년월 2.사번fr 3.사번to 4.작업자 5.프로그램ID 6.시작시간 \n");
+          exit(1);
+     }     
+        
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkc3010g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+           /* Dsa2000  2004.02.24.  **********************************/
+     /* DB_connect(id,0); */               
+     hinsa_log_print(0,"급여이력 보관 프로그램 시작...[pkc3010g]");
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /*dsa2000  수정..End......................................*/
+     
+     strcpy(paydate,  argv[1]);
+     strcpy(frempno,  argv[2]);
+     strcpy(toempno,  argv[3]);
+     strcpy(writeman, argv[4]);
+     
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[4]);
+     strcpy(log_progid,   argv[5]);
+     strcpy(log_rundate,  argv[6]);  
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+      
+     EXEC SQL LOCK TABLE PKHPHIS
+       IN   EXCLUSIVE  MODE  NOWAIT;
+     
+     if ((delete_records() == SUCCESS) && (copy_records() == SUCCESS))
+     {
+          sprintf(log_buff, "OK ====== [이력보관작업 완료] =====");
+          Write_batlog(seqno++, log_buff);                         /*dsa2000 Rexec 대체*/
+          hinsa_exit(0,"OK 이력보관작업 완료.\n");
+     }
+     else
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====");
+          Write_batlog(seqno++, log_buff);                     /*dsa2000 Rexec 대체*/
+          error_quit("이력보관작업 실패.\n");
+     }   
+
+           
+}
+
+/*****************************************************************************
+  기존의 자료를 삭제하는 Procedure.
+ *****************************************************************************/
+delete_records()
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          double  rcount;
+     EXEC SQL END DECLARE SECTION;
+     
+     EXEC SQL
+     SELECT  COUNT(*)
+       INTO  :rcount
+       FROM  PKHPHIS
+      WHERE  PAYDATE = :paydate
+        AND  EMPNO  >= :frempno AND  EMPNO  <= :toempno; 
+     
+     if  (sqlca.sqlcode != 0)
+     {
+          printf("ERROR_CODE : %d, 급여이력화일 읽기 오류!!!\n", sqlca.sqlcode);
+          sprintf(log_buff, "ERROR_CODE : %d, 급여이력화일 읽기 오류!!!\n", sqlca.sqlcode); 
+          Write_batlog(seqno++, log_buff);    /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     
+     if  (rcount == 0)
+          return(SUCCESS);
+     
+     EXEC SQL
+     DELETE  FROM PKHPHIS
+      WHERE  PAYDATE = :paydate
+        AND  EMPNO >= :frempno  AND  EMPNO <= :toempno; 
+     
+     if  (sqlca.sqlcode != 0)
+     {     
+          printf("ERROR_CODE : %d, 삭제 과정에서 오류가 발생했습니다.\n", sqlca.sqlcode);
+          sprintf(log_buff, "ERROR_CODE : %d, 삭제 과정에서 오류가 발생했습니다\n", sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);                                                        /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     else
+     {  
+          printf(SUCCESS);
+          return(SUCCESS);
+     }
+   
+}
+
+/*****************************************************************************
+  월급여자료를 월급여이력으로 Move하는 Procedure.
+ *****************************************************************************/
+copy_records()
+{
+     EXEC   SQL
+     INSERT  INTO PKHPHIS
+     (SELECT * FROM PKMPCALC
+       WHERE  EMPNO >= :frempno AND EMPNO <= :toempno);
+       
+     if  (sqlca.sqlcode != 0)
+     {
+          printf("ERROR_CODE : %f,월급여이력으로 Move 과정에서 오류!!!\n",  sqlca.sqlcode);
+          sprintf(log_buff, "ERROR_CODE : %f, 월급여이력으로 Move 과정에서 오류!!!\n", sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);                                                            /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     else
+     {  
+          printf(SUCCESS);  
+          return(SUCCESS);
+     }
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+  
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAIL);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

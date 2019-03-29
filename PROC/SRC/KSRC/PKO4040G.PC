@@ -1,0 +1,378 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKO4040G(저축공제금계산)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 저축
+ Programmer     : 이랑교
+ Version        : 10.01
+ Date           : 1998.05.29
+ 
+Select : PKHSVHIS, PKMSVMAS, PKMPMAS, PKHSVSPE, PKMSVMON
+Insert : PKHSVHIS, PKMSVMON
+Update : PKMSVMAS, 
+Delete : PKHSVHIS, PKMSVMON
+ 
+Update Contents
+  버전    수정일       수정자   관련근거       수정내용
+  1.00    1997.12.01   김영대   설계명세서     최초개발본
+  10.01   1998.04.20   이랑교   전1998.04.11    지급액도 계산   
+  10.02   1998.05.29   이랑교   전1998.05.25    개별납부이력관리추가로
+                                                당월공제금생성시 납부이력에 있는
+                                                자료를 제외하고 생성한다.
+  10.03   2004.02.24   강륜종                  Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.                                                 
+  11.00   2004.11.     강륜종(dsa2000)         Rexec대체 서비스를 위한 수정작업.    
+============================================================================= */
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define  SUCCESS     -1*/
+#define  FAIL        -2
+
+/* ** 함수 Prototype 선언  ***
+void  process_delete();
+void  process_record1();
+void  process_record2();
+void  process_sum();
+*/
+EXEC SQL BEGIN DECLARE SECTION;
+     char     saveyymm[8+1]   ="";
+     char     savekind[1+1]   ="";
+     char     bokjisupYN[1+1] ="";
+     char     jobempno[4+1]   ="";
+     char     h_saveyymm[8+1]   ="";
+     int      h_cnt      =0;
+     double   h_totalamt =0;
+     double   h_totgiveamt =0;
+     char     m_saveyymm[8+1]   ="";
+     int      m_cnt      =0;
+     double   m_totalamt =0;
+     double   m_totgiveamt =0;
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+int   id;
+char  dir[80];
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char  log_rundate[16]     = ""; 
+char  log_progid[16]      = "";
+char  log_writeman[5]     = "";
+char  log_buff[100]       = "";
+int   seqno = 0; 
+
+void main(int argc,char *argv[])
+{
+     int flag,i;
+     char FL_file[255];
+     
+     if  (argc != 7) {  /*/hper8/HINSA/proc/bin/Kbin/pko4040g 200411 1 Y D006 pko4040g 2004110100000 */
+          printf("[Usage] : pko4040g 1.공제년월 2.저축구분=>1,2,3  3.지급금계산여부Y/N ");
+          printf("[Usage] :          4.작업자 5.프로그램ID 6.시작시간 \n");
+          exit(1);
+     }
+     
+     strcpy(saveyymm,  argv[1]);
+     strcpy(savekind  ,argv[2]);
+     strcpy(bokjisupYN,argv[3]);
+     strcpy(jobempno,  argv[4]);
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pko4040g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+      
+     /* Dsa2000  2004.02.24.  **********************************/
+     /* DB_connect(id,0); */
+     hinsa_log_print(0,"저축 공제금 계산 시작..."); 
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /* Dsa2000  수정..End......................................*/
+     
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[4]);
+     strcpy(log_progid,   argv[5]);
+     strcpy(log_rundate,  argv[6]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     EXEC SQL LOCK TABLE PKMSVMAS
+       in EXCLUSIVE  MODE  NOWAIT;  
+     
+     process_delete();
+     
+     if ((process_record1() == SUCCESS )&&
+         (process_record2() == SUCCESS ))
+     {
+          process_sum();
+     
+          printf("   \n");
+          printf("               공제건수      공제금     지급금 \n");
+          printf(" 저 축  이 력 :     %d건    %10.0f  %10.0f \n", h_cnt,h_totalamt,h_totgiveamt);
+          printf(" 저축당월공제 :     %d건    %10.0f  %10.0f \n", m_cnt,m_totalamt,m_totgiveamt);
+          
+          sprintf(log_buff, "                  공제건수       공제금      지급금 \n");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          sprintf(log_buff, " 저 축  이 력 :     %d건    %10.0f  %10.0f \n", h_cnt,h_totalamt,h_totgiveamt);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          sprintf(log_buff, " 저축당월공제 :     %d건    %10.0f  %10.0f \n", m_cnt,m_totalamt,m_totgiveamt); 
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          
+          sprintf(log_buff, "OK 작업이 성공적으로 완료되었습니다.\n");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          hinsa_exit(0,"OK 작업이 성공적으로 완료되었습니다.\n");
+     }
+     else
+     {
+          sprintf(log_buff, " 작업이 실패했습니다.\n");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit(" 작업이 실패했습니다.\n");
+     }
+      
+}
+
+
+/*****************************************************************************
+  재계산일경우  자료를 원상태로
+        이력의 횟수와 불입액으로 마스터를 수정하고 이력을 지우자
+ *****************************************************************************/
+process_delete()
+{       
+
+     int cnt =0;
+        
+ /* 재계산 여부 확인 */
+     EXEC SQL
+     SELECT COUNT(EMPNO)
+     INTO   :cnt
+     FROM   PKHSVHIS
+     WHERE  SAVEYYMM = :saveyymm
+     AND    SAVEKIND = :savekind;
+
+     if  (sqlca.sqlcode != 0) 
+     {
+          printf("ERROR_CODE : %d, 재계산 여부 확인\n", sqlca.sqlcode);
+          sprintf(log_buff, "ERROR_CODE : %d, 재계산 여부 확인\n", sqlca.sqlcode);
+                     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     else if (cnt < 1)
+          return(SUCCESS);      
+     
+     /*재계산 수행 1단계 Master를 원래상태로   */        
+     EXEC SQL
+     UPDATE  PKMSVMAS C
+     SET     ( SAVELYYMM ,  SAVECNT  , SAVESUM   ) =
+             ( SELECT   TO_CHAR(TO_DATE(SAVELYYMM,'YYYYMM')-1,'YYYYMM') ,
+                        SAVECNT - 1,
+                        SAVESUM - SAVEAMT
+               FROM     PKMSVMAS A
+               WHERE    SAVELYYMM = :saveyymm
+               AND      C.EMPNO    = A.EMPNO
+               AND      C.SAVEBANK = A.SAVEBANK
+               AND      C.SAVEKIND = A.SAVEKIND
+               AND      C.SEQNO    = A.SEQNO   
+             )
+     WHERE    SAVELYYMM = :saveyymm 
+     AND      SAVEKIND  = :savekind 
+     AND      (CANYN  <>'Y' AND ENDYN <>'Y');
+     
+     if  (sqlca.sqlcode != 0) 
+     {
+          printf("ERROR_CODE : %d, 재계산 수행 1단계Master를 원래상태로\n", sqlca.sqlcode);
+          sprintf(log_buff, "ERROR_CODE : %d, 재계산 수행 1단계Master를 원래상태로\n", sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     
+      /* 재계산 수행 2단계 이력을 날린다. */
+     EXEC SQL
+     DELETE   PKHSVHIS
+      WHERE   SAVEYYMM = :saveyymm 
+        AND   SAVEKIND = :savekind ;  
+     
+     
+      if  (sqlca.sqlcode != 0) 
+      {
+           printf("ERROR_CODE : %d, 재계산 수행 2단계이력을 지운다\n", sqlca.sqlcode);
+           sprintf(log_buff, "ERROR_CODE : %d, 재계산 수행 2단계이력을 지운다\n", sqlca.sqlcode);
+           Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+           return(FAIL);
+      }
+      else
+           return(SUCCESS);       
+}
+
+
+/*****************************************************************************
+  당월이력생성및  계산
+ *****************************************************************************/
+
+
+ /**************************************************************************
+  10.02   1998.05.29   이랑교   전1998.05.25    개별납부이력관리추가로
+                                                당월공제금생성시 납부이력에 있는
+                                                자료를 제외하고 생성한다.
+ *****************************************************************************/
+process_record1()
+{
+     EXEC SQL 
+     INSERT INTO PKHSVHIS
+            ( SAVEYYMM,  EMPNO,     KORNAME,    PAYCL,   SEQNO,  PAYYN,  SAVECNT,   
+              SAVEAMT ,  SAVESUM,   SAVEKIND,   SAVEBANK,
+              GIVEAMT,   WRITETIME, WRITEMAN)
+        SELECT 
+                :saveyymm, A.EMPNO,   A.KORNAME,  B.PAYCL, 
+                A.SEQNO,B.PAYYN,A.SAVECNT+1,
+                A.SAVEAMT, A.SAVESUM+A.SAVEAMT, A.SAVEKIND, A.SAVEBANK,
+                decode(:bokjisupYN,'Y',A.SAVEAMT2,0),
+                TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS'),:jobempno
+         FROM  PKMSVMAS A, PKMPMAS B
+        WHERE  A.EMPNO  = B.EMPNO(+) 
+          AND  A.SAVEKIND = :savekind 
+          AND  (A.CANYN  <>'Y' AND A.ENDYN <>'Y')
+          AND  (A.EMPNO ,A.SEQNO) 
+                NOT IN ( SELECT EMPNO,SEQNO FROM PKHSVSPE
+                          WHERE  :saveyymm BETWEEN SPEFRYYMM AND SPETOYYMM ) ;
+           
+      if  (sqlca.sqlcode != 0) 
+      {
+           printf("ERROR_CODE : %d, 당월 자료를 이력에 입력 실패. step1 \n", sqlca.sqlcode);
+           sprintf(log_buff, "ERROR_CODE : %d, 당월 자료를 이력에 입력 실패. step1 \n", sqlca.sqlcode);
+           Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+           return(FAIL);
+     }
+     else
+           return(SUCCESS);       
+}
+
+/*****************************************************************************
+  당월공제금 생성
+ *****************************************************************************/
+process_record2()
+{
+     EXEC SQL
+     DELETE    FROM PKMSVMON;
+            
+     EXEC SQL
+     INSERT  INTO  PKMSVMON                            
+            ( EMPNO,   KORNAME,   SAVEYYMM, SAVEKIND, PAYCL, SAVEAMT, 
+              GIVEAMT, WRITETIME, WRITEMAN )                  
+      SELECT  EMPNO,   KORNAME,   SAVEYYMM, SAVEKIND, PAYCL, SUM(SAVEAMT),
+              SUM(decode(:bokjisupYN,'Y',GIVEAMT,0)),
+              TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS') ,:jobempno
+        FROM  PKHSVHIS                                     
+       WHERE  SAVEKIND = :savekind
+         AND  SAVEYYMM = :saveyymm
+       GROUP  BY EMPNO, KORNAME,  SAVEYYMM, SAVEKIND, PAYCL  ;
+     
+      if  (sqlca.sqlcode != 0) 
+      {
+           printf("ERROR_CODE : %d, 당월 자료를 생성실패. step2 \n", sqlca.sqlcode);
+           sprintf(log_buff, "ERROR_CODE : %d, 당월 자료를 생성실패. step2 \n", sqlca.sqlcode);
+           Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+           return(FAIL);
+      };
+     
+      EXEC SQL
+      UPDATE  PKMSVMAS A
+         SET    ( SAVELYYMM ,  SAVESUM, SAVECNT     )
+         =      ( SELECT  MAX(B.SAVEYYMM), SUM(B.SAVEAMT), COUNT(B.EMPNO)
+                    FROM  PKHSVHIS B
+                   WHERE  B.EMPNO    = A.EMPNO
+                     AND  B.SAVEBANK = A.SAVEBANK
+                     AND  B.SEQNO    = A.SEQNO    
+                 )
+       WHERE  A.SAVEKIND  = :savekind    
+         AND (A.CANYN  <>'Y' AND A.ENDYN <>'Y');         
+     
+     
+      if  (sqlca.sqlcode != 0) 
+      {
+           printf("ERROR_CODE : %d, 당월 자료를 생성한다. step2-2 \n", sqlca.sqlcode);
+           sprintf(log_buff, "ERROR_CODE : %d, 당월 자료를 생성한다. step2-2 \n", sqlca.sqlcode);
+           Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+           return(FAIL);
+      }
+     else
+           return(SUCCESS);       
+
+}
+
+
+/*****************************************************************************
+  당월공제금 집계
+ *****************************************************************************/
+process_sum()
+{
+     h_cnt      =0;
+     h_totalamt =0;
+     m_cnt      =0;
+     m_totalamt =0;
+
+     EXEC SQL
+     SELECT  MAX(SAVEYYMM),COUNT(EMPNO),SUM(SAVEAMT),SUM(GIVEAMT)
+       INTO  :h_saveyymm  , :h_cnt        ,:h_totalamt ,:h_totgiveamt
+       FROM  PKHSVHIS
+      WHERE  SAVEYYMM = :saveyymm
+        AND  SAVEKIND = :savekind;
+
+     if  (sqlca.sqlcode != 0) 
+     {
+          printf("ERROR_CODE : %d, 당월이력 자료 집계.... \n", sqlca.sqlcode);
+          sprintf(log_buff, "ERROR_CODE : %d, 당월이력 자료 집계.... \n", sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     };
+
+
+     EXEC SQL
+     SELECT  MAX(SAVEYYMM),COUNT(EMPNO),SUM(SAVEAMT),SUM(GIVEAMT)
+       INTO  :m_saveyymm  , :m_cnt        ,:m_totalamt,:m_totgiveamt
+       FROM  PKMSVMON
+      WHERE  SAVEYYMM = :saveyymm
+        AND  SAVEKIND = :savekind;
+
+     if  (sqlca.sqlcode != 0) 
+     {
+          printf("ERROR_CODE : %d, 당월공제 자료 집계.... \n", sqlca.sqlcode);
+          sprintf(log_buff, "ERROR_CODE : %d, 당월공제 자료 집계.... \n", sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     else
+          return(SUCCESS);       
+
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

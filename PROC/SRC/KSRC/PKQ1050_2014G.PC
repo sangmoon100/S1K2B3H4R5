@@ -1,0 +1,2813 @@
+/*----------------------------------------------------------------------------
+ PROGRAM-NAME   : 2014년귀속 수정신고용 소급개정적용(pkq1050_2014g)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 연말정산
+ PROGRAMMER     : 지순미
+ VERSION        : 1.00
+ DATE           : 2015.04.
+UPDATE CONTENTS
+------------------------------------------------------------------------------
+  버전    수정일       수정자   관련근거       수정내용
+------------------------------------------------------------------------------
+   1.00   2015.04.     지순미  pkz3010g를 기반으로 2014년 수정신고용 소급개정내역 적용 프로그램 개발
+------------------------------------------------------------------------------
+============================================================================= 
+★ PKMYSMODIFY_CH 와 PKZYSHIS 테이블에서는 아래와 같이 사용.
+NPENAMT IS '연금저축_개인'  NPENAMT2 IS '연금저축_회사
+PENAMT1 IS '개인연금_개인'  PENAMT2 IS '개인연금_회사'
+        
+★ PKHRYHIS에서는 개인과 회사에 해당하는 칼럼을 반대로 사용하고 있다.
+NPENAMT IS '연금저축_회사'; NPENAMT2 IS '연금저축_개인';
+PENAMT1 IS '개인연금_회사'; PENAMT2 IS '개인연금_개인'; 
+============================================================================= */
+
+#include <stdio.h>
+#include <math.h>
+#include <stdlib.h>
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+
+#define  FAIL        -2
+
+EXEC SQL BEGIN DECLARE SECTION;
+         char    TAXNUM[3];               /*  세율차수                 */
+         double  INDEDBASIC ;             /*  근로소득공제기본액       */
+         double  INDEDBRATE ;             /*  근로소득공제 기초공제액  */
+         double  INDEDORATE ;             /*  근로소득공제초과율       */
+         double  INDEDLIMIT ;             /*  근로소득공제한계액       */
+         double  INDEDORATE2 ;            /*  근로소득공제초과율2       */
+         double  INDEDLIMIT2 ;            /*  근로소득공제한계액2       */
+         double  BASDED     ;             /*  기본공제액               */
+         double  APPDED     ;             /*  추가공제액               */
+         double  APPOLDDED;               /*  추가공제액(경로우대,장애인) 2002  */
+         double  APPOLDDED2;              /*  추가공제액(경로우대70세이상) 2004 */
+         double  APPBABYDED;              /*  추가공제액(출산.입양 공제) 2008 */
+         double  FEWDED1    ;             /*  소수공제자추가공제1 -> 다자녀추가공제 2인         */
+         double  FEWDED2    ;             /*  소수공제자추가공제2 -> 다자녀추가공제 2인이상     */
+         double  STDDED     ;             /*  표준공제                 */
+         double  INSDEDLIMIT;             /*  보장성보험공제한도       */
+         double  MEDDEDLIMIT;             /*  의료비공제한도           */
+         double  MEDORATE   ;             /*  의료비공제초과율         */
+         double  KINEDULIMIT;             /*  유치원교육비인당한도액   */
+         double  CJKEDULIMIT;             /*  초중고교육비 인당한도액  */
+         double  UNIEDULIMIT;             /*  대학교육비인당한도액     */
+         double  BROEDUNO   ;             /*  형제교육비한도인원       */
+         double  HSRATE     ;             /*  주택자금공제율           */
+         double  HSDEDLIMIT ;             /*  주택자금한도액           */
+         double  HSDEDLIMIT2;             /*  주택자금한도액2  dsa2000 */
+         double  HSDEDLIMIT3;             /*  주택자금한도액3  dsa2000 */
+         double  HSDEDLIMIT4;             /*  주택자금한도액4  dsa2000 2009.12.*/
+         double  GIVDEDRATE ;             /*  지정기부금 공제한도율(종교단체기부금)          */
+         double  GIVDEDRATE2;             /*  지정기부금 공제한도율(종교단체기부금있는 경우) 2008*/ 
+         double  GIVDEDRATE3;             /*  지정기부금 공제한도율(종교단체기부금 이외) 2011*/       
+         double  SPGIVDEDRATE;            /*  특례지정기부금공제한도율 PARKSH 20021213 추가 */
+         double  PENRATE    ;             /*  개인연금공제율           */
+         double  PENDEDLIMIT;             /*  개인연금한도액           */
+         double  OINVESTRATE;             /*  (전)투자조합공제율           */
+         double  OINVESTDEDRATE;          /*  (전)투자조합공제한도율       */
+         double  OINVESTLIMIT;            /*  (전)투자조합공제한도액       */ /* 계산치 */
+         double  INVESTRATE;              /*  투자조합공제율           */
+         double  INVESTDEDRATE;           /*  투자조합공제한도율       */
+         double  TAXDEDBASIC;             /*  근로소득세액공제기본액   */
+         double  TAXDEDBRATE;             /*  근로소득세액공제기본율   */
+         double  TAXDEDORATE;             /*  근로소득세액공제초과율   */
+         double  TAXDEDLIMIT;             /*  근로소득세액공제한계액   */
+         double  PRODEDRATE ;             /*  재형저축공제율           */
+         double  HSINTRATE  ;             /*  주택자금세액공제율       */
+         double  FORILIMIT;               /*  국외근로소득세액공제 한도 */
+         double  CREDEDLIMIT;             /*  신용카드한도액 */
+         double  CREDEDRATE ;             /*  신용카드한도율 */
+         double  CREORATE   ;             /*  신용카드초과율 */
+         double  CREDEDLRATE;             /*  신용카드지급율 */        
+         double  INDEDLIMIT3;
+         double  INDEDORATE3;
+         double  OBSDEDLIMIT;             /*  장애인전용보험료*/
+         double  OBSDEDADD;               /*  장애인 추가공제 dsa2000 2005.12. 추가..*/
+         double  NPENDEDLIMIT;
+         double  JUTAXRATE  ;             /*  주민세율                 */
+         double  NONGRATE   ;             /*  농특세율                 */        
+         double  OBSEDULIMIT;             /*  장애인특수교육비  PARKSH 20021213 추가 */        
+         double  INDEDLIMIT4;             /*  근로소득공제한도액4      PARKSH 20021213 */
+         double  INDEDORATE4;             /*  근로소득공제초과율4      PARKSH 20021213 */      
+                                          
+         double  FUNDRATE1;               /*  펀드 공제율 1년차  2009.01.*/
+         double  FUNDRATE2;               /*  펀드 공제율 2년차  2009.01.*/
+         double  FUNDRATE3;               /*  펀드 공제율 3년차  2009.01.*/
+         double  LONGMTRATE;              /*  노인장기요양보험 공제율  2009.01.*/
+                                          
+         /*********************************************************************/                      
+         char    writeman[5];             
+         char    tempdate[9];             
+         char    empno[5];                /*  사번                */
+         double  mpaysum;                 /*  (주) 급여총액       */
+         double  mbonsum;                 /*  (주) 급여총액       */
+         double  mnotax;                  /*  (주) 비과세         */
+         double  mcogbonsum;              /*  (주) 인정상여       */
+         double  bcogbonsum;              /*  (종) 인정상여       */
+         double  foritaxgross;            /*  국외근로과세총액    */
+         double  foritaxgross1;           /*  국외근로소득        */
+         double  taxgross;                /*  과세급여총액        */
+         double  notax;                   /*  비과세급여총액      */
+         double  laborded;                /*  근로소득공제        */
+         double  laboramt;                /*  근로소득금액        */
+         double  mate;                    /*  배우자유뮤          */
+         double  fami16no;                /*  6세이하 가족수      */
+         double  fami720no;               /*  7~20세 가족수       */
+         double  fami6064no;              /*  60~64세 가족수      */
+         double  fami65no;                /*  65세 이상 가족수    */
+         double  familyno;                /*  부양가족 수         */
+         double  selfded ;                /*  본인공제            */
+         double  mateded ;                /*  배우자 공제         */
+         double  famided ;                /*  부양가족공제        */
+         double  basicded;                /*  기본공제            */
+         double  obstacleno;              /*  장애자수            */
+         double  childno;                 /*  자녀 양육수         */
+         double  woman;                   /*  부녀자 여부         */
+         double  oldded;                  /*  경로우대공제        */
+         double  obsded;                  /*  장애자 공제         */
+         double  womanded;                /*  부녀자 공제         */
+         double  childded;                /*  자녀양육공제        */
+         double  babyded;                 /*  출생입양공제 2008   */
+         double  appendded;               /*  추가공제            */
+         double  fewno;                   /*  다자녀추가공제로 변경 사용 2007.12 */
+         double  fewded;                  /*  다자녀추가공제로 변경 사용 2007.12 */
+         double  medamt;                  /*  의료 보험료         */
+         double  bmedamt;                 /*  (종) 의료 보험료   */
+         double  medded;                  /*  의료 보험료공제     */
+         double  hireamt;                 /*  고용 보험료         */
+         double  bhireamt;                /*  (종) 고용 보험료   */
+         double  hireded;                 /*  고용보험료 공제     */
+         double  guaramt;                 /*  보장성 보험료       */
+         double  guarded;                 /*  보장성보험료 공제   */
+         double  insded;                  /*  보험료 공제         */
+         double  ghosamt;                 /*  일반 의료비         */
+         double  ohosamt;                 /*  경로의료비          */
+         double  nhosamt;                 /*  장애자의료비        */
+         double  hosamt;                  /*  의료비              */
+         double  hosded;                  /*  의료비공제          */
+         double  seduamt;                 /*  본인학자금          */
+         double  seduded;                 /*  본인학자금공제      */
+         double  keduno;                  /*  유치원수            */
+         double  keduamt;                 /*  유치원학자금        */
+         double  keduded;                 /*  유치원학자금공제    */
+         double  keduno1;                 /*  영유아수            */
+         double  keduamt1;                /*  영유아학자금        */
+         double  keduded1;                /*  영유아학자금공제    */
+         double  ceduno;                  /*  초중고학생수        */
+         double  ceduamt;                 /*  초중고학자금        */
+         double  ceduded;                 /*  초중고학자금공제    */
+         double  ueduno;                  /*  대학생수            */
+         double  ueduamt;                 /*  대학생학자금        */
+         double  ueduded;                 /*  대학생학자금공제    */
+         double  eduded;                  /*  학자금공제          */
+         double  houseamt;                /*  주택자금(대출기관)  */
+         double  houseamt3;               /*  주택자금(거주자)    */
+         double  houseamt2;               /*  주택자금    (주택마련저축액)                       */        
+         double  houseintamt;             /*  주택자금    (장기주택저당 차입이자상환액) 10년이상 */
+         double  houseintamt2;            /*  주택자금    (장기주택저당 차입이자상환액) 15년 이상*/        
+         double  houseintamt3;            /*  주택자금    (장기주택저당 차입이자상환액) 30년 이상*/        
+         double  houseded;                /*  주택자금공제(대출기관)                             */
+         double  houseded3;               /*  주택자금공제(거주자)                               */
+         double  houseded2;               /*  주택자금공제(주택마련저축         소득공제액)      */
+         double  houseintded;             /*  주택 임차 차입금 원리금 상환공제액 15미만 2008.12 KTH */
+         double  houseintded2;            /*  주택 임차 차입금 원리금 상환공제액 15-29 미만 2012.02 KTH */
+         double  houseintded3;            /*  주택 임차 차입금 원리금 상환공제액 30년 이상  2012.02 KTH */
+         double  houserentamt;            /*  주택자금 */
+         double  houserentded;            /*  주택자금 */
+         double  housvsubamt;             /*  주택자금 */
+         double  housvsubded;             /*  주택자금 */
+         double  housvcomamt;             /*  주택자금 */
+         double  housvcomded;             /*  주택자금 */
+         double  housvempamt;             /*  주택자금 */
+         double  housvempded;             /*  주택자금 */
+         double  houseded4;               /*  청약,주택청약,장마,근로자 주택마련 합계  2011.01 KTH */
+         double  agiveamt;                /*  전액기부금          */
+         double  agiveded;                /*  전액기부금          */
+         double  politaxded;              /*  정치자금 기부금     */
+         double  pgiveamt;                /*  지정기부금(종교단체기부금) */
+         double  pgiveamt2;               /*  지정기부금공제(종교단체기부금 이외)  */
+         double  sgiveamt;                /*  사립학교기부금      */
+         double  pgiveded;                /*  지정기부금공제      */        
+         double  pgiveded2;               /*  일반기부금공제      */   
+         double  nagiveamt;  
+         double  nspgivamt;                                                     
+         double  npgiveamt;               /* kth 2012.02.13 이월지정기부금 종교단체*/          
+         double  npgiveamt2;              /* kth 2012.02.13 이월지정기부금 종교단체외(전체)*/    
+         double  giveded;                 /*  기부금공제          */
+         double  specialded;              /*  특별공제            */
+         double  standded;                /*  표준공제 */
+         double  penamt1;                 /*  개인연금(회사)      */
+         double  penamt2;                 /*  개인연금(개인)      */
+         double  bpenamt;                 /*  개인연금(종)        */
+         double  pended;                  /*  개인연금공제        */
+         double  investamt;               /*  투자조합출자소득    */
+         double  investded;               /*  투자조합공제        */
+                                          
+         double  DEBITDEDRATE;            /*  직불카드 공제율            */ 
+         double  GIRODEDRATE;             /*  지로납부 공제율            */ 
+         double  credittotamt;            /*  신용카드 총신청금    */
+         double  creditdedamt;            /*  신용카드 법인사용분  */         
+         double  creditamt;               /*  신용카드신청금             */         
+         double  debitamt;                /*  직불카드 사용금액          */
+         double  giroamt;                 /*  지로납부금액               */
+         double  cashamt;                 /*  현금영수증 사용액          */ 
+         double  creditded;               /*  신용카드공제               */         
+                                          
+         double  FOREDEDRATE;             /*  외국인 추가공제율 (자녀교육비&월세)   dsa2000   2003.12. */        
+         char    juminid[15];             /*  주민번호            */        
+         double  incomeded;               /*  종합소득공제계      */
+         double  taxlevel;                /*  과세표준            */
+         double  calctax;                 /*  산출세액            */
+         double  incomtded;               /*  근로소득세액공제    */
+         double  hloanamt;                /*  주택차입금 공제     */
+         double  hloanded;                /*  주택차입금 공제     */
+         double  foriamt;                 /*  외국납부공제        */
+         double  forided;                 /*  외국납부공제        */
+         double  etctamt;                 /*  기타세액감면        */
+         double  etctded;                 /*  기타세액감면        */
+         double  tdedsum;                 /*  세액감면 총액       */
+         double  dintax;                  /*  결정소득세          */
+         double  djutax;                  /*  결정주민세          */
+         double  dnongtax;                /*  결정농특세          */
+         double  mintax;                  /*  (주) 소득세         */
+         double  mjutax;                  /*  (주) 주민세         */
+         double  mnongtax;                /*  (주) 농특세         */
+         double  bintax;                  /*  (종) 소득세         */
+         double  bjutax;                  /*  (종) 주민세         */
+         double  bnongtax;                /*  (종) 농특세         */
+         double  intax;                   /*  (주+종) 소득세      */
+         double  jutax;                   /*  (주+종) 주민세      */
+         double  nongtax;                 /*  (주+종) 농특세      */
+         double  yintax;                  /*  차감소득세          */
+         double  yjutax;                  /*  차감주민세          */
+         double  ynongtax;                /*  차감농특세          */
+         double  ycalctax;                /*  차감정산액          */   
+                
+         double  obsguaramt;
+         double  obsguarded;
+         double  anuamt;
+         double  banuamt;   
+         double  anuded;            
+         double  npenamt;
+         double  npenamt2 ;
+         double  npended;
+         
+         double  obseduno ;               /*  장애인수                 parksh 20021213 */
+         double  obseduamt;               /*  장애인특수교육금액       parksh 20021213 */
+         double  obseduded;               /*  장애인특수교육비공제     parksh 20021213 */
+         double  spgivamt ;               /*  특례지정기부금           parksh 20021213 */
+         double  spgivded ;               /*  특레지정기부금공제       parksh 20021213 */   
+         double  oinvestamt;              /*  투자조합공제             parksh 20021213 */
+         double  oinvestded;              /*  투자조합공제             parksh 20021213 */
+         double  tinvestded;              /*  투자조합공제액 합 PARKSH 20021213 추가 */        
+         double  fami70no;                /*  경로우대 70세이상 수*/
+         double  shosamt;                 /*  본인 의료비        */
+         double  specaddno;               /*  특별공제(결혼.장례.이사소득공제 건수)*/
+         double  SPECADDLIMIT;            /*  특별공제(결혼.장례.이사소득공제 한도액)*/
+         double  specaddded;              /*  특별공제(결혼.장례.이사소득공제 개인별 공제액)*/
+         double  poliamt;                 /*  정치기부금 */
+         double  polided;                 /*  정치자금 세액공제액 */
+         double  POLILIMIT;               /*  정치자금 세액공제 한도   Dsa2000 추가  2004.12. End..*/    
+         double  costockamt;              /*  우리사주출연금 공제 출연금  dsa2000  2006.12.*/  
+         double  costockded;              /*  우리사주출연금 공제금       dsa2000  2006.12.*/  
+         double  COSTOCKLIMIT;            /*  우리사주출연금 공제한도     dsa2000  2006.12.*/  
+         double  costocktax;              /*  우리사주 인출과세액         dsa2000  2007.01.*/          
+         
+         double  babyno;
+         double  fundamt1;
+         double  fundamt2;
+         double  fundamt3;                /*  DSA2000 추가  2008.12.*/
+         double  fundded;                     
+         double  longmtamt;               /*  노인 장기요양 보험금            2008.12 KTH */
+         double  longmtded;               /*  노인 장기요양 보험공제금        2008.12 KTH */
+         double  CreditAll;               /*  총 신용카드사용액(신용+지로+현금영수증+직불) */        
+         double  CreditOver;              /*  총신용카드 급여액 25% 초과액 => 총공제가능액 */              
+                      
+         double  TMARKETDEDRATE     = 0;  /*  전통시장공제한도율     						    2012.12  */
+         double  TMARKETEXLIMIT     = 0;  /*  전통시장공제초과한도금액     			    2012.12  */
+         double  INVESTRATE2        = 0;  /*  투자조합출자소득공제율(2012년이후)    2012.12  */
+         double  INVESTDEDRATE2     = 0;  /*  투자조합출자소득공제한도율     		    2012.12  */               
+         double  HSDEDLIMIT5        = 0;  /*  고정비거치식 한도금액     					  2012.12  */
+         double  HSDEDLIMIT6        = 0;  /*  기타대출한도금액     							    2012.12  */
+         double  tmarketamt         = 0;  /*  전통시장공제금액     						      2012.12  */
+         double  houseintamt4       = 0;  /*  고정비거치식공제금액     					    2012.12  */
+         double  houseintamt5       = 0;  /*  기타대출공제금액     						      2012.12  */
+         double  houseintded4       = 0;  /*  고정비거치식공제금       					    2012.12  */
+         double  houseintded5       = 0;  /*  기타대출공제금       						      2012.12  */
+         double  housededsum        = 0;  /*  주택자금공제합계                      2012.12  */     
+         double  investamt2         = 0;  /*  투자조합출자소득공제금액(2012년이후)  2012.12  */  
+         
+         double  SPARENTDEDADD      = 0;  /*  한부모 소득공제금액                   2013.11  */ 
+         double  HSRATE2            = 0;  /*  주택자금 월세액 공제율                2013.11  */ 
+         double  TRAFFICDEDRATE     = 0;  /*  대중교통공제한도율                    2013.11  */ 
+         double  TRAFFICEXLIMIT     = 0;  /*  대중교통공제 초과 한도금액            2013.11  */
+         double  SPDEDLIMIT         = 0;  /*  특별공제 종합한도금액                 2013.11  */
+         double  INVESTRATE3        = 0;  /*  투자조합출자소득공제율(2013년이후)    2013.11  */ 
+         double  HSRENTINTRATE      = 0;  /*  목돈 안드는 전세 이자상환액 공제율    2013.11  */ 
+         double  HSRENTINTLIMIT     = 0;  /*  목돈 안드는 전세 이자상환액 한도금액  2013.11  */
+         double  NOTICERATE         = 0;  /*  인정상여고시이율                      2013.11  */               
+         
+         double  sparent            = 0;  /*  한부모 공제                           2013.11  */ 
+         double  sparentded         = 0;  /*  한부모 공제금액                       2013.11  */  
+         double  obshosded          = 0;  /*  의료비공제_장애인                     2013.11  */  
+         double  trafficamt         = 0;  /*  대중교통사용분                        2013.11  */  
+         double  splimitovded       = 0;  /*  소득공제 종합한도 초과금액            2013.11  */ 
+         double  investamt3         = 0;  /*  투자조합출자(2013년이후)_10%          2013.11  */
+         double  investamt4         = 0;  /*  투자조합출자(2013년이후)_30%          2013.11  */
+         double  investded2         = 0;  /*  투자조합출자소득공제금액(2013년이후)  2013.11  */ 
+         double  hsrentinamt        = 0;  /*  목돈 안드는 전세 이자상환액           2013.11  */  
+         double  hsrentinded        = 0;  /*  목돈 안드는 전세 이자상환액 공제금액  2013.11  */  
+         double  nepgiveded         = 0;  /*  지정기부공제(종교단체_기부금명세)     2013.11  */  
+         double  nepgiveded2        = 0;  /*  지정기부공제(종교단체외_기부금명세)   2013.11  */ 
+         double  chagamamt          = 0;  /*  차감소득금액                          2013.12  */ 
+         
+         double  yseq               = 0;  /*  거주자간 순번                         2013.11  */ 
+         double  yloansum           = 0;  /*  거주자간 원리금상환액계               2013.11  */ 
+         double  yloanded           = 0;  /*  거주자간 공제금액                     2013.11  */ 
+         
+         double  mseq               = 0;  /*  월세액 순번                           2013.11  */ 
+         double  mrentcost          = 0;  /*  월세액                                2013.11  */ 
+         double  mrentcostded       = 0;  /*  월세액 공제금액                       2013.11  */
+
+         double  laborlimit         = 0;
+
+         double  TAXDEDSECT1        = 0;  /*  근로소득세액공제 총급여한계액1        2014.12  */
+         double  TAXDEDSLIMIT1      = 0;  /*  근로소득세액공제한계액1               2014.12  */
+         double  TAXDEDSECT2        = 0;  /*  근로소득세액공제 총급여한계액2        2014.12  */
+         double  TAXDEDSLIMIT2      = 0;  /*  근로소득세액공제한계액2               2014.12  */
+         double  APPDEDLIMIT        = 0;  /*  부녀자조건-총급여기준액               2014.12  */
+         double  NPENRATE           = 0;  /*  연금세액공제율                        2014.12  */
+         double  SPECIALRATE1       = 0;  /*  특별세액공제율1(보장성보험)           2014.12  */
+         double  SPECIALRATE2       = 0;  /*  특별세액공제율2(의료비,교육비,기부금) 2014.12  */
+         double  GIVESLIMIT         = 0;  /*  기부금세액공제초과분                  2014.12  */
+         double  GIVESRATE          = 0;  /*  기부한도초과분공제율                  2014.12  */
+         double  HOUSERENTLIMIT1    = 0;  /*  월세세액공제대상자총급여기준          2014.12  */
+         double  HOUSERENTLIMIT2    = 0;  /*  월세세액공제한도액                    2014.12  */
+         double  HOUSERENTRATE      = 0;  /*  월세세액공제율                        2014.12  */
+         double  INVESTRATE4        = 0;  /*  투자조합출자분(2014년이후)_10%공제    2014.12  */
+         double  INVESTRATE5        = 0;  /*  투자조합출자분(2014년이후)_50%공제    2014.12  */
+         double  INVESTRATE6        = 0;  /*  투자조합출자분(2014년이후)_30%공제    2014.12  */
+         double  INVESTDEDRATE3     = 0;  /*  투자조합출자분(2014년이후)공제한도    2014.12  */
+         double  LONGFUNDLIMIT1     = 0;  /*  장기집합투자증권저축공제한도          2014.12  */
+         double  LONGFUNDLIMIT2     = 0;  /*  장기집합투자증권저축공제총급여한도    2014.12  */
+         double  LONGFUNDRATE       = 0;  /*  장기집합투자증권저축공제율            2014.12  */
+         double  CARDUPRATE1        = 0;  /*  신용카드 외 사용증가분 추가공제대상률 2014.12  */
+         double  CARDUPRATE2        = 0;  /*  신용카드 외 사용증가분 추가공제율     2014.12  */
+         double  YLOANBASLIMIT      = 0;  /*  개인간차입금공제대상자총급여기준      2014.12  */
+    
+         double  nagiveded          = 0;  /*  이월 법정기부금(특별소득공제)         2014.12  */
+         double  npgiveded          = 0;  /*  이월 지정기부금(특별소득공제)종교     2014.12  */
+         double  npgiveded2         = 0;  /*  이월 지정기부금(특별소득공제)비종교   2014.12  */
+         double  ngiveded           = 0;  /*  기부금(이월분) 특별소득공제           2014.12  */
+         double  investamt5         = 0;  /*  투자조합출자분(2014년이후)_10%공제    2014.12  */
+         double  investamt6         = 0;  /*  투자조합출자분(2014년이후)_50%공제    2014.12  */
+         double  investamt7         = 0;  /*  투자조합출자분(2014년이후)_30%공제    2014.12  */
+         double  investded3         = 0;  /*  투자조합출자공제금(2014년)            2014.12  */
+         double  longfundamt        = 0;  /*  장기집합투자증권저축 납입액           2014.12  */
+         double  longfundded        = 0;  /*  장기집합투자증권저축 공제금           2014.12  */
+         double  childtaxded        = 0;  /*  자녀세액공제                          2014.12  */
+         double  npendtaxded        = 0;  /*  연금계좌_연금저축_세액공제            2014.12  */
+         double  guartaxded         = 0;  /*  특별세액공제_보장성보험               2014.12  */
+         double  hostaxded          = 0;  /*  특별세액공제_의료비                   2014.12  */
+         double  edutaxded          = 0;  /*  특별세액공제_교육비                   2014.12  */
+         double  polided1           = 0;  /*  정치자금10만원이이하                  2014.12  */
+         double  polided2           = 0;  /*  정치자금10만원이초과                  2014.12  */
+         double  politaxded1        = 0;  /*  특별세액공제_정치자금10만원이하       2014.12  */
+         double  politaxded2        = 0;  /*  특별세액공제_정치자금10만원이상       2014.12  */
+         double  agivetaxded        = 0;  /*  특별세액공제_법정기부금               2014.12  */
+         double  pgivetaxded        = 0;  /*  특별세액공제_지정기부금               2014.12  */
+         double  taxdedsum          = 0;  /*  특별세액공제_계                       2014.12  */ 
+         double  houserenttaxded    = 0;  /*  세액공제_월세                         2014.12  */ 
+         double  creditaddamt1      = 0;  /*  전년도 본인신용카드 사용액            2014.12  */ 
+         double  creditaddamt2      = 0;  /*  당해년도 본인신용카드 사용액          2014.12  */ 
+         double  creditaddamt3      = 0;  /*  전년도 추가공제율 사용분              2014.12  */ 
+         double  creditaddamt4      = 0;  /*  당해년도 추가공제율 사용분            2014.12  */
+         double  npgiveamt2_2010    = 0;  /*  2010년분   이월 지정기부금 비종교     2014.12  */
+         double  npgiveamt2_else    = 0;  /*  2010년이후 이월 지정기부금 비종교     2014.12  */    
+         
+         double  INFANTDED;                /* 2015.04.24 jissi 6세이하 2자녀이상 세액공제                */
+         double  ADDBABYDED;               /* 2015.04.24 jissi 출산.입양 세액공제                        */
+         double  NPENRATE2;                /* 2015.04.24 jissi 연금저축 세액공제율2                      */
+         double  NPENLIMIT;                /* 2015.04.24 jissi 연금저축 총급여한도                       */  
+         
+         double  infanttaxded            = 0;  /* 2015.04.24 jissi 6세이하 2자녀이상 세액공제              */   
+         double  addbabytaxded           = 0;  /* 2015.04.24 jissi 출산입양 세액공제                       */   
+         double  obsguartaxded           = 0;  /* 2015.04.24 jissi 장애인전용보장성보험 세액공제           */   
+         
+         struct
+         {      double taxfr   ;
+                double taxto   ;
+                double taxrate ;
+                double yearded ;
+         } taxtbl[10];
+
+EXEC SQL END   DECLARE SECTION;
+EXEC SQL INCLUDE sqlca;
+
+FILE    *fp = stdout;
+int     i=0;
+int     id;
+int     taxtblcnt=0;
+char    dir[80];
+char    log_rundate[16] = ""; 
+char    log_progid[16]  = "";
+char    workyy[5];
+char    frempno[5];
+char    toempno[5];
+char    log_writeman[5] = "";
+char    log_buff[100]   = "";
+int     seqno = 0; 
+char    log_subdate[9]  = "";
+char    tmpjuminid[1+1] = "";
+char    tmpempno[1+1]   = "";
+
+void main(argc,argv)
+int  argc;
+char *argv[];
+{
+     char FL_file[255];
+     
+     if (argc != 7) 
+     {      /* /hper/insa/HINSA/proc/bin/Kbin/pkq1050_2014g 20150610 0000 zzzz D025 pkq1050_2014g 2015042900000 */
+            printf("[Usage] : pkq1050_2014g 1.지급일자 2.작업사번 3.프로그램ID 4.시작시간  \n");
+            exit(1);
+     }
+       
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkq1050_2014g");
+     
+     hinsa_get_filename(1, FL_file);
+     if (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     sprintf(writeman,"%s",argv[4]);
+     
+     hinsa_log_print(0,"임원 연말정산 계산 시작..."); 
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     
+     strcpy(log_subdate,  argv[1]);
+     strcpy(frempno,      argv[2]);
+     strcpy(toempno,      argv[3]);
+     strcpy(log_writeman, argv[4]);
+     strcpy(log_progid,   argv[5]);
+     strcpy(log_rundate,  argv[6]);  
+       
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+         
+     Calc_Yearend();
+           
+     /* hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "ERROR ====== [작업 실패] =====");  
+          error_quit("ERROR ====== [작업 실패] =====");
+     }
+     else  
+     {
+          Write_batlog(seqno++, "OK ====== [연말정산 세액계산 작업성공] =====");  
+          hinsa_exit(0,"OK ====== [연말정산 세액계산 작업성공] =====");        
+     }
+}
+
+err_print(errcode,str)
+int errcode;
+char *str;
+{
+     fprintf(fp,"[ERRCODE : %d] %s\n",errcode,str);
+}
+
+/* PKCYSBAS 에서 읽어오는 변수값은 제외하고 Clear */
+ClearVar()
+{
+     memset(empno,'\0',sizeof(empno));
+     memset(juminid,'\0',sizeof(juminid));
+     memset(tmpempno,'\0',sizeof(tmpempno));
+     memset(tmpjuminid, '\0', sizeof(tmpjuminid)) ; 
+     taxgross   = foritaxgross = mate         = familyno    = fami65no  = 0;
+     mcogbonsum = bcogbonsum   = 0;
+     obstacleno = childno      = woman        = fewno=0;
+     medamt     = bmedamt      = 0;
+     hireamt    = bhireamt     = 0;
+     guaramt    = ghosamt      = ohosamt      = nhosamt     = hosamt    = 0;
+     keduno     = ueduno       = 0;
+     seduamt    = keduamt      = ceduno       = ceduamt     = ueduamt   = 0;
+     houseamt   = houseamt2    = houseintamt  = agiveamt    = pgiveamt  = pgiveamt2 = sgiveamt =0;
+     penamt1    = penamt2      = bpenamt      = 0;
+     hloanamt   = foriamt      = etctamt      = 0;
+     creditamt  = creditdedamt = credittotamt = 0;      
+     mintax     = mjutax       = bintax       = bjutax      = 0;
+     mnongtax   = bnongtax     = investamt    = 0;
+     keduno1    = keduamt1     = 0;
+     obsguaramt = anuamt       = banuamt      = 0;
+     npenamt    = npenamt2     = 0;
+     obseduno   = obseduamt    = spgivamt     = oinvestamt  = 0; 
+     debitamt   = giroamt      = CreditOver = 0;      
+     fami70no   = specaddno    = specaddded   = polided     = houseintamt2 = houseintamt3 = 0;
+     cashamt    = costockamt   = costockded   = costocktax  = 0;                       
+          
+     babyno       = babyded      = fundamt1     = fundamt2     = fundamt3     = fundded =0 ;  /* KTH 추가  2008.12.*/
+     longmtamt    = longmtded    = pgiveamt2    = houseamt2    = houseintded  = houseintamt3 = houserentamt =0 ; /* KTH 추가  2008.12.houseintamt3 KTH 2010.01 houserentamt KTH 20110125 추가*/
+     houserentded = housvsubamt  = housvsubded  = housvempamt  = housvempded  = housvcomamt  = housvcomded= 0;
+     tmarketamt   = houseintamt4 = houseintamt5 = houseintded4 = houseintded5 = investamt2   = 0; /*  2012.12. 추가 */    
+     sparent      = sparentded   = obshosded    = trafficamt   = splimitovded = investamt3   = investamt4 = investded2 = 0;/* 2013.11. 추가 */
+     hsrentinamt  = hsrentinded  = nepgiveded   = nepgiveded2  = chagamamt    = 0; /* 2013.11. 추가 */  
+ 
+     nagiveded      = npgiveded      = npgiveded2   = ngiveded       = 0;  /* 2014.12. 추가 */
+     investamt5     = investamt6     = investamt7   = investded3     = 0;  /* 2014.12. 추가 */
+     longfundamt    = longfundded    = childtaxded  = npendtaxded    = 0;  /* 2014.12. 추가 */
+     guartaxded     = hostaxded      = edutaxded    = 0;                   /* 2014.12. 추가 */
+     polided1       = polided2       = politaxded1  = politaxded2    = 0;  /* 2014.12. 추가 */
+     agivetaxded    = pgivetaxded    = taxdedsum    = houserenttaxded= 0;  /* 2014.12. 추가 */
+     creditaddamt1  = creditaddamt2  = creditaddamt3= creditaddamt4  = 0;  /* 2014.12. 추가 */
+     npgiveamt2_2010= npgiveamt2_else= 0;                                  /* 2014.12. 추가 */
+     infanttaxded   = addbabytaxded  = obsguartaxded= 0;                   /*2015.04.24 jissi */
+}
+
+/*  연세율표를 읽어 배열에 저장한다 */
+ReadTax()
+{
+     int i=0;
+
+     EXEC SQL DECLARE ctax CURSOR FOR
+     SELECT NVL(TAXPAYFR,0), NVL(TAXPAYTO,0), NVL(TAXRATE,0), NVL(YEARDED,0)
+       FROM PKCPTAX
+      WHERE TAXNUM = :TAXNUM;
+
+     EXEC SQL OPEN ctax;
+
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+           Write_batlog(seqno++, "연세율표  fetch Error");  
+           err_print(sqlca.sqlcode,"연세율표  fetch Error");
+           exit(1);
+     }
+
+     while(1)
+     {
+          EXEC SQL FETCH ctax INTO
+          :taxtbl[i].taxfr,     :taxtbl[i].taxto,
+          :taxtbl[i].taxrate,   :taxtbl[i].yearded;
+
+
+          if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {
+               Write_batlog(seqno++, "연말정산 기초자료   read Error");  
+               err_print(sqlca.sqlcode,"연말정산 기초자료 read Error");
+               exit(1);
+          }
+
+          if (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close ctax;
+               taxtblcnt = i;
+               break;
+          }
+          i++;
+     }
+}
+
+double GetTax(double taxlevel)
+{
+     int i;
+     double res;
+     
+     if (taxlevel <= 0 )
+       return 0 ;
+     
+     for (i=0 ;i <taxtblcnt ; ++i)
+     {
+          if ((taxtbl[i].taxfr < taxlevel) && (taxtbl[i].taxto >= taxlevel))
+          {
+               res = taxlevel * taxtbl[i].taxrate / 100;
+               res = floor(res - taxtbl[i].yearded);
+               return res;
+          }
+     }
+}
+
+ReadPkcysbas()
+{
+     EXEC    SQL
+     SELECT  '2014'
+     INTO    :workyy
+     FROM    PKCPBAS;
+     if  (sqlca.sqlcode != 0)
+     {       
+          Write_batlog(seqno++, "연말정산기준일 read ERROR");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"연말정산기준일 read ERROR");
+          exit(1);
+     }
+
+     EXEC    SQL
+     SELECT  TAXNUM,          INDEDBASIC,      INDEDBRATE,
+             INDEDORATE,      INDEDORATE2,     INDEDORATE3,    INDEDORATE4,   
+             INDEDLIMIT,      INDEDLIMIT2,     INDEDLIMIT3,    INDEDLIMIT4,    
+             BASDED,          APPDED,          FEWDED1,        FEWDED2,         STDDED,          INSDEDLIMIT,
+             MEDDEDLIMIT,     MEDORATE,        KINEDULIMIT,    CJKEDULIMIT,     UNIEDULIMIT,     BROEDUNO,        HSRATE,          
+             HSDEDLIMIT,      HSDEDLIMIT2,     HSDEDLIMIT3,    HSDEDLIMIT4,
+             GIVDEDRATE,      GIVDEDRATE2,     GIVDEDRATE3,    PENRATE,         PENDEDLIMIT,     NPENDEDLIMIT,    
+             TAXDEDBASIC,     TAXDEDBRATE,     TAXDEDORATE,    TAXDEDLIMIT,  
+             PRODEDRATE,      HSINTRATE,       JUTAXRATE,      NONGRATE,      
+             OINVESTRATE,     OINVESTDEDRATE,  INVESTRATE,     INVESTDEDRATE,    
+             CREDEDLIMIT,     CREDEDRATE ,     CREORATE  ,     CREDEDLRATE,
+             OBSDEDLIMIT,     APPOLDDED,       APPOLDDED2,     OBSEDULIMIT,     SPGIVDEDRATE,
+             DEBITDEDRATE,    GIRODEDRATE,     FOREDEDRATE,    SPECADDLIMIT,    POLILIMIT ,        
+             OBSDEDADD,       COSTOCKLIMIT,    APPBABYDED,
+             FUNDRATE1,       FUNDRATE2,       FUNDRATE3,      LONGMTRATE,
+             HSDEDLIMIT4,     INDEDBRATE,      GIVDEDRATE3,
+             TMARKETDEDRATE,  TMARKETEXLIMIT,  INVESTRATE2,    INVESTDEDRATE2,  HSDEDLIMIT5,     HSDEDLIMIT6,       /* 추가 2012.12 */
+             SPARENTDEDADD,   HSRATE2,         TRAFFICDEDRATE, TRAFFICEXLIMIT,  SPDEDLIMIT,      INVESTRATE3,       /* 추가 2013.12 */
+             HSRENTINTRATE,   HSRENTINTLIMIT,  NOTICERATE,                                                          /* 추가 2013.12 */
+             TAXDEDSECT1,     TAXDEDSLIMIT1,   TAXDEDSECT2,    TAXDEDSLIMIT2,   APPDEDLIMIT,     NPENRATE,          /* 추가 2014.12 */
+             SPECIALRATE1,    SPECIALRATE2,    GIVESLIMIT,     GIVESRATE,       HOUSERENTLIMIT1, HOUSERENTLIMIT2,   /* 추가 2014.12 */
+             HOUSERENTRATE,   INVESTRATE4,     INVESTRATE5,    INVESTRATE6,     INVESTDEDRATE3,                     /* 추가 2014.12 */
+             LONGFUNDLIMIT1,  LONGFUNDLIMIT2,  LONGFUNDRATE,   CARDUPRATE1,     CARDUPRATE2,     YLOANBASLIMIT,     /* 추가 2014.12 */
+             INFANTDED,       ADDBABYDED,      NPENRATE2,      NPENLIMIT                                            /*2015.04.24 jissi */
+     INTO    :TAXNUM,        :INDEDBASIC,     :INDEDBRATE,
+             :INDEDORATE,    :INDEDORATE2,    :INDEDORATE3,   :INDEDORATE4,  
+             :INDEDLIMIT,    :INDEDLIMIT2,    :INDEDLIMIT3,   :INDEDLIMIT4,  
+             :BASDED,        :APPDED,         :FEWDED1,       :FEWDED2,         :STDDED,          :INSDEDLIMIT,
+             :MEDDEDLIMIT,   :MEDORATE,       :KINEDULIMIT,   :CJKEDULIMIT,     :UNIEDULIMIT,     :BROEDUNO,      :HSRATE,         
+             :HSDEDLIMIT,    :HSDEDLIMIT2,    :HSDEDLIMIT3,   :HSDEDLIMIT4,     
+             :GIVDEDRATE,    :GIVDEDRATE2,    :GIVDEDRATE3,   :PENRATE,         :PENDEDLIMIT,     :NPENDEDLIMIT,   
+             :TAXDEDBASIC,   :TAXDEDBRATE,    :TAXDEDORATE,   :TAXDEDLIMIT,     
+             :PRODEDRATE,    :HSINTRATE,      :JUTAXRATE,     :NONGRATE,        
+             :OINVESTRATE,   :OINVESTDEDRATE, :INVESTRATE,    :INVESTDEDRATE,    
+             :CREDEDLIMIT,   :CREDEDRATE,     :CREORATE   ,   :CREDEDLRATE,     
+             :OBSDEDLIMIT,   :APPOLDDED,      :APPOLDDED2,    :OBSEDULIMIT,     :SPGIVDEDRATE, 
+             :DEBITDEDRATE,  :GIRODEDRATE,    :FOREDEDRATE,   :SPECADDLIMIT,    :POLILIMIT,     
+             :OBSDEDADD,     :COSTOCKLIMIT,   :APPBABYDED,
+             :FUNDRATE1,     :FUNDRATE2,      :FUNDRATE3,     :LONGMTRATE,
+             :HSDEDLIMIT4,   :INDEDBRATE,     :GIVDEDRATE3,
+             :TMARKETDEDRATE,:TMARKETEXLIMIT, :INVESTRATE2,   :INVESTDEDRATE2,  :HSDEDLIMIT5,     :HSDEDLIMIT6,     /* 추가 2012.12 */
+             :SPARENTDEDADD, :HSRATE2,        :TRAFFICDEDRATE,:TRAFFICEXLIMIT,  :SPDEDLIMIT,      :INVESTRATE3,     /* 추가 2013.12 */
+             :HSRENTINTRATE, :HSRENTINTLIMIT, :NOTICERATE,                                                          /* 추가 2013.12 */
+             :TAXDEDSECT1,   :TAXDEDSLIMIT1,  :TAXDEDSECT2,   :TAXDEDSLIMIT2,   :APPDEDLIMIT,     :NPENRATE,        /* 추가 2014.12 */
+             :SPECIALRATE1,  :SPECIALRATE2,   :GIVESLIMIT,    :GIVESRATE,       :HOUSERENTLIMIT1, :HOUSERENTLIMIT2, /* 추가 2014.12 */
+             :HOUSERENTRATE, :INVESTRATE4,    :INVESTRATE5,   :INVESTRATE6,     :INVESTDEDRATE3,                    /* 추가 2014.12 */
+             :LONGFUNDLIMIT1,:LONGFUNDLIMIT2, :LONGFUNDRATE,  :CARDUPRATE1,     :CARDUPRATE2,     :YLOANBASLIMIT,   /* 추가 2014.12 */
+             :INFANTDED,     :ADDBABYDED,     :NPENRATE2,     :NPENLIMIT                                            /*2015.04.24 jissi */
+       FROM  PKCYSBAS  
+      WHERE  WORKYY = :workyy ;
+      
+     if( sqlca.sqlcode != 0)
+     {       
+         Write_batlog(seqno++, "연말정산기준 read ERROR");  
+         err_print(sqlca.sqlcode,"연말정산기준 read ERROR");
+         exit(1);
+     }
+}
+
+
+Calc_Yearend()
+{
+     double  t1, t2, t3, t4, t5 ;
+     double  calctaxlevel      = 0;     /* 투자조합공제에 따른 농특세 계산     2014.02 */     
+     double  StandN_intax      = 0;     /* 표준세액공제 미신청시 소득세 계산값 2015.01 */
+     double  StandY_intax      = 0;     /* 표준세액공제   신청시 소득세 계산값 2015.01 */
+     t1 = t2 = t3 = t4 = t5 = 0;
+     
+     ReadPkcysbas();
+     
+     ReadTax();        
+     
+     EXEC SQL
+     UPDATE PKMYSMODIFY_CH   /*우리사주인출 과세액 + Stock Option 과세액 추가 */
+        SET TAXGROSS = NVL(MPAYSUM,0)         + NVL(MBONSUM,0)          + NVL(MGITASODK,0)       + NVL(FORITAXGROSS,0)    +
+                       NVL(BPAYSUM,0)         + NVL(BBONSUM,0)          + NVL(BPAYSUM1,0)        + NVL(BBONSUM1,0)        +
+                       /*NVL(BPAYSUM2,0)        + NVL(BBONSUM2,0)         +*/ NVL(MCOGBONSUM,0)      + NVL(BCOGBONSUM,0)      +
+                       NVL(COSTOCKTAX,0)      + NVL(MSTOCKSUM,0)        + NVL(BCOSTOCKTAX,0)     + NVL(BCOSTOCKTAX1,0)    +
+                       NVL(BMSTOCKTAX,0)      + /*NVL(BMSTOCKTAX1,0)      +*/
+                       NVL(MLIMITOVERSUM,0)   + NVL(BLIMITOVERSUM,0)    + NVL(BLIMITOVERSUM1,0),  /*임원퇴직소득초과금액 2013.11 jissi*/ 
+            NOTAX    = NVL(MNOTAX,0)          + NVL(BNOTAX,0)           + NVL(INDEPENDNOTAX,0)   + NVL(BINDEPENDNOTAX,0)  +
+                       NVL(BINDEPENDNOTAX1,0) + NVL(OVTMNOTAX,0)        + NVL(BOVTMNOTAX,0)      + NVL(BOVTMNOTAX1,0)     +
+                       NVL(KEDUNOTAX,0)       + NVL(BKEDUNOTAX,0)       + NVL(BKEDUNOTAX1,0)     + NVL(FOREIGNNOTAX,0)    +
+                       NVL(BFOREIGNNOTAX,0)   + NVL(BFOREIGNNOTAX1,0)   + NVL(COSTOCKNOTAX,0)    + NVL(BCOSTOCKNOTAX,0)   +
+                       NVL(BCOSTOCKNOTAX1,0)  + NVL(COSTOCK75NOTAX,0)   + NVL(BCOSTOCK75NOTAX,0) + NVL(BCOSTOCK75NOTAX1,0)+
+                       NVL(COSTOCK50NOTAX,0)  + NVL(BCOSTOCK50NOTAX,0)  + NVL(BCOSTOCK50NOTAX1,0)+ NVL(MSTOCKTNOTAX,0)    +
+                       NVL(BMSTOCKNOTAX,0)    + NVL(BMSTOCKNOTAX1,0)    
+      WHERE WorkYY   = :workyy
+        and (empno  >= :frempno and empno <= :toempno ) ;       
+      
+     if ( sqlca.sqlcode != 0)
+     {       
+           Write_batlog(seqno++, "4. 급여총액 setting Error");  
+           err_print(sqlca.sqlcode,"4. 급여총액 setting Error");
+           exit(1);
+     }
+           
+     /*[조세특례제한법 제18조의2 제1항]에 해당하는 근로자(외국인) 2009.12.31까지 유효 
+      총근로소득의 30%를 추가로 비과세 처리한다. 
+     EXEC SQL
+     UPDATE PKMYSMODIFY_CH
+        SET TAXGROSS = TAXGROSS - floor( TAXGROSS * 30 / 100),
+            NOTAX    = NOTAX    + floor( TAXGROSS * 30 / 100)
+      WHERE SUBSTR(JUMINID,8,1) in ('5','6');
+     
+     if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 )
+     {  
+          Write_batlog(seqno++, " 외국인 과세금액 setting Error");  
+          err_print(sqlca.sqlcode," 외국인 과세금액 Setting Error");
+          exit(1);
+     } 
+     */  
+     /*-------------------------------------------------------------*/  
+     
+     /*-------------------------------------------------------------*/  
+     EXEC SQL DECLARE c1 CURSOR FOR
+     SELECT  EMPNO,                 REPLACE(NVL(JUMINID,''),'-',''),               NVL(TAXGROSS,0),   NVL(FORITAXGROSS,0),  /* 국외근로소득 */
+             NVL(MCOGBONSUM,0),     NVL(BCOGBONSUM,0),     NVL(MATE,0),            NVL(FAMILYNO,0),
+             NVL(FAMI65NO,0),       NVL(OBSTACLENO,0),     NVL(CHILDNO,0),         NVL(WOMAN,0),
+             NVL(ANUAMT,0),         NVL(BANUAMT,0)     +   NVL(BANUAMT1,0)    +    0   BANUAMT,       /*NVL(BANUAMT2,0) */         
+             NVL(MEDAMT,0),         NVL(BMEDAMT,0)     +   NVL(BMEDAMT1,0)    +    0   BMEDAMT,       /*NVL(BMEDAMT2,0) */
+             NVL(HIREAMT,0),        NVL(BHIREAMT,0)    +   NVL(BHIREAMT1,0)   +    0   BHIREAMT,      /*NVL(BHIREAMT2,0)*/
+             NVL(GUARAMT,0),        NVL(GHOSAMT,0),        NVL(OHOSAMT,0),         NVL(NHOSAMT,0),
+             NVL(KEDUNO,0),         NVL(UEDUNO,0),         NVL(SEDUAMT,0),         NVL(KEDUAMT,0),    
+             NVL(CEDUNO,0),         NVL(CEDUAMT,0),        NVL(UEDUAMT,0),         
+             NVL(HOUSEAMT,0),       NVL(HOUSEAMT2,0),      NVL(AGIVEAMT,0),        NVL(PGIVEAMT,0),   NVL(PGIVEAMT2,0),  NVL(SGIVEAMT,0),
+             NVL(PENAMT1,0),        NVL(PENAMT2,0),        NVL(BPENAMT,0),         NVL(HLOANAMT,0),   NVL(FORIAMT,0),    NVL(ETCTAMT,0),      
+             NVL(MINTAX,0),         NVL(MJUTAX,0),         NVL(MNONGTAX,0),        
+             NVL(BINTAX,0)     +    NVL(BINTAX1,0)     +   0                       BINTAX,       /*NVL(BINTAX2,0)  */
+             NVL(BJUTAX,0)     +    NVL(BJUTAX1,0)     +   0                       BJUTAX,       /*NVL(BJUTAX2,0)  */ 
+             NVL(BNONGTAX,0)   +    NVL(BNONGTAX1,0)   +   0                       BNONGTAX,     /*NVL(BNONGTAX1,0)*/
+             NVL(KEDUNO1,0),        NVL(KEDUAMT1,0),       NVL(INVESTAMT,0),   
+             NVL(CREDITTOTAMT,0),   NVL(CREDITDEDAMT,0),   NVL(CREDITAMT,0),       NVL(OBSGUARAMT,0), NVL(NPENAMT,0),    NVL(NPENAMT2,0),   
+             NVL(OBSEDUAMT, 0),     NVL(OINVESTAMT, 0),    NVL(SPGIVAMT, 0),       NVL(OBSEDUNO, 0),       /*2000~2001투자조합출자소득,특레지정기부금)*/
+             NVL(DEBITAMT,0),       NVL(GIROAMT,0),                                
+             NVL(POLIAMT,0),        NVL(FAMI70NO,0),       NVL(SPECADDNO,0),       NVL(SPECADDDED,0),            
+             NVL(SHOSAMT,0),        NVL(HOUSEINTAMT,0),    NVL(HOUSEINTAMT2,0),    NVL(HOUSEINTAMT3,0), 
+             NVL(CASHAMT,0),        NVL(COSTOCKAMT,0),                             
+             NVL(MANYCHILDNO,0),    NVL(BABYNO,0),                                                           /*NVL(FEWNO,0) 대신 NVL(MANYCHILDNO,0)로 변경*/
+             NVL(FUNDAMT1,0),       NVL(FUNDAMT2,0),       NVL(FUNDAMT3,0),        NVL(LONGMTAMT,0),         /* Dsa2000 추가  2008.12.*/          
+             NVL(HOUSERENTAMT,0),   NVL(HOUSERENTDED,0),   NVL(HOUSVSUBAMT,0),     NVL(HOUSVCOMAMT,0), 
+             NVL(HOUSVEMPAMT,0),    NVL(HOUSEAMT3,0),                                                                        
+             NVL(TMARKETAMT ,0),    NVL(HOUSEINTAMT4,0),   NVL(HOUSEINTAMT5,0),    NVL(INVESTAMT2  ,0),      /* 2012.12 추가*/
+             NVL(SPARENT ,0),       NVL(TRAFFICAMT,0),     NVL(INVESTAMT3,0),      NVL(INVESTAMT4,0),  NVL(HSRENTINAMT  ,0),     /* 2013.11 추가*/
+             NVL(INVESTAMT5,0),     NVL(INVESTAMT6,0),     NVL(INVESTAMT7,0),      NVL(LONGFUNDAMT,0),       /* 2014.12 추가*/
+             NVL(CREDITADDAMT1,0),  NVL(CREDITADDAMT2,0),  NVL(CREDITADDAMT3,0),   NVL(CREDITADDAMT4,0),     /* 2014.12 추가*/
+             NVL(NPGIVEAMT2_2010,0),NVL(NPGIVEAMT2_ELSE,0),                                                  /* 2014.12 추가*/
+             NVL(INFANTTAXDED,0),   NVL(ADDBABYTAXDED,0),  NVL(OBSGUARTAXDED,0)                              /*2015.04.24 jissi */
+       FROM  PKMYSMODIFY_CH 
+      WHERE  WorkYY  = :workyy
+        and (empno  >= :frempno and empno <= :toempno ) ;
+      
+     EXEC    SQL OPEN c1;
+     
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {       
+             Write_batlog(seqno++, "연말정산 기초자료 fetch Error1");  
+             err_print(sqlca.sqlcode,"연말정산 기초자료 fetch Error1");
+             exit(1);
+     }
+     
+     while(1)
+     {
+          ClearVar();
+             
+          EXEC SQL FETCH c1 INTO
+          :empno,          :juminid,        :taxgross,       :foritaxgross,                /* 국외근로소득 */
+          :mcogbonsum,     :bcogbonsum,     :mate,           :familyno,  
+          :fami65no,       :obstacleno,     :childno,        :woman,       
+          :anuamt,         :banuamt,                         
+          :medamt,         :bmedamt,                         
+          :hireamt,        :bhireamt,                        
+          :guaramt,        :ghosamt,        :ohosamt,        :nhosamt,     
+          :keduno,         :ueduno,         :seduamt,        :keduamt,      
+          :ceduno,         :ceduamt,        :ueduamt,        
+          :houseamt,       :houseamt2,      :agiveamt,       :pgiveamt,    :pgiveamt2,  :sgiveamt,
+          :penamt1,        :penamt2,        :bpenamt,        :hloanamt,    :foriamt,    :etctamt,    
+          :mintax,         :mjutax,         :mnongtax,                                  
+          :bintax,         :bjutax,         :bnongtax,                                  
+          :keduno1,        :keduamt1,       :investamt,                                 
+          :credittotamt,   :creditdedamt,   :creditamt,      :obsguaramt,  :npenamt,    :npenamt2,     
+          :obseduamt,      :oinvestamt,     :spgivamt,       :obseduno,                    /* parksh 20021213 추가  */
+          :debitamt,       :giroamt,                                                       /* Dsa2000 추가  2003.12.*/
+          :poliamt,        :fami70no,       :specaddno,      :specaddded, 
+          :shosamt,        :houseintamt,    :houseintamt2,   :houseintamt3,
+          :cashamt,        :costockamt,                      
+          :fewno,          :babyno,                          
+          :fundamt1,       :fundamt2,       :fundamt3,       :longmtamt,                   /* DSA2000 추가  2008.12.*/
+          :houserentamt,   :houserentded,   :housvsubamt,    :housvcomamt,    
+          :housvempamt,    :houseamt3,
+          :tmarketamt,     :houseintamt4,   :houseintamt5,   :investamt2,
+          :sparent,        :trafficamt,     :investamt3,     :investamt4,  :hsrentinamt,
+          :investamt5,     :investamt6,     :investamt7,     :longfundamt, 
+          :creditaddamt1,  :creditaddamt2,  :creditaddamt3,  :creditaddamt4,
+          :npgiveamt2_2010,:npgiveamt2_else,
+          :infanttaxded,   :addbabytaxded,  :obsguartaxded;                                /*2015.04.24 jissi */
+          
+          
+          if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {       
+            Write_batlog(seqno++, "연말정산 기초자료 read Error");  
+            err_print(sqlca.sqlcode,"연말정산 기초자료 read Error");
+                  exit(1);
+          }
+     
+          if (sqlca.sqlcode == 1403)
+          {
+                  EXEC SQL close c1;
+                  break;
+          }
+          
+          sprintf(tmpempno , "%.1s", empno);
+          /* ---------------------------------------------------------------------
+            근로소득공제 : 근로소득계산시 인정상여 포함으로 변경                                               
+          ------------------------------------------------------------------------*/ 
+          t1 = t2 = t3 = t4 = t5 = 0;
+          
+          t1 = INDEDBASIC * INDEDBRATE / 100;     /*INDEDBASIC 요율적용. 2009년.*/
+          if (taxgross < INDEDBASIC )  t1 = taxgross * INDEDBRATE / 100;  
+  
+          if ((taxgross > INDEDBASIC) && (taxgross <= INDEDLIMIT2))
+          {
+               t2 = (taxgross - INDEDBASIC) * INDEDORATE / 100;
+          }  
+          else if ((taxgross > INDEDLIMIT2) && (taxgross <= INDEDLIMIT3))
+          {
+               t2 = (INDEDLIMIT2 - INDEDBASIC ) * INDEDORATE  / 100;
+               t3 = (taxgross    - INDEDLIMIT2) * INDEDORATE2 / 100;
+          }  
+          else if ((taxgross > INDEDLIMIT3) && (taxgross <= INDEDLIMIT4))
+          {
+               t2 = (INDEDLIMIT2 - INDEDBASIC ) * INDEDORATE  / 100;
+               t3 = (INDEDLIMIT3 - INDEDLIMIT2) * INDEDORATE2 / 100;
+               t4 = (taxgross    - INDEDLIMIT3) * INDEDORATE3 / 100;
+          }  
+          else if (taxgross > INDEDLIMIT4)
+          {
+               t2 = (INDEDLIMIT2 - INDEDBASIC ) * INDEDORATE  / 100;
+               t3 = (INDEDLIMIT3 - INDEDLIMIT2) * INDEDORATE2 / 100;
+               t4 = (INDEDLIMIT4 - INDEDLIMIT3) * INDEDORATE3 / 100;  
+               t5 = (taxgross    - INDEDLIMIT4) * INDEDORATE4 / 100;  
+          }   
+          
+          laborded = trunc(t1 + t2 + t3 + t4 + t5);
+          
+          if ( taxgross == 0) /*테스트용*/
+          {
+               printf("taxgross : %f\n",taxgross);             
+               printf("t1 : %f\n",t1);
+               printf("t2 : %f\n",t2);
+               printf("t3 : %f\n",t3);
+               printf("t4 : %f\n",t4);
+               printf("t5 : %f\n",t5);             
+               printf("laborded : %f\n",laborded);
+          }
+                                                             
+          laboramt = taxgross - laborded;     
+          
+          if (laboramt < 0) 
+          {
+               laborded = taxgross;
+               laboramt = 0;
+          }
+          /*printf("empno %s : taxgross %f : laborded %f : laboramt %f \n", empno, taxgross, laborded, laboramt); */    
+     
+/* 인적공제 START ===============================================================================*/
+          /*  본인공제  */
+          selfded  = BASDED;
+          
+          /*  배우자 공제  */
+          mateded  = mate * BASDED;
+     
+          /*  부양가족공제  */
+          famided  = familyno * BASDED;
+          
+          /*  기본공제  */
+          basicded = selfded + mateded + famided;
+       
+/* 추가공제  ===============================================================================*/ 
+          /*  경로우대공제  */
+          /*oldded   = fami65no          * APPOLDDED;   65세이상 100 */
+          oldded   = fami70no * APPOLDDED2;  /* 70세이상 100 */
+     
+          /*  장애인 공제  */
+          obsded   = obstacleno * OBSDEDADD;     /* 200만원으로 인상*/
+           
+          /*  부녀자 공제 50만원 */
+          womanded = woman * APPDED;
+     
+          /*  자녀양육비 공제    만6세이하  100만원 삭제 2014.11 jissi
+          childded = childno * APPOLDDED;  */
+          childded =0;
+          /*  출산.입양공제 2008신설  200만원       삭제 2014.11 jissi
+          babyded  = babyno * APPBABYDED;  */
+          babyded  =0;
+          /*  한부모공제 2013신설  100만원  부녀자공제 중복공제 배제 */
+          sparentded  = sparent * SPARENTDEDADD;
+          if (sparentded > 0)  
+          {
+              woman    = 0;
+              womanded = 0;
+          }
+          
+          /*  추가공제  */
+          appendded = oldded + obsded + womanded 
+                   /*  + childded + babyded       자녀양육비, 출산.입양공제 삭제 2014.11 jissi*/
+                    + sparentded;                 /* 한부모공제 2013 추가 */
+          
+          /*  소수공제자추가공제 - 폐지  */                            
+          /*                                                         
+            if      ((familyno + mate) == 0)     
+                fewded = FEWDED1;                         
+            else if ((familyno + mate) == 1) 
+                fewded = FEWDED2;                         
+            else                                                      
+                fewded = 0;                              
+          */
+          
+                              
+          /* 다자녀추가공제 : 기본공제대상자인 자녀(아들,딸)                삭제 2014.11 jissi   
+             2인일 경우     50만원,
+             2인 이상일경우 50만원 + 2인 초과인원당 100만원 추가공제
+             ex) 기본공제 자녀 3인일 경우 50만원 + 100만원 = 150만원 공제    
+          if      (fewno == 2)  fewded = FEWDED1;
+          else if (fewno >  2)  fewded = FEWDED1 + ((fewno - 2) * FEWDED2);
+          else                  fewded = 0; 
+          */    
+                
+          laborlimit = fmax((laboramt - basicded - appendded), 0); 
+/* 연금보험료 공제 START ===============================================================================*/
+          /*  국민연금료 공제     */
+          /*anuded = anuamt + banuamt;  국민연금이 마이너스인 사원이 있어 비교처리*/
+          anuded = fmax(anuamt + banuamt, 0) ;                 
+          laborlimit = fmax((laborlimit- anuded), 0);
+
+/* 특별공제 이후 START */  
+          Process_Standded_Y();
+          StandY_intax = dintax;
+          Process_Standded_N();
+          StandN_intax = dintax;
+          if (StandY_intax < StandN_intax)
+               Process_Standded_Y();     
+               
+          /*printf("empno=%s,StandN_intax = %f, StandY_intax =%f \n",empno, StandN_intax, StandY_intax);*/
+/* 특별공제 이후 END   */          
+
+          /* 농특세:주택자금공제,투자조합공제  */
+          if ((tinvestded + hsrentinded + longfundded + hloanded) > 0) 
+          {  
+               /*dnongtax = floor( ( hloanded + (GetTax(tinvestded + taxlevel) - calctax)) * NONGRATE / 100) ; 계산방식 변경 2014.01*/  
+               /* 계산방식 변경 2014.02*/   
+               calctaxlevel = 0;
+               calctaxlevel = chagamamt - ( pended                
+                                          + housvsubded + housvcomded + housvempded   
+                                          + creditded   + costockded
+                                          ) 
+                                        + fmax(splimitovded-investded-longfundded,0); /* 장기집합투자저축 longfundded추가 2014.12 */
+               
+               dnongtax = fmax(floor(( hloanded + (GetTax(calctaxlevel) - calctax)) * NONGRATE / 100),0) ;               
+               if (strcmp(tmpempno, "M") != 0)
+                   dnongtax = fmax(floor(dnongtax / 10) * 10, 0);   /* 2014.01 손필영 요청 원단위 절사 뺌*/
+          } 
+          else
+          {
+               dnongtax = 0 ;
+          }	               
+
+          /* 징수세액 */
+          intax   = mintax   + bintax;
+          jutax   = mjutax   + bjutax;
+          nongtax = mnongtax + bnongtax;
+          
+          /*차감징수세액은 trunc 로 작업해야 함. dsa2000*/
+          yintax  = trunc( (dintax   - intax  ) / 10 ) * 10;
+          yjutax  = trunc( (djutax   - jutax  ) / 10 ) * 10;
+          ynongtax= trunc( (dnongtax - nongtax) / 10 ) * 10;
+          
+          /*차감징수세액 소액부징수인 경우 0 */
+          if ((yintax   >= 0) && (yintax   < 1000))
+          {
+          	   yintax   = 0;
+          	   yjutax   = 0;
+          }
+          
+          if ((ynongtax >= 0) && (ynongtax < 1000))
+          {
+          	   ynongtax = 0;
+          }
+          
+          ycalctax = yintax + yjutax + ynongtax;
+          
+          UpdateResult();
+     }
+}
+Process_Standded_N()
+{
+     double  creamt1;
+     double  CreditSum;
+     double  totcreditamt;   /*  신용카드 공제가능 총금액  */
+     double  creditded1;     /* 2012.12. .신용카드등 사용분 공제액 */
+     double  creditded2;     /* 2012.12. .직불카드+현금카드 사용분 공제액 */
+     double  creditded3;     /* 2012.12. .전통시장 사용분 공제액 */
+     double  creditded4;     /* 2013.11. .대중교통 사용분 공제액 */  
+     double  creditded5;     /* 2014.12. .체크카드 등 사용액 증가분 공제액 */   
+     double  crededlimit1;   /* 2012.12. .총급여 중 기준금액 초과분 */     
+     double  crededlimit2;   /* 2012.12. .공제가능금액 */     
+     double  crededlimit3;   /* 2013.12. .공제가능금액 */     
+     
+     double  pgivededlimit1; /* 2012.12. . 지정기부공제 한도 */     
+     double  pgivededlimit2; /* 2012.12. . 종교단체기부 한도 */     
+     double  pgivededamt;    /* 2012.12. . 소득금액_지정기부금용 */
+     double  pgiveded_curr   = 0;/* 지정기부금 종교단체외(당해년) jissi 2013.11  */
+     double  pgiveded2_curr  = 0;/* 지정기부금 종교단체(당해년)   jissi 2013.11  */
+     
+     double  houseintmaxded;
+     double  houseintmaxded2;
+     double  houseintmaxded3;
+     double  houseintmaxded4;
+     double  houseintmaxded5;
+
+     double  medappded_A;  
+     double  medappded_B;        
+     double  med_dedamt;
+     
+     double  INVESTLIMIT1      = 0;
+     double  INVESTLIMIT2      = 0;
+     double  investded_2012    = 0;     /* 투자조합 2012년 투자분 공제액       2013.11 */
+     double  investded_2013    = 0;     /* 투자조합 2013년 투자분 공제액       2013.11 */
+     double  investded_2014    = 0;     /* 투자조합 2014년 투자분 공제액       2014.12 */ 
+     double  investded_2014_1  = 0;     /* 투자조합 2014년 투자분 공제액       2014.12 */ 
+     double  investded_2014_2  = 0;     /* 투자조합 2014년 투자분 공제액       2014.12 */ 
+     
+     double  totlimitded       = 0;     /* 소득공제 종합한도 적용대상 항목 계  2013.11 */
+     double  calctaxlimit      = 0;     /* 산출세액 차감 계산용                2015.01 */
+     double  givetaxded        = 0;     /* 기부금 산식적용 변수                2015.01 */
+     double  givetaxded_limit  = 0;     /* 기부금 산식적용 변수                2015.01 */
+     double  givetaxded_calc   = 0;     /* 기부금 산식적용 변수                2015.01 */
+     double  agivetaxded_calc  = 0;     /* 기부금 산식적용 변수                2015.01 */
+
+/* 특별 공제 START ===============================================================================*/                
+          /*  건강보험료 공제     */
+          medded = medamt + bmedamt;
+          laborlimit = fmax((laborlimit- medded), 0);
+                
+          /*  고용보험료 공제     */
+          hireded= hireamt + bhireamt;
+          laborlimit = fmax((laborlimit- hireded), 0);
+               
+          /* 보험료공제 = 의료보험료 + 고용보험료 -> 2014년 특별세액공제로 일반보험료 + 장애인보험료 변경  */
+          insded = medded + hireded;                    
+
+          
+          /* ===================================================================================================== */
+          /*  주택자금공제                                                                                         */
+          /* ① MIN((1+2+3),300만원)                                                                               */
+          /*  1 주택임차차입금 원리금상환공제와 월세액소득공제                                                     */
+          /*            : (주택임차차입금 원리금상환공제) * 40% 까지 공제                                          */
+          /*  2 월세액소득공제                                                                                     */ 
+          /*            : (월세액소득공제) * 50% 까지 공제                                                         */
+          /*  3 주택마련저축(청약저축,주택청약종합저축,장기주택마련저축,근로자주택마련저축)                        */
+          /*            : (청약저축,주택청약종합저축,장기주택마련저축,근로자주택마련저축 납입액) * 40% 까지 공제   */
+          /* ②장기주택저당차입금 이자상환액공제                                                                   */
+          /*            : 차입금이자상환액1 전액.        [단, (차입금이자상환액1+원리금상환액) Max 600만원]  10년  */
+          /*              차입금이자상환액2 전액.        [단, (차입금이자상환액2+원리금상환액) Max1000만원]  15년  */
+          /*              차입금이자상환액3 전액.        [단, (차입금이자상환액3+원리금상환액) Max1500만원]  30년  */
+          /*              차입금이자상환액4 전액.        [단, (차입금이자상환액4+원리금상환액) Max1000만원]고정금리*/
+          /*              차입금이자상환액5 전액.        [단, (차입금이자상환액5+원리금상환액) Max 500만원]기타대출*/
+          /* ===================================================================================================== */                
+          /* 주택자금공제① */
+          /* 1 주택임차 차입금원리금상환액 40% */      
+          houseded   = floor(houseamt  * HSRATE / 100);          /* 주택임차원리금상환액_대출기관  KTH*/
+          if ( houseded  > HSDEDLIMIT ) houseded = HSDEDLIMIT;
+          	
+          if (houseded < 0) houseded=0;
+          
+          houseded   = fmin( laborlimit, houseded);
+          laborlimit = fmax((laborlimit - houseded), 0);
+                    	
+          houseded3   = floor(houseamt3 * HSRATE / 100);         /* 주택임차원리금상환액_거주자  KTH*/
+          if ( houseded3 + houseded > HSDEDLIMIT ) houseded3 = HSDEDLIMIT-houseded;          	
+          
+          if (houseded3 < 0) houseded3=0;   
+          
+          houseded3  = fmin( laborlimit, houseded3);                                                                                 
+          laborlimit = fmax((laborlimit - houseded3), 0);
+          /* 2 월세액 50% -> 2014.12 jissi 월세세액공제로 변경
+          houserentded = floor(houserentamt * HSRATE2 / 100);    / 월세액 공제율(HSRATE2)로 변경 2013 /
+          if ( houserentded > (HSDEDLIMIT - houseded - houseded3) ) 
+               houserentded =  HSDEDLIMIT - houseded - houseded3;
+          if ( houserentded < 0 ) houserentded = 0;
+          */    
+          houserentded   = 0;
+          /* 3 주택마련저축 */
+          /* 청약저축 40% */
+          housvsubded = floor(housvsubamt * HSRATE / 100 );
+          if ( housvsubded >= 480000) housvsubded = 480000;
+          if ( housvsubded > (HSDEDLIMIT - houseded  - houseded3 - houserentded) )              
+               housvsubded =  HSDEDLIMIT - houseded  - houseded3 - houserentded;                
+          if ( housvsubded < 0 ) housvsubded = 0;
+              
+          /* 주택청약종합저축 40% */
+          housvcomded = floor( housvcomamt * HSRATE / 100 );
+          if (housvcomded >= 480000) housvcomded = 480000;
+          if ( housvcomded > (HSDEDLIMIT - houseded  - houseded3 - houserentded - housvsubded) )
+               housvcomded =  HSDEDLIMIT - houseded  - houseded3 - houserentded - housvsubded;  
+          if ( housvcomded < 0 ) housvcomded = 0;
+                          
+          /* 장기주택마련저축 소득공제 40% 2013.11 삭제*/
+          /*
+          houseded2 = floor( houseamt2 * HSRATE / 100 );
+          if ( houseded2 > (HSDEDLIMIT - houseded - houseded3 - houserentded - housvsubded - housvcomded) )
+               houseded2 =  HSDEDLIMIT - houseded - houseded3 - houserentded - housvsubded - housvcomded;
+          if ( houseded2 < 0 ) houseded2 = 0;
+          */
+          houseded2 = 0;
+              
+          /* 근로자주택마련저축 40% */
+          housvempded = floor( housvempamt * HSRATE / 100 );
+          if (housvempded >= 720000) housvempded = 720000; 
+          if ( housvempded > (HSDEDLIMIT - houseded - houseded3 - houserentded - housvsubded - housvcomded - houseded2) )
+               housvempded =  HSDEDLIMIT - houseded - houseded3 - houserentded - housvsubded - housvcomded - houseded2;                   
+          if ( housvempded < 0 ) housvempded = 0;      
+          
+          /* 외국인은 주민등록법에 적용받지 않아 세대주가 될 수 없음 jissi 2013.12 */
+          sprintf(tmpjuminid , "%.1s", juminid+6 ) ;                            
+          if (((strcmp(tmpjuminid, "5") == 0) || (strcmp(tmpjuminid, "6") == 0)))
+          {
+               houseded      = houseded3     = 0;
+               houserentded  = housvsubded   = housvcomded   = housvempded   = 0; 
+          }
+          
+          houseded4 = housvsubded + housvcomded + houseded2 + housvempded; //주택마련저축소득공제 합 
+          /* 주택자금공제② : 장기주택저당차입금이자상환 */
+          houseintmaxded  = houseintded  = fmin(houseintamt ,HSDEDLIMIT2); 
+          houseintmaxded2 = houseintded2 = fmin(houseintamt2,HSDEDLIMIT3);
+          houseintmaxded3 = houseintded3 = fmin(houseintamt3,HSDEDLIMIT4);
+          houseintmaxded4 = houseintded4 = fmin(houseintamt4,HSDEDLIMIT5); /* 추가 2012.12*/ 
+          houseintmaxded5 = houseintded5 = fmin(houseintamt5,HSDEDLIMIT6); /* 추가 2012.12*/ 
+          
+                        /*주택임차원리금상환액      //주택마련저축소득공제 //장기주택저당차입금이자상환액*/
+          housededsum = houseded    + houseded3    + houserentded + houseded4    +                     
+                        houseintded + houseintded2 + houseintded3 + houseintded4 + houseintded5;
+          
+          if      (houseintamt3 > 0 )      /* 상환기간 30년 이상일때 1500만원까지...kth 2010.01 추가*/
+          {
+              housededsum = fmin(housededsum,HSDEDLIMIT4);
+          }                    
+          else if (houseintamt4 > 0 )      /* 고정금리.비거치상황대출(2012년이후)일때 1500만원까지... 2012.12 추가*/
+          {
+              housededsum = fmin(housededsum,HSDEDLIMIT5);
+          }                    
+          else if (houseintamt2 > 0 )      /* 상환기간 15년 이상일때 1000만원까지...*/
+          {
+              housededsum = fmin(housededsum,HSDEDLIMIT3);
+          }
+          else if (houseintamt  > 0 )      /* 상환기간 10년 이상일때  600만원까지...*/
+          {
+              housededsum = fmin(housededsum,HSDEDLIMIT2);
+          }
+          else if (houseintamt5 > 0 )     /* 기타대출(2012년이후)일때  500만원까지...*/
+          {
+              housededsum = fmin(housededsum,HSDEDLIMIT6);
+          }          
+          /*2014.12 jissi 월세액 삭제 + houserentded */ 
+          houseintded  = fmin(fmax((HSDEDLIMIT2 - (houseded + houseded3 + houserentded + houseded4)),0),houseintded );
+          houseintded2 = fmin(fmax((HSDEDLIMIT3 - (houseded + houseded3 + houserentded + houseded4) - houseintded),0),houseintded2);
+          houseintded3 = fmin(fmax((HSDEDLIMIT4 - (houseded + houseded3 + houserentded + houseded4) - houseintded - houseintded2),0),houseintded3);
+          houseintded4 = fmin(fmax((HSDEDLIMIT5 - (houseded + houseded3 + houserentded + houseded4) - houseintded - houseintded2 - houseintded3),0),houseintded4);
+          houseintded5 = fmin(fmax((HSDEDLIMIT6 - (houseded + houseded3 + houserentded + houseded4) - houseintded - houseintded2 - houseintded3 - houseintded4),0),houseintded5); 
+          
+          housededsum  = housededsum - (houseded + houseded3 + houserentded + houseded4 + houseintded + houseintded2 + houseintded3 + houseintded4 + houseintded5);
+          
+          if(housededsum  > 0)
+          {
+             double temp_houseintded =0;
+             
+             temp_houseintded = (houseintmaxded - houseintded);
+             houseintded      = houseintded + fmin(housededsum,temp_houseintded);
+             housededsum      = fmax((housededsum-temp_houseintded),0);
+             
+             temp_houseintded = (houseintmaxded2 - houseintded2);             
+             houseintded2     = houseintded2 + fmin(housededsum,temp_houseintded);
+             housededsum      = fmax((housededsum-temp_houseintded),0);          	
+             
+             temp_houseintded = (houseintmaxded3 - houseintded3);
+             houseintded3     = houseintded3 + fmin(housededsum,temp_houseintded);
+             housededsum      = fmax((housededsum-temp_houseintded),0);          
+             
+             temp_houseintded = (houseintmaxded4 - houseintded4);
+             houseintded4     = houseintded4 + fmin(housededsum,temp_houseintded);
+             housededsum      = fmax((housededsum-temp_houseintded),0);
+             
+             temp_houseintded = (houseintmaxded5 - houseintded5);
+             houseintded5     = houseintded5 + fmin(housededsum,temp_houseintded);
+             housededsum      = fmax((housededsum-temp_houseintded),0);                    		          	
+             
+             /*printf("[debug in after] : empno=%s,houseintmaxded5=%f,housededsum=%f,houseintded5= %f,%f  \n",empno,houseintmaxded5,housededsum,houseintded5,(houseintmaxded5 - houseintded5));*/
+          }          
+          if(housededsum  < 0) housededsum = 0;
+          
+          /* 외국인은 주민등록법에 적용받지 않아 세대주가 될 수 없음 jissi 2013.12 */
+          if (((strcmp(tmpjuminid, "5") == 0) || (strcmp(tmpjuminid, "6") == 0))) 
+          {                                                                   
+               houseintded   = houseintded2  = houseintded3  = houseintded4  = houseintded5  = 0;                                                 
+          } 
+          
+          houseintded  = fmin( laborlimit, houseintded);
+          laborlimit   = fmax((laborlimit - houseintded), 0);
+          
+          houseintded2 = fmin( laborlimit, houseintded2);
+          laborlimit   = fmax((laborlimit - houseintded2), 0);
+          
+          houseintded3 = fmin( laborlimit, houseintded3);
+          laborlimit   = fmax((laborlimit - houseintded3), 0);
+
+          houseintded4 = fmin( laborlimit, houseintded4);
+          laborlimit   = fmax((laborlimit - houseintded4), 0);
+
+          houseintded5 = fmin( laborlimit, houseintded5);
+          laborlimit   = fmax((laborlimit - houseintded5), 0);                                                                      
+          
+          /* 이월기부금 */	
+          EXEC    SQL
+          SELECT NVL(SUM(DECODE(GIVECOD,'10',DEDAMT)),0) NAGIVEAMT,
+                 NVL(SUM(DECODE(GIVECOD,'30',DEDAMT,'31',DEDAMT)),0) NSPGIVAMT,
+                 NVL(SUM(DECODE(GIVECOD,'40',DEDAMT)),0) NPGIVEAMT2,
+                 NVL(SUM(case when NEWORKYY='2010' and givecod='40' then DEDAMT else 0 end),0) NPGIVEAMT2_2010,
+                 NVL(SUM(case when NEWORKYY>'2010' and givecod='40' then DEDAMT else 0 end),0) NPGIVEAMT2_ELSE,	
+                 NVL(SUM(DECODE(GIVECOD,'41',DEDAMT)),0) NPGIVEAMT
+            INTO :nagiveamt,  :nspgivamt,  :npgiveamt2,  :npgiveamt2_2010,  :npgiveamt2_else,   :npgiveamt
+            FROM PKMYSGIVNE_CH             
+           WHERE WORKYY = :workyy 
+             AND EMPNO  = :empno
+             AND WORKYY > NEWORKYY
+           GROUP BY EMPNO;
+             
+          if (sqlca.sqlcode != 0)
+          {       
+             nagiveamt       = 0;
+             nspgivamt       = 0;
+             npgiveamt2      = 0;
+             npgiveamt2_2010 = 0;
+             npgiveamt2_else = 0;
+             npgiveamt       = 0;  
+          }          
+          /*if (strcmp(empno, "M116") == 0)  printf("nagiveamt : %s %f\n", empno, nagiveamt);*/
+          
+          /* 정치기부금 2014.12 jissi 로직수정 
+           //정치기부금 : 10만원까지 세액공제, 나머지는 전액기부금 처리. 
+           //정치기부금 주민세 10%포함하여 최대 10만원 한도 세액공제로 변경 2007.12 
+           
+          politaxded = 0;
+          
+          if (poliamt > POLILIMIT)
+          {
+               polided    = floor(POLILIMIT * 100 / 110);  // 정치세액공제
+               politaxded = poliamt - POLILIMIT;           // 정치  기부금           
+               politaxded = fmin(politaxded,laboramt);
+               //polided politaxded를 서로 바꿔 사용했으면 함. 이력 데이터 전부 이전하고 프로그램 수정하고.^^
+          }
+          else
+          {  
+               polided    = floor(poliamt * 100 / 110);    // polided 정치자금 세액공제
+          } 
+          */
+          if (poliamt > POLILIMIT)
+          {
+               polided1    = POLILIMIT;                      /*정치세액공제10만원 이하 공제대상금액*/
+               politaxded1 = floor(polided1  * 100 / 110);   /*정치세액공제10만원 이하 세액공제액  */
+               polided2    = poliamt - POLILIMIT;            /*정치세액공제10만원 초과 공제대상금액*/            
+               polided2    = fmin(polided2,laboramt);        
+               if ((polided2 + POLILIMIT) > GIVESLIMIT)      /*정치세액공제10만원 초과 세액공제액  */
+               {
+                    politaxded2 = floor((GIVESLIMIT - POLILIMIT ) * SPECIALRATE2 / 100) 
+                                + floor((polided2   + POLILIMIT   - GIVESLIMIT)  * GIVESRATE    / 100);
+               }
+               else
+               {
+               	    politaxded2 = floor(polided2    * SPECIALRATE2 / 100);
+               }	
+          }
+          else
+          {  
+               polided1    = poliamt;                        /*정치세액공제10만원 이하 공제대상금액*/
+               politaxded1 = floor(polided1 * 100 / 110);    /*정치세액공제10만원 이하 세액공제액  */
+               polided2    = 0;                              /*정치세액공제10만원 초과 공제대상금액*/
+               politaxded2 = 0;                              /*정치세액공제10만원 초과 세액공제액  */   
+          } 
+          
+          /* 법정기부금 : 전액기부금  2014.12 jissi 로직수정 */
+          /*
+          agiveded   = agiveamt + nagiveamt;         
+          agiveded   = fmin((laboramt - politaxded), agiveded);
+          agiveded   = fmax(agiveded, 0);                          
+          */     
+          nagiveded  = nagiveamt;
+          nagiveded  = fmin((laboramt - polided2), nagiveded);
+          nagiveded  = fmax(nagiveded, 0);  
+          
+          agiveded   = agiveamt;  
+          agiveded   = fmin((laboramt - polided2 - nagiveded), agiveded);   
+          agiveded   = fmax(agiveded,  0);           
+          
+          /* 특례지정기부금 2013 삭제 */
+          /*
+          spgivded = spgivamt + nspgivamt;
+          if ( spgivded > floor((laboramt-polided2-agiveded) * SPGIVDEDRATE / 100))
+               spgivded = floor((laboramt-polided2-agiveded) * SPGIVDEDRATE / 100) ;
+          */
+          spgivded = 0;
+          
+          /* 지정기부금 */ 
+          /* 2014.12 jissi 로직 수정
+          pgivededamt = fmax((laboramt - politaxded - agiveded),0);        * 소득금액 :(근로소득금액 -정치기부금 - 법정기부금) *
+          */
+          pgivededamt = fmax((laboramt - polided2 - nagiveded - agiveded),0);/* 소득금액 :(근로소득금액 -정치기부금 - 이월법정기부금 - 당해법정기부금) */
+          
+          pgiveded    = pgiveamt  + npgiveamt;  /* 종교   */  
+          pgiveded2   = pgiveamt2 + npgiveamt2; /* 비종교 */  
+          
+          npgiveded   = 0; // 종교이월     
+          npgiveded2  = 0;// 비종교이월                                           
+
+          if ((pgiveded > 0)&&(pgiveded2 > 0)) 
+          { 
+               /* 지정기부금전체한도 */
+               pgivededlimit1 = floor((pgivededamt * GIVDEDRATE / 100)+fmin((pgivededamt * GIVDEDRATE2 / 100),
+                                                                             fmin((pgivededamt * GIVDEDRATE / 100),npgiveamt2_2010)+ npgiveamt2_else + pgiveamt2 ));
+               /* 종교단체 공제한도 */
+               pgivededlimit2 = floor(pgivededamt * GIVDEDRATE / 100); 
+                
+               /* 지정기부금공제금액 */
+               pgivededlimit1 = fmin((pgiveded + pgiveded2), pgivededlimit1);
+                              
+               /* 2014.12 jissi 로직 수정               
+               * 해당년도 종교단체외 기부금 *
+               pgiveded2            = fmin( pgivededlimit1,  pgiveamt2);
+               pgivededlimit1       = fmax((pgivededlimit1 - pgiveded2),0);
+               
+               * 해당년도 종교단체 기부금 *
+               pgiveded             = fmin( pgivededlimit2,  pgiveamt);
+               pgiveded             = fmin( pgivededlimit1,  pgiveded);
+               pgivededlimit1       = fmax((pgivededlimit1 - pgiveded),0);
+               pgivededlimit2       = fmax((pgivededlimit2 - pgiveded),0);
+               
+               * 종교단체외 이월기부금 *
+               npgiveded2           = fmin( pgivededlimit1,  npgiveamt2);
+               pgivededlimit1       = fmax((pgivededlimit1 - npgiveded2),0);
+               
+               * 종교단체 이월기부금 *
+               pgivededlimit2       = fmin( pgivededlimit2,  pgivededlimit1);
+               npgiveded            = fmin( pgivededlimit2,  npgiveamt);
+               */
+               
+               /* 종교단체외 이월기부금*/
+               npgiveded2           = fmin( pgivededlimit1,  npgiveamt2);
+               pgivededlimit1       = fmax((pgivededlimit1 - npgiveded2),0);
+               
+               /* 종교단체 이월기부금  */
+               pgivededlimit2       = fmin( pgivededlimit2,  pgivededlimit1);
+               npgiveded            = fmin( pgivededlimit2,  npgiveamt);
+               pgivededlimit1       = fmax((pgivededlimit1 - npgiveded),0);
+               pgivededlimit2       = fmax((pgivededlimit2 - npgiveded),0);
+               
+               /* 해당년도 종교단체외 기부금  */
+               pgiveded2            = fmin( pgivededlimit1,  pgiveamt2);
+               pgivededlimit1       = fmax((pgivededlimit1 - pgiveded2),0);
+               
+               /* 해당년도 종교단체 기부금    */
+               pgiveded             = fmin( pgivededlimit2,  pgiveamt);
+               pgiveded             = fmin( pgivededlimit1,  pgiveded);
+
+          }
+          else if (pgiveded2 > 0) 
+          {
+               if (pgiveded2==npgiveamt2_2010) 
+               {
+                  	pgivededlimit1 = floor(pgivededamt * GIVDEDRATE2 / 100);
+               }
+               else 
+               {
+                  	pgivededlimit1 = floor(pgivededamt * GIVDEDRATE3 / 100);
+               }
+               /* 2014.12 jissi 로직 수정
+               pgiveded  = 0;
+               pgiveded2 = fmin(pgiveded2,pgivededlimit1);
+               */
+               npgiveded2          = fmin( pgivededlimit1,  npgiveamt2);
+               pgivededlimit1      = fmax((pgivededlimit1 - npgiveded2),0);  
+               pgiveded2           = fmin( pgivededlimit1,  pgiveamt2);   
+               pgiveded            = 0;   
+          }
+          else if (pgiveded > 0) 
+          {
+               pgivededlimit1      = floor(pgivededamt * GIVDEDRATE / 100); /* 종교단체 공제한도 */
+               /* 2014.12 jissi 로직 수정
+               pgiveded  = fmin(pgiveded,pgivededlimit1);          	
+               pgiveded2 = 0;
+               */
+               npgiveded           = fmin( pgivededlimit1,  npgiveamt);
+               pgivededlimit1      = fmax((pgivededlimit1 - npgiveded),0);
+               pgiveded2           = 0;
+               pgiveded            = fmin( pgivededlimit1,  pgiveamt);           	
+          }
+          else 
+          {
+               pgiveded2           = 0;
+               pgiveded            = 0;	
+          } 
+          
+          /*연말정산 처리순에서 기부금공제전 소득공제 금액이 제로인 경우 기부금 이월 처리*/
+          if (laborlimit <= 0) 
+          {
+               polided1   = 0;  /*polided    = 0;2014.12 jissi 필드변경*/
+               polided2   = 0;  /*politaxded = 0;2014.12 jissi 필드변경*/
+               nagiveded  = 0;  /*2014.12 jissi 추가*/
+               agiveded   = 0;
+               spgivded   = 0;
+               npgiveded2 = 0;  /*2014.12 jissi 추가*/
+               npgiveded  = 0;  /*2014.12 jissi 추가*/
+               pgiveded2  = 0;
+               pgiveded   = 0;
+               ngiveded   = 0;  /*2014.12 jissi 추가*/
+               giveded    = 0;        
+          }
+          else if (laborlimit < giveded) 
+          {   
+               polided2   = fmin( laborlimit,  polided2);
+               laborlimit = fmax((laborlimit - polided2),0);
+               
+               nagiveded  = fmin( laborlimit,  nagiveded );
+               laborlimit = fmax((laborlimit - nagiveded ),0); 
+               
+               agiveded   = fmin( laborlimit,  agiveded );
+               laborlimit = fmax((laborlimit - agiveded ),0);
+          
+               spgivded   = fmin( laborlimit,  spgivded);
+               laborlimit = fmax((laborlimit - spgivded),0);
+               
+               npgiveded2 = fmin( laborlimit,  npgiveded2);    
+               laborlimit = fmax((laborlimit - npgiveded2),0); 
+                                                                  
+               npgiveded  = fmin( laborlimit,  npgiveded);     
+               laborlimit = fmax((laborlimit - npgiveded),0); 
+               
+               pgiveded2  = fmin( laborlimit,  pgiveded2);
+               laborlimit = fmax((laborlimit - pgiveded2),0);
+          
+               pgiveded   = fmin( laborlimit,  pgiveded);
+               laborlimit = fmax((laborlimit - pgiveded),0);
+          }
+          /*
+          pgiveded  = pgiveded  + npgiveded;
+          pgiveded2 = pgiveded2 + npgiveded2;   
+          */           
+          pgiveded_curr   = pgiveded;
+          pgiveded2_curr  = pgiveded2;
+                          
+          ngiveded        = nagiveded  + npgiveded + npgiveded2;  
+
+          /* 결혼.장례.이사비용공제(신설) - 건당 100만  2500만원 이하.  : 2009년 폐지. 
+          if   (taxgross > 25000000)
+               specaddded = 0;
+          else
+               specaddded = Trunc(specaddno * SPECADDLIMIT);  */          
+                    
+          /* 특별공제 = 건강,고용보험료공제 + 주택자금공제 + 이월기부금공제 */ 
+          /* 보장성보험료, 의료비, 교육비, 월세액 삭제  +  hosded  +  eduded  +  houserentded  2014.12*/
+          specialded = medded       + hireded      + houseded     + houseded3    +
+                       houseintded  + houseintded2 + houseintded3 + houseintded4 + houseintded5 + ngiveded ;
+          
+          /* 표준공제 삭제 => 표준세액공제로 변경 2014.12 jissi
+          standded = 0 ;                
+          if (specialded < STDDED)
+          {
+                  insded       = hosded       = eduded       = houseded     = houseded3    = 0;
+                  houserentded = houseintded  = houseintded2 = houseintded3 = houseintded4 = houseintded5  = 0;
+                  giveded      = medded       = hireded      = guarded      = obsguarded   = 0;
+                  seduded      = keduded      = keduded1     = ceduded      = ueduded      = obseduded     = 0;
+                  agiveded     = pgiveded     = pgiveded2    = spgivded     = politaxded   = specialded    = 0;
+                  standded     = STDDED ;                                     
+          }
+          */
+          /* 차감소득금액 2013 */
+          chagamamt  = fmax((laboramt - basicded  - appendded           /*인적공제 다자녀+ fewded 삭제             2014.12*/
+                                      - anuded                          /*연금보험료공제 - 연금저축 + npended 삭제 2014.12*/ 
+                                      - specialded),0);                 /*특별공제 표준공제 + standded 삭제        2014.12*/  
+
+          laborlimit = chagamamt;
+/* 그밖의 소득공제 START=====================================================================*/
+
+          /*  개인연금공제 */
+          pended       = floor( (penamt1 + penamt2 + bpenamt) * PENRATE / 100);
+          
+          if (pended   > PENDEDLIMIT)
+              pended   = PENDEDLIMIT;
+              
+          pended      = fmin( laborlimit,  pended);                                                                                 
+          laborlimit  = fmax((laborlimit - pended), 0);  
+          
+          /* 주택마련저축 */          
+          housvsubded = fmin( laborlimit,  housvsubded);
+          laborlimit  = fmax((laborlimit - housvsubded), 0);
+          
+          housvcomded = fmin( laborlimit,  housvcomded);
+          laborlimit  = fmax((laborlimit - housvcomded), 0);
+          
+          housvempded = fmin( laborlimit,  housvempded);
+          laborlimit  = fmax((laborlimit - housvempded), 0);                
+              
+          
+          /* 투자조합공제  */ 
+          /* 2011년 이전 투자조합출자금 처리내역 삭제 2014.12       
+          OINVESTLIMIT   = floor(laboramt   * OINVESTDEDRATE / 100) ; / kth 2010.02 공제율 INVESTDEDRATE 데이터 없어서계산 안되는 거 30%넣어서 처리 /
+          oinvestded     = floor(oinvestamt * OINVESTRATE    / 100) ; / kth 2010.02 공제율 INVESTRATE 10%로 같이 사용 /
+          
+          if (oinvestded > OINVESTLIMIT) oinvestded = OINVESTLIMIT;   
+          */ 
+          INVESTLIMIT1     = floor(laboramt  * INVESTDEDRATE  / 100);
+          INVESTLIMIT2     = floor(laboramt  * INVESTDEDRATE3 / 100); 
+          investded_2012   = floor( (investamt  * INVESTRATE  / 100) 
+                                  + (investamt2 * INVESTRATE2 / 100) ); /* 2013.11 jissi */ 
+          investded_2013   = floor( (investamt3 * INVESTRATE  / 100) 
+                                  + (investamt4 * INVESTRATE3 / 100) ); /* 2013.11 jissi */ 
+          investded_2014_1 = floor( (investamt5 * INVESTRATE4 / 100) ); /* 2014.12 jissi */                                                       
+          investded_2014_2 = floor( (investamt6 * INVESTRATE5 / 100)                                                           
+                                  + (investamt7 * INVESTRATE6 / 100) ); /* 2014.12 jissi */      
+                                                                
+          investded2       = fmax(fmin(INVESTLIMIT1, investded_2012 + investded_2013),0);  
+          investded3       = fmax(fmin(INVESTLIMIT2- investded2, investded_2014_1+investded_2014_2),0);                                        
+                                                                                                                               
+          tinvestded       = investded2 + investded3;          /*parksh  20021213 oinvestded; 투자조합공제액합*/          
+                                                                                                                               
+          tinvestded       = fmin(laborlimit, tinvestded);                                                                       
+          laborlimit       = fmax((laborlimit - tinvestded),0);                                                       
+                                                                                                                                 
+          investded        = fmin(fmax((tinvestded - investded_2012 - investded_2014_2),0), investded_2013 + investded_2014_1);  
+          
+          /* 2000~2001투자조합  삭제2010.12..
+          OINVESTLIMIT   = floor(taxgross   * INVESTDEDRATE / 100);
+          oinvestded     = floor(oinvestamt *           15  / 100);          
+          if (oinvestded > OINVESTLIMIT)
+              oinvestded = OINVESTLIMIT;                        
+          tinvestded = investded + oinvestded;      투자조합공제액합*/
+                    
+          /*================================================================================
+            2003.12. Dsa2000  추가....  => 2004.12  기명식선불카드 추가. 직불카드 요율 20%로 축소
+            2005.11  현금영수증 사용액(cashamt) 추가 
+            2007.12  신용카드공제시 의료비중복공제 배제.(의료비공제 받은 자에 대한 중복공제 배제)
+            
+          ① 신용카드등 사용금액 = 신용카드+기명식 선불카드+직불카드+지로납부금액+현금영수증+전통시장사용분
+          ② 최저사용금액 =(총급여액×25%)
+          ③ 신용카드등   =(신용카드금액))×15%  *학원비 지로공제 삭제
+          ④ 직불+현금카드=(직불카드+현금영수증)×30%
+          ⑤ 전통시장     =(전통시장)×30%
+          ⑥ 대중교통     =(대중교통)×30%  
+          ⑦ 사용액 증가분=if   (2013년본인신용카드등사용액<2014년본인신용카드사용액)
+                           then (2014년하반기 추가공제율사용분 -(2013년 추가공제율사용분×50%))*10%
+                           else 0
+          ⑧ 공제제외금액 
+                1(최저사용금액 <= 신용카드사용분)일때  최저사용금액 * 15% or
+                2(최저사용금액 >  신용카드사용분)일때  ③(신용카드사용분*15%) +(최저사용금액-신용카드사용분*30%       
+          ⑨ 신용카드등 소득공제금액 : ③+④+⑤+⑥-⑧+⑦  ☞ 한도액 :  MIN(총급여액×20%,300만원)
+          ⑩ 전통시장사용분 추가공제 MIN(MIN(한도초과금액, 전통시장사용분*30%),100만원)
+             대중교통이용분 추가공제 MIN(MIN(한도초과금액, 대중교통이용분*30%),100만원)
+          ⑪ 신용카드등 소득공제 = ⑨총 공제금액 + ⑩ 전통시장사용분, 대중교통이용분 추가 공제
+          ================================================================================ */                                          
+          /*신용카드등   if (strcmp(empno, "M119") == 0) printf("HOUSEDED2 : %f\n" , houseded2);
+          ================================================================================ */
+          creditamt = credittotamt - creditdedamt; /* 신용카드 공제 가능금액 = 총 공제신청금액 - 법인 사용분 */     
+          
+          if (creditamt < 0)    creditamt = 0; 
+          
+          /* 전체 신용카드 등 사용금액 합계 */
+          totcreditamt = creditamt + cashamt + debitamt + tmarketamt + trafficamt;   /* giroamt 2013 삭제 */       /*①*/  
+          
+          /* 직불.선불카드, 현금카드 사용금액 합계*/
+          CreditSum    = debitamt + cashamt;   /* giroamt 2013 삭제 */
+          
+          /* 최저사용금액 : 총급여액의 25%*/                                                                              
+          crededlimit1 = floor(taxgross  * CREORATE / 100);                             /*②*/
+           
+          if  ((totcreditamt - crededlimit1) > 0)   /* (전체합계-총급여액×25%) 이 0 보다 클경우 계산 */
+          {       
+              creditded1 = floor( creditamt  * CREDEDLRATE    /100) ;                   /*③ 신용카드*/                  
+              creditded2 = floor( CreditSum  * DEBITDEDRATE   /100) ;                   /*④ 직불,현금영수증 2013*/
+              creditded3 = floor( tmarketamt * TMARKETDEDRATE /100) ;                   /*⑤ 전통시장 2013*/
+              creditded4 = floor( trafficamt * TRAFFICDEDRATE /100) ;                   /*⑥ 대중교통 2013*/
+              
+              /*⑥ 증가분 추가공제 2014*/
+              creditded5 = 0;
+              if ( creditaddamt1 < creditaddamt2 )
+              {
+                   creditded5 = floor((creditaddamt4 - floor(creditaddamt3 * CARDUPRATE1 / 100)) * CARDUPRATE2 / 100);
+                   creditded5 = fmax(creditded5, 0);
+              }
+
+              crededlimit2 = floor(crededlimit1  * CREDEDLRATE / 100);                  /*⑧-1*/
+                
+              if ( crededlimit2 > creditded1 )
+                   crededlimit2 = creditded1 + floor((crededlimit1-creditamt)*DEBITDEDRATE /100); /*⑧-2*/
+              
+              crededlimit2 = creditded1 + creditded2 + creditded3 + creditded4 - crededlimit2 + creditded5; /*⑨ 신용카드등 소득공제금액 */ 
+              
+              /* ☞ 한도액 : 총과세급여액의 20%와 300만원중 적은금액 */
+              creamt1 = fmin(floor(taxgross * CREDEDRATE / 100),CREDEDLIMIT) ;   
+                
+              creditded = fmin(creamt1,crededlimit2);
+              
+              crededlimit3 = crededlimit2; 
+              
+              /* ⑩-1전통시장 추가 한도금액 적용 */
+              if (((crededlimit2-creditded)>0)&&(creditded3>0))
+              {
+                crededlimit2 = fmin((crededlimit2-creditded),creditded3); 
+                crededlimit2 = fmin(crededlimit2,TMARKETEXLIMIT);
+                creditded    = creditded + crededlimit2;                         /*⑪*/
+              }
+              /* ⑩-2대중교통 추가 한도금액 적용 */
+              if (((crededlimit3-creditded)>0)&&(creditded4>0))
+              {
+                crededlimit3 = fmin((crededlimit3-creditded),creditded4); 
+                crededlimit3 = fmin(crededlimit3,TRAFFICEXLIMIT);
+                creditded    = creditded + crededlimit3;                         /*⑪*/
+              }
+          }
+          else creditded = 0;
+          
+          creditded  = fmin( laborlimit,  creditded);                                                                                 
+          laborlimit = fmax((laborlimit - creditded), 0); 
+          
+          /* 우리사주조합출연공제  */
+          if  ( costockamt > COSTOCKLIMIT )  costockded = COSTOCKLIMIT;
+          else                               costockded = costockamt;   
+          
+          costockded = fmin( laborlimit,  costockded);                                                                                 
+          laborlimit = fmax((laborlimit - costockded), 0);                           
+                       
+          /* 장기주식형저축 소득공제 : 납입 1년차 금액의 20%, 납입 2년차 금액의 10%, 납입 3년차 금액의 5% 2013 삭제 */
+          /*
+          fundded = floor( fundamt1 * FUNDRATE1 / 100 +
+                           fundamt2 * FUNDRATE2 / 100 +
+                           fundamt3 * FUNDRATE3 / 100  );
+          if (fundded < 0) fundded = 0;
+          */
+          fundded = 0;
+          
+          /* 목돈안드는 전세 이자상환액 공제 2013.11 jissi */
+          hsrentinded = floor(hsrentinamt * HSRENTINTRATE / 100);
+          if  ( hsrentinded > HSRENTINTLIMIT )  hsrentinded = HSRENTINTLIMIT;  
+          
+          hsrentinded  = fmin( laborlimit,  hsrentinded);                                                                                 
+          laborlimit   = fmax((laborlimit - hsrentinded), 0); 
+          
+          /* 장기집합투자증권저축 소득공제   2014.11 jissi */
+          longfundded = floor(longfundamt * LONGFUNDRATE / 100);
+          if  ( longfundded > LONGFUNDLIMIT1 )  longfundded = LONGFUNDLIMIT1; 
+          if  ( taxgross    > LONGFUNDLIMIT2 )  longfundded = 0;    
+          
+          longfundded  = fmin( laborlimit,  longfundded);                                                                                 
+          laborlimit   = fmax((laborlimit - longfundded), 0);        
+          
+          /* 그밖의 소득공제 합계 */
+          incomeded  = pended        /*그밖의 소득공제 - 연금저축(npended)  제외*/
+                     + housvsubded + housvcomded + housvempded   
+                     + tinvestded  + creditded   + costockded   
+                     /*+ fundded    장기주식형저축 소득공제 2013 삭제*/
+                     + hsrentinded   /*그밖의 소득공제 - 목돈 안드는 전세자금 이자상환액 추가 2013.11 */
+                     + longfundded;  /*그밖의 소득공제 - 장기집합투자증권저축 소득공제액 추가 2014.11 */
+                     
+          /* 소득공제 종합한도 초과액 2013.11 jissi */
+          totlimitded  = 0;
+          totlimitded  = 
+                       /*   guarded                                                                 소득공제 종합한도 적용대상 항목 - 1 일반보험료공제            2013.11 */        
+                       /* + fmax(hosded-obshosded,0)                                                소득공제 종합한도 적용대상 항목 - 2 기타의료비공제            2013.11 */             
+                       /* + fmax(eduded-obseduded,0)                                                소득공제 종합한도 적용대상 항목 - 3 기타교육비공제            2013.11 */ 
+                         houseded + houseded3                                                    /* 소득공제 종합한도 적용대상 항목 - 4 주택임차차입금 공제       2013.11 */ 
+                       /* + houserentded                                                            소득공제 종합한도 적용대상 항목 - 5 월세액 공제               2013.11 */  
+                       + housvsubded + housvcomded + housvempded                                 /* 소득공제 종합한도 적용대상 항목 - 6 주택마련저축 공제         2013.11 */   
+                       + houseintded + houseintded2 + houseintded3 + houseintded4 + houseintded5 /* 소득공제 종합한도 적용대상 항목 - 7 장기주택저당차입금 공제   2013.11 */ 
+                       /* + pgiveded_curr + pgiveded2_curr                                          소득공제 종합한도 적용대상 항목 - 8 당해년 지정기부금   제외  2014.01 */          
+                       + investded                                                               /* 소득공제 종합한도 적용대상 항목 - 9 당해년 투자조합출자 공제  2013.11 */
+                       + creditded                                                               /* 소득공제 종합한도 적용대상 항목 - 10 신용카드 등 공제         2013.11 */     
+                       + costockded                                                              /* 소득공제 종합한도 적용대상 항목 - 11 우리사주조합출연금 공제  2013.11 */
+                       + longfundded ;                                                           /* 소득공제 종합한도 적용대상 항목 - 12 장기집합투자증권저축공제 2014.12 */
+
+          splimitovded = fmax(totlimitded - SPDEDLIMIT,0); 
+
+/* 과세표준  START=====================================================================*/
+          taxlevel   = chagamamt  
+                     - incomeded                                        /*그밖의 소득공제*/
+                     + splimitovded;                                    /*소득공제 종합한도 초과액*/ 
+          
+          if   (taxlevel < 0 )  taxlevel = 0;
+             
+          /* 산출세액 */
+          if   (taxlevel == 0)  calctax  = 0;
+          else                  calctax  = GetTax(taxlevel);
+          calctaxlimit = calctax;      
+                
+/* 세액 공제    START=====================================================================*/
+          /* 근로소득 세액 공제 */
+          if   ( calctax < TAXDEDBASIC)
+                incomtded = floor(calctax * TAXDEDBRATE / 100);
+          else  
+                incomtded =     floor((TAXDEDBASIC  * TAXDEDBRATE / 100)
+                          + (calctax - TAXDEDBASIC) * TAXDEDORATE / 100);
+                          
+          incomtded = fmax(incomtded, 0); 
+          /* 근로소득 세액공제 한도액 계산 추가 2014.12
+          if       (taxgross  <= TAXDEDSECT1)
+               incomtded = fmin(TAXDEDSLIMIT1,incomtded);
+          else if  (taxgross  <= TAXDEDSECT2)
+               incomtded = fmin(fmax(TAXDEDSLIMIT1-floor((taxgross-TAXDEDSECT1)*1/2),TAXDEDSLIMIT2), incomtded);
+          else if  (taxgross  >  TAXDEDSECT2)
+               incomtded = fmin(fmax(TAXDEDSLIMIT2-floor((taxgross-TAXDEDSECT2)*1/2),TAXDEDLIMIT  ), incomtded);
+          */
+          
+          if       (taxgross  <= TAXDEDSECT1)
+               incomtded = fmin(TAXDEDSLIMIT1,incomtded);
+          else if  (taxgross  <= TAXDEDSECT2)
+               incomtded = fmin(fmax(TAXDEDSLIMIT1-floor((taxgross-TAXDEDSECT1)*0.008),TAXDEDSLIMIT2), incomtded);
+          else if  (taxgross  >  TAXDEDSECT2)
+               incomtded = fmin(fmax(TAXDEDSLIMIT2-floor((taxgross-TAXDEDSECT2)*1/2  ),TAXDEDLIMIT  ), incomtded);
+               
+          incomtded    = fmin(calctaxlimit,incomtded);
+          calctaxlimit = fmax(calctaxlimit-incomtded, 0);
+          
+          /* 자녀세액공제 : 기본공제대상자인 자녀(아들,딸)                2014.11 jissi   
+             2인 이하일 경우  1인당  15만원,
+             2인 이상일 경우  30만원 + 2인 초과인원당 30만원 추가공제
+             ex) 기본공제 자녀 3인일 경우 30만원 + 30만원 = 60만원 공제   */ 
+          if      (fewno <= 2)  childtaxded = (fewno * FEWDED1);
+          else if (fewno >  2)  childtaxded = (2     * FEWDED1) + ((fewno - 2) * FEWDED2);
+          
+          childtaxded  = fmin(calctaxlimit,childtaxded);
+          calctaxlimit = fmax(calctaxlimit-childtaxded, 0);
+          
+          /* 6세이하 2자녀이상 세액공제 2015.04.24 jissi 추가 */  
+          if (childno > 1)      infanttaxded = (childno-1) * INFANTDED;
+          else                  infanttaxded = 0;        
+
+          infanttaxded  = fmin(calctaxlimit,infanttaxded);     
+          calctaxlimit  = fmax(calctaxlimit-infanttaxded, 0);  
+          /* 출산.입양 세액공제 2015.04.24 jissi 추가 */  
+          if (babyno > 0)       addbabytaxded = babyno * ADDBABYDED;
+          else                  addbabytaxded = 0;
+
+          addbabytaxded  = fmin(calctaxlimit,addbabytaxded);   
+          calctaxlimit   = fmax(calctaxlimit-addbabytaxded, 0);
+                    
+          /* 퇴직연금보험료 공제  MIN(불입액 + 연금저축불입액, 300만원) : SKB는 미시행.  */
+         
+          /* 연금저축공제  2013년 연금보험료 공제로 포함 -> 2014년 연금세액공제로 변경 2014.12*/      
+          npended      = npenamt + npenamt2 ; 
+          
+          if  (npended > NPENDEDLIMIT) 
+               npended = NPENDEDLIMIT; 
+          /* 2015.04.24 jissi 연금저축 세액공제 총급여 5500만원 이하 15% 적용 */
+          if (taxgross <= NPENLIMIT)
+               npendtaxded  = floor(npended * NPENRATE2 / 100);
+          else
+               npendtaxded  = floor(npended * NPENRATE  / 100); 
+          
+          npendtaxded  = fmin(calctaxlimit,npendtaxded);
+          calctaxlimit = fmax(calctaxlimit-npendtaxded, 0);
+          /* 세액공제가 0일때 공제대상금액도 0 */
+          if  (npendtaxded <= 0) 
+               npended = 0;               
+          /*  보장성 보험료 특별세액공제로 변경 2014.11 jissi */
+          /*  일반보험료 공제  100만원까지   */
+          guarded = guaramt;
+          if ( guarded > INSDEDLIMIT )
+               guarded = INSDEDLIMIT;
+          
+          /* 장애인전용보험료    */  
+          obsguarded = obsguaramt;       
+          if ( obsguarded > OBSDEDLIMIT )
+               obsguarded = OBSDEDLIMIT;  
+               
+          /* 2015.04.24 jissi 보장성보험,장애인전용보험 세액공제 분리 */
+          guartaxded   = floor(guarded     * SPECIALRATE1 / 100);           
+          guartaxded   = fmin(calctaxlimit,guartaxded);       
+          calctaxlimit = fmax(calctaxlimit-guartaxded, 0);    
+          /* 세액공제가 0일때 공제대상금액도 0 */
+          if  (guartaxded <= 0) 
+               guarded = 0; 
+          
+          obsguartaxded= floor(obsguarded  * SPECIALRATE2 / 100);           
+          obsguartaxded= fmin(calctaxlimit,obsguartaxded);    
+          calctaxlimit = fmax(calctaxlimit-obsguartaxded, 0); 
+          /* 세액공제가 0일때 공제대상금액도 0 */
+          if  (obsguartaxded <= 0) 
+               obsguarded = 0; 
+          
+          /* 의료비 특별세액공제로 변경 2014.11 jissi */
+          /* 의료비 공제 : 과세급여액*MEDORATE를 초과하는 의료비중 MEDDEDLIMIT를 한도로 공제 ,
+             but 본인,장애자,경로우대자의료비가 있는 경우 추가로 공제 
+             추가공제에 본인의료비(shosamt) 포함 2004년 귀속부터 */
+          hosamt = ghosamt + ohosamt + nhosamt + shosamt;  
+          hosded = hosamt - (taxgross  * MEDORATE / 100);                         /*의료비 기본공제*/
+    
+          if ( hosded < 0 )  hosded=0;                        
+          
+          if (hosded > MEDDEDLIMIT)
+              hosded = MEDDEDLIMIT;
+
+          medappded_A = hosamt - floor(taxgross * MEDORATE / 100) - MEDDEDLIMIT;  /*의료비 추가공제*/
+          if (medappded_A < 0 ) 
+              medappded_A = 0;
+
+          medappded_B = ohosamt + nhosamt + shosamt;
+          if  ( medappded_A < medappded_B ) 
+                hosded = floor(hosded + medappded_A);
+          else  hosded = floor(hosded + medappded_B);
+            
+          /* 장애인 의료비 공제금 계산 추가 2013.11 */  
+          if  ( hosded < nhosamt ) 
+                obshosded = hosded;
+          else  obshosded = nhosamt; 
+          
+          /* 의료비 특별세액공제 */
+          hostaxded    = floor(hosded  * SPECIALRATE2 /100); 
+          
+          hostaxded    = fmin(calctaxlimit,hostaxded);
+          calctaxlimit = fmax(calctaxlimit-hostaxded, 0);
+          /* 세액공제가 0일때 공제대상금액도 0 */
+          if  (hostaxded <= 0) 
+               hosded = 0; 
+
+          /* 교육비 공제 : 본인학자금 */
+          seduded = seduamt;
+          
+          /* 취학전아동교육비  */                          
+          if  (keduamt > keduno * KINEDULIMIT)
+               keduded = keduno * KINEDULIMIT;
+          else keduded = keduamt;
+          
+          /* 초중고 학자금공제 */
+          ceduded = ceduamt;
+          if  (ceduamt > ceduno * CJKEDULIMIT)
+               ceduded = ceduno * CJKEDULIMIT;
+          else ceduded = ceduamt;
+
+          /* 대학교육비 공제 */
+          if  (ueduamt > ueduno * UNIEDULIMIT)
+               ueduded = ueduno * UNIEDULIMIT;
+          else ueduded = ueduamt;
+
+          /* 장애인특수교육비 전액 */ 
+          /* 장애인특수교육비  추가  한도 폐지 */
+          /*if (obseduded > obseduno * OBSEDULIMIT) 
+                obseduded = obseduno * OBSEDULIMIT;    */
+          obseduded = obseduamt;        
+          
+          /* 교육비 공제 = 본인교육비 + 취학전아동교육비 + 초중고교육비 + 대학교육비 */
+          eduded    = seduded + keduded  + ceduded + ueduded + obseduded;
+          
+          /* 교육비 특별세액공제 */
+          edutaxded = floor(eduded * SPECIALRATE2 /100);  
+          
+          edutaxded    = fmin(calctaxlimit,edutaxded);
+          calctaxlimit = fmax(calctaxlimit-edutaxded, 0);
+          /* 세액공제가 0일때 공제대상금액도 0 */
+          if  (edutaxded <= 0)
+          {
+          	   seduded   = 0;
+          	   keduded   = 0;
+          	   ceduded   = 0;
+          	   ueduded   = 0; 
+          	   obseduded = 0;
+               eduded    = 0; 
+          }
+          /* 기부금 특별세액공제 */
+          if (calctaxlimit <= 0) 
+          {
+                polided1    = 0;
+                polided2    = 0;
+                agiveded    = 0;
+                pgiveded2   = 0;
+                pgiveded    = 0;
+                giveded     = 0;
+                politaxded1 = 0;
+                politaxded2 = 0;
+                agivetaxded = 0;
+                pgivetaxded = 0;
+          } 
+          else if (calctaxlimit > 0) 
+          {
+               /* 정치자금 세액공제  */
+               politaxded1  = fmin( calctaxlimit,  politaxded1);
+               calctaxlimit = fmax((calctaxlimit - politaxded1), 0);
+               
+               politaxded2  = fmin( calctaxlimit,  politaxded2);
+               calctaxlimit = fmax((calctaxlimit - politaxded2), 0);
+               
+               /* 법정,지정 기부금 특별세액공제 */
+               giveded = agiveded + pgiveded + pgiveded2; 
+               if ( giveded <=  GIVESLIMIT) 
+               {
+                    agivetaxded  = floor( agiveded  * SPECIALRATE2 / 100);  
+                    pgivetaxded  = floor((pgiveded2 + pgiveded)  * SPECIALRATE2 / 100);
+               }
+               else
+               {
+                    givetaxded   = floor(( GIVESLIMIT * SPECIALRATE2 / 100)+((giveded-GIVESLIMIT) * GIVESRATE /100));
+                    agivetaxded  = floor(  givetaxded * (agiveded   / giveded));  
+                    pgivetaxded  = floor(  givetaxded *((pgiveded2 + pgiveded)   / giveded));
+               }                        
+                
+               /* 법정+지정 기부금으로 인해 결정세액이 0인 경우 안분 처리   */
+               givetaxded = agivetaxded +  pgivetaxded;
+               if ((calctaxlimit   < givetaxded ) )
+               {
+                    givetaxded_calc = givetaxded - calctaxlimit;
+                    
+                    /* 법정 세액공제  */
+                    agivetaxded_calc = floor(givetaxded_calc * (agiveded / giveded));
+                    agivetaxded      = fmax( agivetaxded  - agivetaxded_calc, 0);
+                    calctaxlimit     = fmax((calctaxlimit - agivetaxded), 0);
+                    
+                    /* 지정 세액공제  */                   
+                    pgivetaxded      = calctaxlimit;
+                    
+                    /* 법정, 기부금  공제대상금액 안분처리  */
+                    givetaxded = agivetaxded +  pgivetaxded;
+                    givetaxded_limit = floor(GIVESLIMIT  * SPECIALRATE2 / 100);            
+                    if (givetaxded  < givetaxded_limit)    /*  세액공제계가 4500000 이하면15%, 이상이면 15% / 25%  */
+                    {
+                         givetaxded_calc  = floor(givetaxded / SPECIALRATE2 * 100);
+                         
+                         agiveded     = fmax(floor(givetaxded_calc *  (agiveded  / giveded)), 0);
+                         pgiveded2    = fmax(floor(givetaxded_calc *  (pgiveded2 / giveded)), 0);
+                         pgiveded     = fmax(floor(givetaxded_calc *  (pgiveded  / giveded)), 0);
+                    } 
+                    else    /* 3천만원까지 15%, 초과는 25% 안분 처리  */
+                    {
+                         givetaxded_calc = floor( givetaxded_limit / SPECIALRATE2 * 100) +   
+                                           floor((givetaxded - givetaxded_limit) / GIVESRATE * 100)  ;
+                         
+                         agiveded     =  fmax(floor(givetaxded_calc *  (agiveded  / giveded)), 0);
+                         pgiveded2    =  fmax(floor(givetaxded_calc *  (pgiveded2 / giveded)), 0);
+                         pgiveded     =  fmax(floor(givetaxded_calc *  (pgiveded  / giveded)), 0);
+                    }
+               }
+               giveded = polided2 + agiveded +  spgivded + pgiveded + pgiveded2;
+          }    
+                    
+          /* 2014.12 특별세액공제계  */                                                                
+          taxdedsum = guartaxded + hostaxded + edutaxded + politaxded1 + politaxded2 + agivetaxded + pgivetaxded
+                    + obsguartaxded;    /*2015.04.25 jissi 장애인전용보험 추가*/
+          
+          standded  = 0; /*표준세액공제*/    
+          /* 주택차입금이자세액 공제  */
+          hloanded  = floor(hloanamt * HSINTRATE / 100); 
+         
+          /* 외국인은 주민등록법에 적용받지 않아 세대주가 될 수 없음 jissi 2013.12 */
+          if (((strcmp(tmpjuminid, "5") == 0) || (strcmp(tmpjuminid, "6") == 0))) 
+          {                                                                       
+               hloanded    = 0;                                                                                            
+          }                                 
+
+          hloanded     = fmin(calctaxlimit,hloanded);   
+          calctaxlimit = fmax(calctaxlimit-hloanded, 0);
+          
+          /*  외국납부세액공제한도:   국내근로소득금액 * 국외근로소득금액 / 근로소득금액  */
+          /*   외국납부세액공제  *************************************** */
+          FORILIMIT = 0;
+               
+          /*  국외근로소득공제 */
+          foritaxgross1 = foritaxgross -  ( laborded * foritaxgross / taxgross ); 
+          
+          if   (laborded > 0)  FORILIMIT = calctax * foritaxgross1 / laborded;
+          
+          if   (FORILIMIT  < foriamt)  forided = FORILIMIT;
+          else                         forided = foriamt;                  
+          
+          forided          = fmin(calctaxlimit,forided);   
+          calctaxlimit     = fmax(calctaxlimit-forided, 0);
+          
+          /* 월세세액공제 */                               
+          houserentded     = fmin(HOUSERENTLIMIT2, houserentamt);
+          houserenttaxded  = fmax(floor(houserentded * HOUSERENTRATE / 100),0);
+          houserenttaxded  = fmin(calctaxlimit,houserenttaxded);   
+          calctaxlimit     = fmax(calctaxlimit-houserenttaxded, 0);
+          /* 세액공제가 0일때 공제대상금액도 0 */
+          if  (houserenttaxded <= 0) 
+               houserentded = 0;
+               
+          /*세액공제 합계*/
+          tdedsum = incomtded + childtaxded 
+                  + infanttaxded + addbabytaxded   /*2015.04.24 jissi  infanttaxded,addbabytaxded 추가*/ 
+                  + npendtaxded + taxdedsum + standded + hloanded + forided   
+                  + etctded + houserenttaxded;  
+          
+          
+          /* ======  외국인근로자 17% 단일세율 분리과세 적용. ============================================================= 
+          if ( (strcmp(empno, "M082") == 0) or (strcmp(empno, "M092") == 0) or (strcmp(empno, "M094") == 0) or
+               (strcmp(empno, "M102") == 0) or (strcmp(empno, "M107") == 0) or (strcmp(empno, "2706") == 0)   )                
+          {
+              taxgross = taxgross + notax; 
+              laborded = 0;   
+              laboramt = fmax(taxgross - laborded,0);      
+              
+              //단일세율 분리과세 적용하면 인원도 0으로 바꿔야 하나 인원까지 마스터가 실제로 바뀌면 일반적 연말정산시는 연말정산 계산루틴 적용 안됨 
+              //mate     = familyno = fami70no   = obstacleno= woman    = childno    = babyno     = sparent  = fewno     = 0;
+              
+              selfded        = mateded         = famided         = basicded        = 0;
+              oldded         = obsded          = womanded        = childded        = babyded         = 0;
+              sparentded     = appendded       = fewded          = 0;
+              anuded         = medded          = hireded         = insded          = 0;
+              houseded       = houseded3       = 0;
+              housvsubded    = housvcomded     = housvempded     = 0;
+              houseintded    = houseintded2    = houseintded3    = houseintded4    = houseintded5    = 0;
+              nagiveded      = npgiveded       = npgiveded2      = ngiveded        = 0;
+              specialded     = standded        = 0;
+              pended         = investded       = investded2      = tinvestded      = 0;
+              creditded      = costockded      = hsrentinded     = longfundded     = incomeded = 0;
+
+              splimitovded   = nepgiveded      = nepgiveded2     = 0;
+
+              taxlevel       = laboramt;
+              calctax        = floor(taxlevel   * 17 / 100);
+              childtaxded    = npended         = npendtaxded     = 0;
+              guarded        = obsguarded      = guardedtaxded   = 0;
+              hosamt         = ghosamt         + ohosamt         + nhosamt         + shosamt;
+              hosded         = obshosded       = hostaxded       = 0;
+              seduded        = keduded         = ceduded         = ueduded         = obseduded       = eduded      = edutaxded   = 0;
+              polided1       = polided2        = politaxded1     = politaxded2     = 0;
+              agivetaxded    = pgivetaxded     = giveded         = 0;
+              etctded        = incomtded       = hloanded        = forided         = 0; 
+              houserentded   = houserenttaxded = tdedsum         = 0;
+          }
+          ===================================================================================================== */
+           
+/* 갑근세 /주민세 / 농특세 START=====================================================================*/               
+           
+          if (calctax - tdedsum > 0) 
+          {   
+               dintax = fmax(floor(calctax - tdedsum),0);               
+               if (strcmp(tmpempno, "M") != 0)
+                   dintax = fmax(floor(dintax / 10) * 10, 0);    /*2014.01 손필영 요청 원단위 절사 뺌*/
+                   
+               djutax = fmax(floor(dintax * 0.1),0);
+               if (strcmp(tmpempno, "M") != 0)
+                   djutax = fmax(floor(djutax / 10) * 10, 0);    /*2014.01 손필영 요청 원단위 절사 뺌*/
+          } 
+          else
+          {
+               dintax   = 0 ;
+               djutax   = 0 ; 
+          }
+}
+
+/* 표준세액공제 적용 루틴 */  
+Process_Standded_Y()
+{
+     double  creamt1;
+     double  CreditSum;
+     double  totcreditamt;   /*  신용카드 공제가능 총금액  */
+     double  creditded1;     /* 2012.12. .신용카드등 사용분 공제액 */
+     double  creditded2;     /* 2012.12. .직불카드+현금카드 사용분 공제액 */
+     double  creditded3;     /* 2012.12. .전통시장 사용분 공제액 */
+     double  creditded4;     /* 2013.11. .대중교통 사용분 공제액 */  
+     double  creditded5;     /* 2014.12. .체크카드 등 사용액 증가분 공제액 */   
+     double  crededlimit1;   /* 2012.12. .총급여 중 기준금액 초과분 */     
+     double  crededlimit2;   /* 2012.12. .공제가능금액 */     
+     double  crededlimit3;   /* 2013.12. .공제가능금액 */ 
+ 
+     double  INVESTLIMIT1      = 0;
+     double  INVESTLIMIT2      = 0;
+     double  investded_2012    = 0;     /* 투자조합 2012년 투자분 공제액      2013.11 */
+     double  investded_2013    = 0;     /* 투자조합 2013년 투자분 공제액      2013.11 */
+     double  investded_2014    = 0;     /* 투자조합 2014년 투자분 공제액      2014.12 */ 
+     double  investded_2014_1  = 0;     /* 투자조합 2014년 투자분 공제액      2014.12 */ 
+     double  investded_2014_2  = 0;     /* 투자조합 2014년 투자분 공제액      2014.12 */ 
+     double  totlimitded       = 0;     /* 소득공제 종합한도 적용대상 항목 계 2013.11 */   
+           
+     double  calctaxlimit      = 0;     /* 산출세액 차감 계산용               2015.01 */      
+/* 특별 공제 START ===============================================================================*/                
+          medded         = 0; /*  건강보험료 공제     */
+          hireded        = 0; /*  고용보험료 공제     */
+          insded         = 0;                    
+
+          houseded       = 0; /* 주택임차원리금상환액_대출기관  KTH*/  
+          houseded3      = 0; /* 주택임차원리금상환액_거주자  KTH*/
+          houserentded   = 0;  /* 2 월세액 */
+          
+          /* 3 주택마련저축 */
+          /* 청약저축 40% */
+          housvsubded = floor(housvsubamt * HSRATE / 100 );
+          if ( housvsubded >= 480000) housvsubded = 480000;
+          if ( housvsubded > (HSDEDLIMIT - houseded  - houseded3 - houserentded) )              
+               housvsubded =  HSDEDLIMIT - houseded  - houseded3 - houserentded;                
+          if ( housvsubded < 0 ) housvsubded = 0;
+              
+          /* 주택청약종합저축 40% */
+          housvcomded = floor( housvcomamt * HSRATE / 100 );
+          if (housvcomded >= 480000) housvcomded = 480000;
+          if ( housvcomded > (HSDEDLIMIT - houseded  - houseded3 - houserentded - housvsubded) )
+               housvcomded =  HSDEDLIMIT - houseded  - houseded3 - houserentded - housvsubded;  
+          if ( housvcomded < 0 ) housvcomded = 0;
+                          
+          /* 장기주택마련저축 소득공제 40% 2013.11 삭제*/
+          /*
+          houseded2 = floor( houseamt2 * HSRATE / 100 );
+          if ( houseded2 > (HSDEDLIMIT - houseded - houseded3 - houserentded - housvsubded - housvcomded) )
+               houseded2 =  HSDEDLIMIT - houseded - houseded3 - houserentded - housvsubded - housvcomded;
+          if ( houseded2 < 0 ) houseded2 = 0;
+          */
+          houseded2 = 0;
+              
+          /* 근로자주택마련저축 40% */
+          housvempded = floor( housvempamt * HSRATE / 100 );
+          if (housvempded >= 720000) housvempded = 720000; 
+          if ( housvempded > (HSDEDLIMIT - houseded - houseded3 - houserentded - housvsubded - housvcomded - houseded2) )
+               housvempded =  HSDEDLIMIT - houseded - houseded3 - houserentded - housvsubded - housvcomded - houseded2;                   
+          if ( housvempded < 0 ) housvempded = 0;
+          	
+          houseintded    = 0;                                                 
+          houseintded2   = 0;                                                 
+          houseintded3   = 0;                                                 
+          houseintded4   = 0;                                                 
+          houseintded5   = 0;                                                 
+          
+          nagiveded      = 0;  
+          npgiveded2     = 0;  
+          npgiveded      = 0;  
+          ngiveded       = 0;  
+           
+          specialded     = 0; /* 특별공제 */
+
+          /* 차감소득금액 */
+          chagamamt  = fmax((laboramt - basicded  - appendded           /*인적공제 다자녀+ fewded 삭제             2014.12*/
+                                      - anuded                          /*연금보험료공제 - 연금저축 + npended 삭제 2014.12*/ 
+                                      - specialded),0);                 /*특별공제 표준공제 + standded 삭제        2014.12*/  
+
+          laborlimit = chagamamt;
+/* 그밖의 소득공제 START=====================================================================*/
+
+          /*  개인연금공제 */
+          pended       = floor( (penamt1 + penamt2 ) * PENRATE / 100);
+          
+          if (pended   > PENDEDLIMIT)
+              pended   = PENDEDLIMIT;
+              
+          pended      = fmin( laborlimit,  pended);                                                                                 
+          laborlimit  = fmax((laborlimit - pended), 0);  
+          
+          /* 주택마련저축 */          
+          housvsubded = fmin( laborlimit,  housvsubded);
+          laborlimit  = fmax((laborlimit - housvsubded), 0);
+          
+          housvcomded = fmin( laborlimit,  housvcomded);
+          laborlimit  = fmax((laborlimit - housvcomded), 0);
+          
+          housvempded = fmin( laborlimit,  housvempded);
+          laborlimit  = fmax((laborlimit - housvempded), 0);                
+              
+          
+          /* 투자조합공제  */ 
+          /* 2011년 이전 투자조합출자금 처리내역 삭제 2014.12       
+          OINVESTLIMIT   = floor(laboramt   * OINVESTDEDRATE / 100) ; / kth 2010.02 공제율 INVESTDEDRATE 데이터 없어서계산 안되는 거 30%넣어서 처리 /
+          oinvestded     = floor(oinvestamt * OINVESTRATE    / 100) ; / kth 2010.02 공제율 INVESTRATE 10%로 같이 사용 /
+          
+          if (oinvestded > OINVESTLIMIT) oinvestded = OINVESTLIMIT;   
+          */ 
+          INVESTLIMIT1     = floor(laboramt  * INVESTDEDRATE  / 100);
+          INVESTLIMIT2     = floor(laboramt  * INVESTDEDRATE3 / 100);
+          investded_2012   = floor( (investamt  * INVESTRATE  / 100)
+                                  + (investamt2 * INVESTRATE2 / 100) ); /* 2013.11 jissi */ 
+          investded_2013   = floor( (investamt3 * INVESTRATE  / 100)
+                                  + (investamt4 * INVESTRATE3 / 100) ); /* 2013.11 jissi */ 
+          investded_2014_1 = floor( (investamt5 * INVESTRATE4 / 100) ); /* 2014.12 jissi */
+          investded_2014_2 = floor( (investamt6 * INVESTRATE5 / 100)
+                                  + (investamt7 * INVESTRATE6 / 100) ); /* 2014.12 jissi */
+          investded2       = fmax(fmin(INVESTLIMIT1, investded_2012 + investded_2013),0);  
+          investded3       = fmax(fmin(INVESTLIMIT2- investded2, investded_2014_1+investded_2014_2),0);  
+                                                                                                                              
+          tinvestded       = investded2 + investded3;          /*parksh  20021213 oinvestded; 투자조합공제액합*/          
+          tinvestded       = fmin(laborlimit, tinvestded);                                                                       
+          laborlimit       = fmax((laborlimit - tinvestded),0);
+
+          investded        = fmin(fmax((tinvestded - investded_2012 - investded_2014_2),0), investded_2013 + investded_2014_1);  
+          
+          /* 2000~2001투자조합  삭제2010.12..
+          OINVESTLIMIT   = floor(taxgross   * INVESTDEDRATE / 100);
+          oinvestded     = floor(oinvestamt *           15  / 100);          
+          if (oinvestded > OINVESTLIMIT)
+              oinvestded = OINVESTLIMIT;                        
+          tinvestded = investded + oinvestded;      투자조합공제액합*/
+                    
+          /*================================================================================
+            2003.12. Dsa2000  추가....  => 2004.12  기명식선불카드 추가. 직불카드 요율 20%로 축소
+            2005.11  현금영수증 사용액(cashamt) 추가 
+            2007.12  신용카드공제시 의료비중복공제 배제.(의료비공제 받은 자에 대한 중복공제 배제)
+            
+          ① 신용카드등 사용금액 = 신용카드+기명식 선불카드+직불카드+지로납부금액+현금영수증+전통시장사용분
+          ② 최저사용금액 =(총급여액×25%)
+          ③ 신용카드등   =(신용카드금액))×15%  *학원비 지로공제 삭제
+          ④ 직불+현금카드=(직불카드+현금영수증)×30%
+          ⑤ 전통시장     =(전통시장)×30%
+          ⑥ 대중교통     =(대중교통)×30%  
+          ⑦ 사용액 증가분=if   (2013년본인신용카드등사용액<2014년본인신용카드사용액)
+                           then (2014년하반기 추가공제율사용분 -(2013년 추가공제율사용분×50%))*10%
+                           else 0
+          ⑧ 공제제외금액 
+                1(최저사용금액 <= 신용카드사용분)일때  최저사용금액 * 15% or
+                2(최저사용금액 >  신용카드사용분)일때  ③(신용카드사용분*15%) +(최저사용금액-신용카드사용분*30%       
+          ⑨ 신용카드등 소득공제금액 : ③+④+⑤+⑥-⑧+⑦  ☞ 한도액 :  MIN(총급여액×20%,300만원)
+          ⑩ 전통시장사용분 추가공제 MIN(MIN(한도초과금액, 전통시장사용분*30%),100만원)
+             대중교통이용분 추가공제 MIN(MIN(한도초과금액, 대중교통이용분*30%),100만원)
+          ⑪ 신용카드등 소득공제 = ⑨총 공제금액 + ⑩ 전통시장사용분, 대중교통이용분 추가 공제
+          ================================================================================ */                                          
+          /*신용카드등   if (strcmp(empno, "M119") == 0) printf("HOUSEDED2 : %f\n" , houseded2);
+          ================================================================================ */
+          creditamt = credittotamt - creditdedamt; /* 신용카드 공제 가능금액 = 총 공제신청금액 - 법인 사용분 */     
+          
+          if (creditamt < 0)    creditamt = 0; 
+          
+          /* 전체 신용카드 등 사용금액 합계 */
+          totcreditamt = creditamt + cashamt + debitamt + tmarketamt + trafficamt;   /* giroamt 2013 삭제 */       /*①*/  
+          
+          /* 직불.선불카드, 현금카드 사용금액 합계*/
+          CreditSum    = debitamt + cashamt;   /* giroamt 2013 삭제 */
+          
+          /* 최저사용금액 : 총급여액의 25%*/                                                                              
+          crededlimit1 = floor(taxgross  * CREORATE / 100);                             /*②*/
+           
+          if  ((totcreditamt - crededlimit1) > 0)   /* (전체합계-총급여액×25%) 이 0 보다 클경우 계산 */
+          {       
+              creditded1 = floor( creditamt  * CREDEDLRATE    /100) ;                   /*③ 신용카드*/                  
+              creditded2 = floor( CreditSum  * DEBITDEDRATE   /100) ;                   /*④ 직불,현금영수증 2013*/
+              creditded3 = floor( tmarketamt * TMARKETDEDRATE /100) ;                   /*⑤ 전통시장 2013*/
+              creditded4 = floor( trafficamt * TRAFFICDEDRATE /100) ;                   /*⑥ 대중교통 2013*/
+              /*⑥ 증가분 추가공제 2014*/
+              creditded5 = 0;
+              if ( creditaddamt1 < creditaddamt2 )
+              {
+                   creditded5 = floor((creditaddamt4 - floor(creditaddamt3 * CARDUPRATE1 / 100)) * CARDUPRATE2 / 100);
+                   creditded5 = fmax(creditded5, 0);
+              }
+
+              crededlimit2 = floor(crededlimit1  * CREDEDLRATE / 100);                  /*⑧-1*/
+                
+              if ( crededlimit2 > creditded1 )
+                   crededlimit2 = creditded1 + floor((crededlimit1-creditamt)*DEBITDEDRATE /100); /*⑧-2*/
+              
+              crededlimit2 = creditded1 + creditded2 + creditded3 + creditded4 - crededlimit2 + creditded5; /* ⑨ 신용카드등 소득공제금액 */ 
+              
+              /* ☞ 한도액 : 총과세급여액의 20%와 300만원중 적은금액 */
+              creamt1 = fmin(floor(taxgross * CREDEDRATE / 100),CREDEDLIMIT) ;   
+                
+              creditded = fmin(creamt1,crededlimit2);
+              
+              crededlimit3 = crededlimit2; 
+              
+              /* ⑩-1전통시장 추가 한도금액 적용 */
+              if (((crededlimit2-creditded)>0)&&(creditded3>0))
+              {
+                crededlimit2 = fmin((crededlimit2-creditded),creditded3); 
+                crededlimit2 = fmin(crededlimit2,TMARKETEXLIMIT);
+                creditded    = creditded + crededlimit2;                         /*⑪*/
+              }
+              /* ⑩-2대중교통 추가 한도금액 적용 */
+              if (((crededlimit3-creditded)>0)&&(creditded4>0))
+              {
+                crededlimit3 = fmin((crededlimit3-creditded),creditded4); 
+                crededlimit3 = fmin(crededlimit3,TRAFFICEXLIMIT);
+                creditded    = creditded + crededlimit3;                         /*⑪*/
+              }
+          }
+          else creditded = 0;
+          
+          creditded  = fmin( laborlimit,  creditded);                                                                                 
+          laborlimit = fmax((laborlimit - creditded), 0); 
+          
+          /* 우리사주조합출연공제  */
+          if  ( costockamt > COSTOCKLIMIT )  costockded = COSTOCKLIMIT;
+          else                               costockded = costockamt;   
+          
+          costockded = fmin( laborlimit,  costockded);                                                                                 
+          laborlimit = fmax((laborlimit - costockded), 0);                           
+                       
+          /* 장기주식형저축 소득공제 : 납입 1년차 금액의 20%, 납입 2년차 금액의 10%, 납입 3년차 금액의 5% 2013 삭제 */
+          /*
+          fundded = floor( fundamt1 * FUNDRATE1 / 100 +
+                           fundamt2 * FUNDRATE2 / 100 +
+                           fundamt3 * FUNDRATE3 / 100  );
+          if (fundded < 0) fundded = 0;
+          */
+          fundded = 0;
+          
+          /* 목돈안드는 전세 이자상환액 공제 2013.11 jissi */
+          hsrentinded = floor(hsrentinamt * HSRENTINTRATE / 100);
+          if  ( hsrentinded > HSRENTINTLIMIT )  hsrentinded = HSRENTINTLIMIT;  
+          
+          hsrentinded  = fmin( laborlimit,  hsrentinded);                                                                                 
+          laborlimit   = fmax((laborlimit - hsrentinded), 0); 
+          
+          /* 장기집합투자증권저축 소득공제   2014.11 jissi */
+          longfundded = floor(longfundamt * LONGFUNDRATE / 100);
+          if  ( longfundded > LONGFUNDLIMIT1 )  longfundded = LONGFUNDLIMIT1; 
+          if  ( taxgross    > LONGFUNDLIMIT2 )  longfundded = 0;    
+          
+          longfundded  = fmin( laborlimit,  longfundded);                                                                                 
+          laborlimit   = fmax((laborlimit - longfundded), 0);        
+          
+          /* 그밖의 소득공제 합계 */
+          incomeded  = pended        /*그밖의 소득공제 - 연금저축(npended)  제외*/
+                     + housvsubded + housvcomded + housvempded   
+                     + tinvestded  + creditded   + costockded   
+                     /*+ fundded    장기주식형저축 소득공제 2013 삭제*/
+                     + hsrentinded   /*그밖의 소득공제 - 목돈 안드는 전세자금 이자상환액 추가 2013.11 */
+                     + longfundded;  /*그밖의 소득공제 - 장기집합투자증권저축 소득공제액 추가 2014.11 */
+                     
+          /* 소득공제 종합한도 초과액 2013.11 jissi */
+          totlimitded  = 0;
+          totlimitded  = 
+                       /*   guarded                                                                 소득공제 종합한도 적용대상 항목 - 1 일반보험료공제            2013.11 */        
+                       /* + fmax(hosded-obshosded,0)                                                소득공제 종합한도 적용대상 항목 - 2 기타의료비공제            2013.11 */             
+                       /* + fmax(eduded-obseduded,0)                                                소득공제 종합한도 적용대상 항목 - 3 기타교육비공제            2013.11 */ 
+                         houseded + houseded3                                                    /* 소득공제 종합한도 적용대상 항목 - 4 주택임차차입금 공제       2013.11 */ 
+                       /* + houserentded                                                            소득공제 종합한도 적용대상 항목 - 5 월세액 공제               2013.11 */  
+                       + housvsubded + housvcomded + housvempded                                 /* 소득공제 종합한도 적용대상 항목 - 6 주택마련저축 공제         2013.11 */   
+                       + houseintded + houseintded2 + houseintded3 + houseintded4 + houseintded5 /* 소득공제 종합한도 적용대상 항목 - 7 장기주택저당차입금 공제   2013.11 */ 
+                       /* + pgiveded_curr + pgiveded2_curr                                          소득공제 종합한도 적용대상 항목 - 8 당해년 지정기부금   제외  2014.01 */          
+                       + investded                                                               /* 소득공제 종합한도 적용대상 항목 - 9 당해년 투자조합출자 공제  2013.11 */
+                       + creditded                                                               /* 소득공제 종합한도 적용대상 항목 - 10 신용카드 등 공제         2013.11 */     
+                       + costockded                                                              /* 소득공제 종합한도 적용대상 항목 - 11 우리사주조합출연금 공제  2013.11 */
+                       + longfundded ;                                                           /* 소득공제 종합한도 적용대상 항목 - 12 장기집합투자증권저축공제 2014.12 */
+
+          splimitovded = fmax(totlimitded - SPDEDLIMIT,0); 
+
+/* 과세표준  START=====================================================================*/
+          taxlevel   = chagamamt  
+                     - incomeded                                        /*그밖의 소득공제*/
+                     + splimitovded;                                    /*소득공제 종합한도 초과액*/ 
+          
+          if   (taxlevel < 0 )  taxlevel = 0;
+             
+          /* 산출세액 */
+          if   (taxlevel == 0)  calctax  = 0;
+          else                  calctax  = GetTax(taxlevel);
+          /* 산출세액 차감 변수 */
+          calctaxlimit = calctax;      
+                
+/* 세액 공제    START=====================================================================*/
+          /* 근로소득 세액 공제 */
+          if   ( calctax < TAXDEDBASIC)
+                incomtded = floor(calctax * TAXDEDBRATE / 100);
+          else  
+                incomtded =     floor((TAXDEDBASIC  * TAXDEDBRATE / 100)
+                          + (calctax - TAXDEDBASIC) * TAXDEDORATE / 100);
+                          
+          incomtded = fmax(incomtded, 0); 
+          /* 근로소득 세액공제 한도액 계산 추가 2014.12
+          if       (taxgross  <= TAXDEDSECT1)
+               incomtded = fmin(TAXDEDSLIMIT1,incomtded);
+          else if  (taxgross  <= TAXDEDSECT2)
+               incomtded = fmin(fmax(TAXDEDSLIMIT1-floor((taxgross-TAXDEDSECT1)*1/2),TAXDEDSLIMIT2), incomtded);
+          else if  (taxgross  >  TAXDEDSECT2)
+               incomtded = fmin(fmax(TAXDEDSLIMIT2-floor((taxgross-TAXDEDSECT2)*1/2),TAXDEDLIMIT  ), incomtded);
+          */
+          
+          if       (taxgross  <= TAXDEDSECT1)
+               incomtded = fmin(TAXDEDSLIMIT1,incomtded);
+          else if  (taxgross  <= TAXDEDSECT2)
+               incomtded = fmin(fmax(TAXDEDSLIMIT1-floor((taxgross-TAXDEDSECT1)*0.008),TAXDEDSLIMIT2), incomtded);
+          else if  (taxgross  >  TAXDEDSECT2)
+               incomtded = fmin(fmax(TAXDEDSLIMIT2-floor((taxgross-TAXDEDSECT2)*1/2  ),TAXDEDLIMIT  ), incomtded);
+          
+          incomtded    = fmin(calctaxlimit,incomtded);       
+          calctaxlimit = fmax(calctaxlimit-incomtded, 0);    
+          
+          /* 자녀세액공제 : 기본공제대상자인 자녀(아들,딸)                2014.11 jissi   
+             2인 이하일 경우  1인당  15만원,
+             2인 이상일 경우  30만원 + 2인 초과인원당 30만원 추가공제
+             ex) 기본공제 자녀 3인일 경우 30만원 + 30만원 = 60만원 공제   */ 
+          if      (fewno <= 2)  childtaxded = (fewno * FEWDED1);
+          else if (fewno >  2)  childtaxded = (2     * FEWDED1) + ((fewno - 2) * FEWDED2);
+          
+          childtaxded  = fmin(calctaxlimit,childtaxded);     
+          calctaxlimit = fmax(calctaxlimit-childtaxded, 0);  
+          
+          /* 6세이하 2자녀이상 세액공제 2015.04.24 jissi 추가 */  
+          if (childno > 1)      infanttaxded = (childno-1) * INFANTDED;
+          else                  infanttaxded = 0;        
+
+          infanttaxded  = fmin(calctaxlimit,infanttaxded);     
+          calctaxlimit  = fmax(calctaxlimit-infanttaxded, 0);  
+          /* 출산.입양 세액공제 2015.04.24 jissi 추가 */  
+          if (babyno > 0)       addbabytaxded = babyno * ADDBABYDED;
+          else                  addbabytaxded = 0;
+
+          addbabytaxded  = fmin(calctaxlimit,addbabytaxded);   
+          calctaxlimit   = fmax(calctaxlimit-addbabytaxded, 0);
+          /* 퇴직연금보험료 공제  MIN(불입액 + 연금저축불입액, 300만원) : SKB는 미시행.  */
+         
+          /* 연금저축공제  2013년 연금보험료 공제로 포함 -> 2014년 연금세액공제로 변경 2014.12*/      
+          npended      = npenamt + npenamt2 ; 
+          
+          if  (npended > NPENDEDLIMIT) 
+               npended = NPENDEDLIMIT; 
+          /* 2015.04.24 jissi 연금저축 세액공제 총급여 5500만원 이하 15% 적용 */
+          if (taxgross <= NPENLIMIT)
+               npendtaxded  = floor(npended * NPENRATE2 / 100);
+          else     
+               npendtaxded  = floor(npended * NPENRATE / 100); 
+          
+          npendtaxded  = fmin(calctaxlimit,npendtaxded);       
+          calctaxlimit = fmax(calctaxlimit-npendtaxded, 0);    
+          
+          if  (npendtaxded <= 0) 
+               npended = 0;
+          
+          /*  보장성 보험료 특별세액공제*/
+          guarded      = 0; 
+          obsguarded   = 0;
+          guartaxded   = 0;
+          obsguartaxded= 0;      /*2015.05 jissi 소급개정 */
+          /* 의료비 특별세액공제 */
+          hosded       = 0;
+          obshosded    = 0;
+          hostaxded    = 0;
+          /* 교육비 특별세액공제 */
+          seduded      = 0;
+          keduded      = 0;
+          ceduded      = 0;
+          ueduded      = 0;
+          obseduded    = 0;        
+          eduded       = 0;
+          edutaxded    = 0;  
+          
+          /* 기부금 특별세액공제 */
+          /* 정치자금 세액공제  */
+          politaxded1  = fmin(calctaxlimit,  politaxded1);   
+          calctaxlimit = fmax(calctaxlimit - politaxded1, 0);
+          
+          politaxded2  = fmin(calctaxlimit,  politaxded2);
+          calctaxlimit = fmax(calctaxlimit - politaxded2, 0);
+          
+          /* 법정,지정 기부금 특별세액공제 */
+          giveded      = 0;
+          agiveded     = 0;
+          pgiveded     = 0; 
+          pgiveded2    = 0; 
+          agivetaxded  = 0;  
+          pgivetaxded  = 0;
+
+          /* 2014.12 특별세액공제계  */                                                                
+          taxdedsum = guartaxded + hostaxded + edutaxded + politaxded1 + politaxded2 + agivetaxded + pgivetaxded
+                    + obsguartaxded;    /*2015.04.25 jissi 장애인전용보험 추가*/
+
+          /* 표준세액공제  */           
+          standded  = STDDED;
+          standded  = fmin(calctaxlimit,standded);
+          
+          /* 주택차입금이자세액 공제  */
+          hloanded = floor(hloanamt * HSINTRATE / 100); 
+         
+          /* 외국인은 주민등록법에 적용받지 않아 세대주가 될 수 없음 jissi 2013.12 */
+          if (((strcmp(tmpjuminid, "5") == 0) || (strcmp(tmpjuminid, "6") == 0))) 
+          {                                                                       
+               hloanded    = 0;                                                                                            
+          }                                 
+
+          hloanded     = fmin(calctaxlimit,hloanded);   
+          calctaxlimit = fmax(calctaxlimit-hloanded, 0);
+          
+          /*  외국납부세액공제한도:   국내근로소득금액 * 국외근로소득금액 / 근로소득금액  */
+          /*   외국납부세액공제  *************************************** */
+          FORILIMIT = 0;
+          
+          /*  국외근로소득공제 */
+          foritaxgross1 = foritaxgross -  ( laborded * foritaxgross / taxgross ); 
+          
+          if   (laborded > 0)  FORILIMIT = calctax * foritaxgross1 / laborded;
+          
+          if   (FORILIMIT  < foriamt)  forided = FORILIMIT;
+          else                         forided = foriamt;                  
+          
+          forided          = fmin(calctaxlimit,forided);   
+          calctaxlimit     = fmax(calctaxlimit-forided, 0);
+          
+          /* 월세세액공제 */                               
+          houserentded     = 0;
+          houserenttaxded  = 0;
+          
+          /*세액공제 합계*/
+          tdedsum = incomtded + childtaxded 
+                  + infanttaxded + addbabytaxded                /*2015.04.24 jissi  infanttaxded,addbabytaxded 추가*/       
+                  + npendtaxded + taxdedsum + standded + hloanded + forided   
+                  + etctded + houserenttaxded;  
+
+/* 갑근세 /주민세 / 농특세 START=====================================================================*/               
+          if (calctax - tdedsum > 0) 
+          {   
+               dintax = fmax(floor(calctax - tdedsum),0);             
+               if (strcmp(tmpempno, "M") != 0)
+                   dintax = fmax(floor(dintax / 10) * 10, 0);    /*2014.01 손필영 요청 원단위 절사 뺌*/
+                   
+               djutax = fmax(floor(dintax  * 0.1),0);
+               if (strcmp(tmpempno, "M") != 0)
+                   djutax = fmax(floor(djutax / 10) * 10, 0);    /*2014.01 손필영 요청 원단위 절사 뺌*/
+          } 
+          else
+          {
+               dintax   = 0 ;
+               djutax   = 0 ; 
+          }   
+}
+
+/* =====================================================================
+        계산결과를 반영.
+* ===================================================================== */
+UpdateResult()
+{  
+     double  temp_yloanded     = 0;     /* 거주자간 공제액 정산용 */
+     double  temp_mrentcostded = 0;     /* 월세액 공제액 정산용 */
+
+     /* 재계산시 초기화 */	
+     EXEC SQL
+     UPDATE PKMYSRENT_CH
+        SET YLOANDED     = 0,
+            MRENTCOSTDED = 0
+      WHERE WORKYY   = :workyy 
+        AND EMPNO    = :empno;
+        
+     yseq =  yloansum  = yloanded     = 0; 
+     mseq =  mrentcost = mrentcostded = 0;
+     	
+	   /* 주택임차원리금상환액_거주자간 개별 공제금 계산 update */	
+     EXEC SQL DECLARE c2 CURSOR FOR
+     SELECT SEQ,  YLOANSUM,  YLOANDED
+       FROM PKMYSRENT_CH            
+      WHERE WORKYY = :workyy 
+        AND EMPNO  = :empno
+        AND NVL(YRENTCOST,0) > 0
+      ORDER BY SEQ;
+        
+     EXEC    SQL OPEN c2;
+     
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {       
+          Write_batlog(seqno++, "거주자간 차입금 fetch Error1");  
+          err_print(sqlca.sqlcode,"거주자간 차입금 fetch Error1");
+          exit(1);
+     }
+     
+     temp_yloanded = houseded3;
+     
+     while(1)
+     {
+          
+          EXEC SQL FETCH c2 INTO 
+          :yseq, :yloansum, :yloanded;
+          
+          if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {       
+            Write_batlog(seqno++, "거주자간 차입금 기초자료 read Error");  
+            err_print(sqlca.sqlcode,"거주자간 차입금 기초자료 read Error");
+            exit(1);
+          }
+          
+          if (sqlca.sqlcode == 1403)
+          {
+             EXEC SQL close c2;
+             break;
+          } 
+          
+          yloanded = fmin(floor(yloansum * HSRATE / 100),temp_yloanded);
+          temp_yloanded = fmax(temp_yloanded - yloanded, 0);
+          
+          EXEC SQL
+          UPDATE PKMYSRENT_CH
+             SET YLOANDED = :yloanded, 
+                 WRITEMAN = :writeman,
+                 WRITETIME= to_char(sysdate,'yyyymmddhh24miss')
+           WHERE WORKYY   = :workyy 
+             AND EMPNO    = :empno
+             AND SEQ      = :yseq;
+             
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 )
+          {  
+               Write_batlog(seqno++, " 거주자간 차입금 공제금액 setting Error");  
+               err_print(sqlca.sqlcode," 거주자간 차입금 공제금액 Setting Error");
+               exit(1);
+          }  
+     }
+     
+     /* 월세액 개별 공제금 계산 update*/	
+     EXEC SQL DECLARE c3 CURSOR FOR
+     SELECT SEQ,  MRENTCOST,  MRENTCOSTDED
+       FROM PKMYSRENT_CH            
+      WHERE WORKYY = :workyy 
+        AND EMPNO  = :empno
+        AND NVL(MRENTCOST,0) > 0
+      ORDER BY SEQ;
+     
+     EXEC    SQL OPEN c3;
+        
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {       
+          Write_batlog(seqno++, "월세액 기초자료 fetch Error1");  
+          err_print(sqlca.sqlcode,"월세액 기초자료 fetch Error1");
+          exit(1);
+     }
+     
+     temp_mrentcostded = houserenttaxded; /* 2015.01 houserentded 월세 세액공제필드로 수정 */
+     
+     while(1)
+     {
+          
+          EXEC SQL FETCH c3 INTO 
+          :mseq, :mrentcost, :mrentcostded;
+          
+          if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {       
+            Write_batlog(seqno++, "월세액 기초자료 read Error");  
+            err_print(sqlca.sqlcode,"월세액 기초자료 read Error");
+            exit(1);
+          }
+          
+          if (sqlca.sqlcode == 1403)
+          {
+             EXEC SQL close c3;                                       
+             break;
+          } 
+          
+          /* 2015.01 월세 세액공제 금액으로 수정 */
+          /* mrentcostded = fmin(floor(mrentcost * HSRATE2 / 100),temp_mrentcostded);  */          
+          mrentcostded = fmin(floor(mrentcost * HOUSERENTRATE / 100),temp_mrentcostded);
+
+          temp_mrentcostded = fmax(temp_mrentcostded - mrentcostded, 0);
+          
+          EXEC SQL
+          UPDATE PKMYSRENT_CH
+             SET MRENTCOSTDED = :mrentcostded, 
+                 WRITEMAN     = :writeman,
+                 WRITETIME    = to_char(sysdate,'yyyymmddhh24miss')
+           WHERE WORKYY   = :workyy 
+             AND EMPNO    = :empno
+             AND SEQ      = :mseq;
+             
+          if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 )
+          {  
+               Write_batlog(seqno++, " 월세액 공제금액 setting Error");  
+               err_print(sqlca.sqlcode," 월세액 공제금액 Setting Error");
+               exit(1);
+          } 
+          
+     }
+     
+     EXEC SQL
+     UPDATE PKMYSMODIFY_CH
+        set LABORDED        = :laborded,
+            LABORAMT        = :laboramt,
+            SELFDED         = :selfded,
+            MATEDED         = :mateded,
+            FAMIDED         = :famided,
+            BASICDED        = :basicded,
+            OLDDED          = :oldded,
+            OBSDED          = :obsded,
+            WOMANDED        = :womanded,
+            CHILDDED        = :childded,
+            BABYDED         = :babyded,
+            SPARENTDED      = :sparentded,     /*2013.11  추가*/
+            APPENDDED       = :appendded,
+            MANYCHILDNO     = :fewno,          /*수정신고는 MANYCHILDNO*/
+            FEWDED          = :fewded,
+            MEDDED          = :medded,
+            HIREDED         = :hireded,
+            GUARDED         = :guarded,
+            OBSGUARDED      = :obsguarded,
+            INSDED          = :insded,
+            HOSAMT          = :hosamt,
+            OBSHOSDED       = :obshosded,      /*2013.11  추가*/
+            HOSDED          = :hosded,
+            SEDUDED         = :seduded,
+            KEDUDED         = :keduded,
+            CEDUDED         = :ceduded,
+            UEDUDED         = :ueduded,
+            OBSEDUDED       = :obseduded,
+            EDUDED          = :eduded,
+            HOUSEDED        = :houseded,
+            HOUSEDED2       = :houseded2,   
+            HOUSEDED3       = :houseded3, 
+            HOUSERENTDED    = :houserentded,
+            HOUSVSUBDED     = :housvsubded,
+            HOUSVCOMDED     = :housvcomded,
+            HOUSVEMPDED     = :housvempded,
+            HOUSEINTDED     = :houseintded,
+            HOUSEINTDED2    = :houseintded2,           	
+            HOUSEINTDED3    = :houseintded3,           		
+            HOUSEINTDED4    = :houseintded4,   /*2012.12  추가*/           		
+            HOUSEINTDED5    = :houseintded5,   /*2012.12  추가*/    
+            AGIVEDED        = :agiveded,
+            POLITAXDED      = :politaxded,
+            SPGIVDED        = :spgivded,
+            PGIVEDED        = :pgiveded,
+            PGIVEDED2       = :pgiveded2,
+            NPGIVEAMT       = :npgiveamt, 
+            NPGIVEAMT2      = :npgiveamt2,       
+            GIVEDED         = :giveded,
+            SPECIALDED      = :specialded,
+            STANDDED        = :standded, 
+            CHAGAMAMT       = :chagamamt,     /*2013.12 추가*/
+            ANUDED          = :anuded,
+            PENDED          = :pended,
+            NPENDED         = :npended,
+            CREDITAMT       = :creditamt,
+            CREDITDED       = :creditded,
+            SPECADDDED      = :specaddded,
+            POLIDED         = :polided,
+            INVESTDED       = :investded,    
+            INVESTDED2      = :investded2,    /*2013.11  추가*/ 
+            OINVESTDED      = :oinvestded,
+            TINVESTDED      = :tinvestded,  
+            INCOMTDED       = :incomtded,
+            HLOANDED        = :hloanded,
+            FUNDDED         = :fundded,
+            COSTOCKDED      = :costockded,
+            FORIDED         = :forided,
+            ETCTDED         = :etctded,
+            TDEDSUM         = :tdedsum,
+            HSRENTINDED     = :hsrentinded,    /*2013.11  추가*/ 
+            INCOMEDED       = :incomeded,
+            SPLIMITOVDED    = :splimitovded,   /*2013.11  추가*/
+            NEPGIVEDED      = :nepgiveded,     /*2013.11  추가*/ 
+            NEPGIVEDED2     = :nepgiveded2,    /*2013.11  추가*/ 
+            NAGIVEDED       = :nagiveded,      /*2014.12  추가*/   
+            NPGIVEDED       = :npgiveded,      /*2014.12  추가*/
+            NPGIVEDED2      = :npgiveded2,     /*2014.12  추가*/
+            NGIVEDED        = :ngiveded,       /*2014.12  추가*/
+            INVESTDED3      = :investded3,     /*2014.12  추가*/
+            LONGFUNDDED     = :longfundded,    /*2014.12  추가*/
+            CHILDTAXDED     = :childtaxded,    /*2014.12  추가*/
+            INFANTTAXDED    = :infanttaxded,   /*2015.04.24 jissi 추가 */
+            ADDBABYTAXDED   = :addbabytaxded,  /*2015.04.24 jissi 추가 */  
+            NPENDTAXDED     = :npendtaxded,    /*2014.12  추가*/
+            GUARTAXDED      = :guartaxded,     /*2014.12  추가*/
+            OBSGUARTAXDED   = :obsguartaxded,  /*2015.04.24 jissi 추가 */
+            HOSTAXDED       = :hostaxded,      /*2014.12  추가*/
+            EDUTAXDED       = :edutaxded,      /*2014.12  추가*/
+            POLIDED1        = :polided1,       /*2014.12  추가*/
+            POLIDED2        = :polided2,       /*2014.12  추가*/
+            POLITAXDED1     = :politaxded1,    /*2014.12  추가*/
+            POLITAXDED2     = :politaxded2,    /*2014.12  추가*/
+            AGIVETAXDED     = :agivetaxded,    /*2014.12  추가*/
+            PGIVETAXDED     = :pgivetaxded,    /*2014.12  추가*/
+            TAXDEDSUM       = :taxdedsum,      /*2014.12  추가*/
+            HOUSERENTTAXDED = :houserenttaxded,/*2014.12  추가*/
+            NPGIVEAMT2_2010 = :npgiveamt2_2010,/*2014.12  추가*/
+            NPGIVEAMT2_ELSE = :npgiveamt2_else,/*2014.12  추가*/
+            TAXLEVEL        = :taxlevel,
+            CALCTAX         = :calctax,
+            DINTAX          = :dintax,
+            DJUTAX          = :djutax,
+            DNONGTAX        = :dnongtax,
+            INTAX           = :intax,
+            JUTAX           = :jutax,
+            NONGTAX         = :nongtax,
+            YINTAX          = :yintax,
+            YJUTAX          = :yjutax,
+            YNONGTAX        = :ynongtax,
+            YCALCTAX        = :ycalctax,
+            SUBDATE         = :log_subdate, 
+            WRITEMAN        = :writeman,
+            WRITETIME       = to_char(sysdate,'yyyymmddhh24miss')
+      WHERE WORKYY          = :workyy
+        AND EMPNO           = :empno;
+        
+     if ( sqlca.sqlcode != 0 )
+     {                 
+          err_print(sqlca.sqlcode,"갱신중 ERROR");
+          printf("Empno : %s || ERROR_CODE : %d || 갱신중 ERROR. \n", empno, sqlca.sqlcode);    
+          Write_batlog(seqno++,   "갱신중 ERROR");  
+          exit(1);
+     }
+}
+
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);    
+          return(FAIL);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}
+
+/*
+hinsacc pkq1050_2014g
+mv pkq1050_2014g ~/HINSA/proc/bin/Kbin
+/hper/insa/HINSA/proc/bin/Kbin/pkq1050_2014g 20150610 0000 zzzz D025 pkq1050_2014g 2015051200000
+*/

@@ -1,0 +1,2623 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKQ2100G(퇴직자 연말정산)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 퇴직정산
+ Programmer     : 이랑교
+ Version        : 2.00
+ Date           : 1999.03.04
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   1.00       1997.02.16         이인환          최초개발본      설계명세서
+   2.00       1999.03.04         이랑교
+   3.00       2001.1.27.         유효성          인정상여추가
+   4.00       2001.12.14         유효성          소득세법 개정에따른 수정  
+   5.00       2002.12.23         박수향          소득세법 개정에따른 수정 
+              2003.12.           강륜종(dsa2000) 신용카드 공제에 직불카드와 지로납부 추가
+                                                 외국인 추가공제 추가(자녀교육비& 월세)   
+              2004.01.08.        강륜종(dsa2000) 분기연봉과 명절연봉 항목이 상여총액에 더해지던것을 급여총액으로 옮김
+   10.41      2004.02.19         강륜종          Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.          
+   11.00      2004.12            dsa2000         2004년 귀속 연말정산 작업.
+   12.00      2005.01.12         DSA2000         월차폐지 및 정보통신수당(ITAMT) 추가에 다른 수정. 
+                                                 유아보육비 비과세 루틴 추가.   
+============================================================================= */
+/*============================================================================= 
+★ PKMYSMAS 와 PKHYSHIS 테이블에서는 아래와 같이 사용.
+NPENAMT IS '연금저축_개인'  NPENAMT2 IS '연금저축_회사
+PENAMT1 IS '개인연금_개인'  PENAMT2 IS '개인연금_회사'
+        
+★ PKHRYHIS에서는 개인과 회사에 해당하는 칼럼을 반대로 사용하고 있다.
+NPENAMT IS '연금저축_회사'; NPENAMT2 IS '연금저축_개인';
+PENAMT1 IS '개인연금_회사'; PENAMT2 IS '개인연금_개인'; 
+============================================================================= */
+#include <stdio.h>
+#include <math.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+EXEC SQL INCLUDE sqlca;
+EXEC SQL BEGIN DECLARE SECTION;
+     char      TAXNUM[3];                /*  세율차수                 */
+     double    INDEDBASIC ;              /*  근로소득공제기본액       */
+     double    INDEDBRATE ;              /*  근로소득공제율 2009.09.29 KTH 추가     */     
+     double    INDEDORATE ;              /*  근로소득공제초과율       */
+     double    INDEDLIMIT ;              /*  근로소득공제한계액       */
+     double    INDEDORATE2 ;             /*  근로소득공제초과율2       */
+     double    INDEDLIMIT2 ;             /*  근로소득공제한계액2       */
+     double    BASDED     ;              /*  기본공제액               */
+     double    APPDED     ;              /*  추가공제액               */
+     double    FEWDED1    ;              /*  소수공제자추가공제1      */
+     double    FEWDED2    ;              /*  소수공제자추가공제2      */
+     double    STDDED     ;              /*  표준공제                 */
+     double    INSDEDLIMIT;              /*  보장성보험공제한도       */
+     double    MEDDEDLIMIT;              /*  의료비공제한도           */
+     double    MEDORATE   ;              /*  의료비공제초과율         */
+     double    KINEDULIMIT;              /*  유치원교육비인당한도액   */
+     double    CJKEDULIMIT;              /*  초중고교육비 인당한도액  */
+     double    UNIEDULIMIT;              /*  대학교육비인당한도액     */
+     double    BROEDUNO   ;              /*  형제교육비한도인원       */
+     double    HSRATE     ;              /*  주택자금공제율           */
+     double    HSDEDLIMIT ;              /*  주택자금한도액           */
+     double    HSDEDLIMIT2 ;             /*  주택자금한도액2  dsa2000 */
+     double    GIVDEDRATE ;              /*  기부금공제한도율         */
+     double    PENRATE    ;              /*  개인연금공제율           */
+     double    PENDEDLIMIT;              /*  개인연금한도액           */
+     double    INVESTRATE;               /*  투자조합공제율           */
+     double    INVESTDEDRATE;            /*  투자조합공제한도율       */
+     double    INVESTLIMIT;              /*  투자조합공제한도액       */ /* 계산치 */
+     double    TAXDEDBASIC;              /*  근로소득세액공제기본액   */
+     double    TAXDEDBRATE;              /*  근로소득세액공제기본율   */
+     double    TAXDEDORATE;              /*  근로소득세액공제초과율   */
+     double    TAXDEDLIMIT;              /*  근로소득세액공제한계액   */
+     double    PRODEDRATE ;              /*  재형저축공제율           */
+     double    HSINTRATE  ;              /*  주택자금세액공제율       */
+     /* double    STKDEDRATE ;                주식저축세액공제율      parksh */ 
+     /* double    STKDEDLIMIT;                주식저축세액한도액       parksh*/
+     double    FORILIMIT;                /*  국외근로소득세액공제 한도 */
+     
+     double    CREDEDLIMIT;              /* 신용카드한도액 */
+     double    CREDEDRATE ;              /* 신용카드한도율 */
+     double    CREORATE   ;              /* 신용카드초과율 */
+     double    CREDEDLRATE;              /* 신용카드지급율 */
+      
+      /* add 2003.12.  Dsa2000*/
+     double  DEBITDEDRATE;               /* 직불카드 공제율  dsa2000   2003.12. */ 
+     double  GIRODEDRATE;                /* 지로납부 공제율  dsa2000   2003.12.  */ 
+   
+     double  totcreditamt;               /*  신용카드 공제가능 총금액  */
+     /*    double  FOREDEDRATE;              외국인 추가공제율 (자녀교육비&월세)   dsa2000   2003.12. */        
+     /*  double  FOREIGNAMT;                 외국인 추가공제(자녀교육비&월세) 지출금액 */
+     /*  double  FOREIGNDED;                 외국인 추가공제금액 */
+   
+     double    JUTAXRATE  ;              /*  주민세율                 */
+     double    NONGRATE   ;              /*  농특세율                 */           
+     double    INDEDLIMIT3;              /*  근로소득공제한계액3       */  
+     double    INDEDORATE3;              /*  근로소득공제초과율3       */  
+     double    OBSDEDLIMIT;              /*  장애인보험 한계액*/
+     double    OBSDEDADD;                /*장애인 추가공제 dsa2000 2005.12. 추가..*/
+     double    NPENDEDLIMIT;             /*  연금저축 한계액*/
+     double    INDEDLIMIT4;              /*  근로소득공제한계액4       */  
+     double    INDEDORATE4;              /*  근로소득공제초과율4       */ 
+
+     double    TAXDEDSECT1    ;          /* 근로소득세액공제 총급여한계액1     */
+     double    TAXDEDSLIMIT1  ;          /* 근로소득세액공제한계액1            */
+     double    TAXDEDSECT2    ;          /* 근로소득세액공제 총급여한계액2     */
+     double    TAXDEDSLIMIT2  ;          /* 근로소득세액공제한계액2            */
+     
+     double    OBSEDULIMIT;              /*  장애인특수교육비  PARKSH 20021213 추가 */
+     double    SPGIVDEDRATE;             /* 특례지정기부금공제한도율 PARKSH 20021213 추가 */
+     double    OINVESTRATE;              /* 전투자조합공제율  parksh 20021213 추가 */
+     double    OINVESTDEDRATE;           /* 전투자조합한도율  parksh 20021213 추가 */
+     double    OINVESTLIMIT;             /* 전투자조합한도액   parksh 20021213 추가 */
+     double    APPOLDDED;                /* 경로우대,장애인 PARKSH 20021213 */
+     double    chagamamt     ;           /* 차감소득금액 2014.03.         */     
+     double    laborlimit    ;           /* 근로소득공제한계_단계별         */
+     double    incomtdedlimit;           /* 근로소득세액공제 한도           */
+     /*        double    LSTKDEDRATE;                장기증권저축 공제율*/
+     /*        double    OLSTKDEDRATE;            전년도장기증권저축세액공제율 PARKSH 20021213 */
+     /*        double    OLSTKDEDRATE;            전년도 장기주식저축세율 PARKSH 20021213 */  
+           
+     char    workyy[5];
+     char    tempdate[9];
+     char    empno[5];      /*  사번   */
+     char    korname[13];   /*  사번   */
+     char    retdate[9];      /*  사번   */     
+     double  lastmonpay;    /*  최종월정급여  */
+     double  mpaysum;       /*  (주) 급여총액  */
+     double  mbonsum;       /*  (주) 급여총액  */
+     double  mnotax;        /*  (주) 비과세   */
+     double  bpaysum;       /*  (종) 급여총액  */
+     double  bbonsum;       /*  (종) 상여총액  */
+     double  bnotax;        /*  (종) 비과세   */
+     double  taxgross;      /*  과세급여총액  */
+     double  foritaxgross;
+     double  notax;         /*  비과세급여총액  */
+     double  laborded;      /*  근로소득공제  */
+     double  laboramt;      /*  근로소득금액  */
+     double  mate;          /*  배우자유뮤   */
+     double  fami16no;      /*  6세이하 가족수  */ 
+     double  fami720no;     /*  7~20세 가족수  */
+     double  fami6064no;    /*  60~64세 가족수  */
+     /* double  fami65no;     65세 이상 가족수   kth 20090318 65세 경로우대 폐지 */
+     double  familyno;      /*  총 가족수   */
+     double  selfded  ;     /*  본인공제   */
+     double  mateded  ;     /*  배우자 공제   */
+     double  famided  ;     /*  부양가족공제  */
+     double  basicded;      /*  기본공제   */
+     double  obstacleno;    /*  장애자수   */
+     double  childno;       /*  자녀 양육수   */
+     double  woman;         /*  부녀자 여부   */
+     double  oldded;        /*  경로우대공제  */
+     double  obsded;        /*  장애자 공제   */
+     double  womanded;      /*  부녀자 공제   */
+     double  childded;      /*  자녀양육공제  */
+     double  appendded;     /*  추가공제   */
+     double  fewno;         /*  소수추가공제  */
+     double  fewded;        /*  소수추가공제  */
+     double  medamt;        /*  의료 보험료   */  
+     double  bmedamt;       /*  (종) 의료 보험료  */
+     double  medded;        /*  의료 보험료공제  */
+     double  hireamt;       /*  고용 보험료   */ 
+     double  bhireamt;      /*  (종) 고용 보험료  */
+     double  hireded;       /*  고용보험료 공제  */
+     double  guaramt;       /*  보장성 보험료  */
+     double  guarded;       /*  보장성보험료 공제  */
+     double  obsguaramt;    /*  장애인전용 보험료   */
+     double  obsguarded;    /*  장애인전용 보험료공제*/
+     double  insded;        /*  보험료 공제   */  
+     double  ghosamt;       /*  일반 의료비   */
+     double  ohosamt;       /*  경로의료비   */
+     double  nhosamt;       /*  장애자의료비  */
+     double  hosamt;        /*  의료비   */
+     double  hosded;        /*  의료비공제   */
+     double  seduamt;       /*  본인학자금   */   
+     double  seduded;       /*  본인학자금공제  */  
+     double  keduno;        /*  유치원수   */   
+     double  keduamt;       /*  유치원학자금  */   
+     double  keduded;       /*  유치원학자금공제  */  
+   
+   /*  double  keduno1;   parksh20021224  영유아수  */   
+   /*  double  keduamt1;   parksh20021224  영유아교육비  */   
+   /*  double  keduded1;   parksh20021224  영유아교육비공제*/  
+     
+     double  ceduno;        /*  초중고수   */   
+     double  ceduamt;       /*  초중고학자금  */   
+     double  ceduded;       /*  초중고학자금공제  */  
+     double  ueduno;        /*  대학생수   */   
+     double  ueduamt;       /*  대학생학자금  */   
+     double  ueduded;       /*  대학생학자금공제  */  
+     double  eduded;        /*  학자금공제   */  
+     double  houseamt;      /*  주택자금   */
+     double  houseintamt;   /*  주택자금차입이자  */
+     double  houseded;      /*  주택자금공제  */
+     double  agiveamt;      /*  전액기부금   */
+     double  agiveded;      /*  전액기부금   */
+     double  pgiveamt;      /*  일반기부금   */
+     double  pgiveded;      /*  일반기부금   */
+     double  giveded;       /*  기부금공제   */
+     double  specialded;    /*  특별공제   */
+     double  standded ;     /*  표준공제            */
+     double  anuamt;        /*  연금보험료          */
+     double  banuamt;       /*  (종)연금보험료      */
+     double  anuded;        /*   연금보험료 공제    */
+     double  penamt1;       /*  개인연금(회사)  */
+     double  penamt2;       /*  개인연금(개인)  */
+     double  bpenamt;       /*  (종)개인연금  */
+     double  pended;        /*  개인연금공제  */
+     double  npenamt;       /*  연금저축_회사   */
+     double  npenamt2;      /*  연금저축_개인       */
+     double  npended;       /*  연금저축공제*/
+     double  incomeded;     /*  종합소득공제계   */ 
+     double  taxlevel;      /*  과세표준   */
+     double  calctax;       /*  산출세액   */
+     double  icalctax;      /*  농특세계산을위한 임시 산출세액   */
+     double  incomtded;     /*  근로소득세액공제  */ 
+     double  propamt;       /*  재형저축   */
+     double  bpropamt;      /*  (종) 재형저축  */
+     double  propded;       /*  재형저축공제  */
+     double  hloanamt;      /*  주택차입금 공제  */ 
+     double  hloanded;      /*  주택차입금 공제  */ 
+     /*double  stkamt;       주식저축    parksh   */
+     /*double  stkded;       주식저축공제  parksh*/
+     /*  double  lstkamt;                  장기증권저축        */
+     /*  double  lstkded;                  장기증권저축공제    */
+     /*        double  olstkamt ;       전년도장기증권저축       20021224 parksh */
+     /*    double  olstkded ;         전년도장기증권저축 공제  20021224 parksh */
+     /*    double  tlstkded ;         장기증권저축 공제  20021224 parksh */
+     double  foriamt;       /*  외국납부공제  */
+     double  forided;       /*  외국납부공제  */
+     double  etctamt;       /*  기타세액감면  */
+     double  etctded;       /*  기타세액감면  */
+     double  tdedsum;       /*  세액감면 총액  */
+     double  dintax;        /*  결정소득세   */
+     double  djutax;        /*  결정주민세   */
+     double  dnongtax;      
+     double  mintax;        /*  (주) 소득세   */
+     double  mjutax;        /*  (주) 주민세   */
+     double  mnongtax;      
+     double  bintax;        /*  (종) 소득세   */
+     double  bjutax;        /*  (종) 주민세   */
+     double  bnongtax;      
+     double  intax;         /*  (주+종) 소득세  */
+     double  jutax;         /*  (주+종) 주민세  */
+     double  nongtax;       
+     double  yintax;        /*  차감소득세   */
+     double  yjutax;        /*  차감주민세   */
+     double   ynongtax;
+     double  ycalctax;      /*  차감정산액   */
+     double  mcogbonsum ;   /*  인정상여            */
+     double  creditded;     /*  신용카드공제  */
+     double  creditamt;  
+     double  investded;     /*  투자조합공제  */
+     double  investamt;
+     
+     double  obseduno ;     /*  장애인수         parksh 20021224 */
+     double  obseduamt;     /*  장애인특수교육금액     parksh 20021224 */
+     double  obseduded;     /*  장애인특수교육비공제 parksh 20021224 */
+     double  spgivamt ;     /*  특례지정기부금   parksh 20021224 */
+     double  spgivded ;     /*  특레지정기부금공제   parksh 20021224 */   
+     double  oinvestamt;    /*  투자조합공제      parksh 20021224 */
+     double  oinvestded;    /*  투자조합공제      parksh 20021224 */
+     double  tinvestded;    /* 투자조합공제액 합 PARKSH 20021224 추가 */
+   
+     double  APPOLDDED2;    /* 경로우대70세이상 공제액  Dsa2000 추가  2004.12. Start*/
+     double  fami70no;      /* 경로우대 70세이상 수*/
+     double  shosamt;       /*  본인 의료비        */
+     double  specaddno;     /* 특별공제(결혼.장례.이사소득공제 건수)*/
+     double  SPECADDLIMIT;  /* 특별공제(결혼.장례.이사소득공제 한도액)*/
+     double  specaddded;    /* 특별공제(결혼.장례.이사소득공제 개인별 공제액)*/
+     double  poliamt;       /* 정치기부금 */
+   
+     double  costocktax;    /*우리사주 인출과세액  dsa2000  2007.01.*/  
+     
+     double  polided;       /* 정치자금 세액공제액 */
+     double  POLILIMIT;     /* 정치자금 세액공제 한도   Dsa2000 추가  2004.12. End..*/
+     
+     double  debitamt;      /*  직불카드 사용금액  */
+     double  giroamt;       /*  지로납부금액       */
+     double  cashamt;       /*  현금영수증 사용액  2005.11 추가 */ 
+     char    juminid[15];   /*  주민번호 */
+     double  yuedunotax;    /* 유치원학자금 비과세 추가 dsa2000  2005.01.*/
+     int     SelfAge;       /* Dsa2000  근로자본인 경로자 체크 */
+     double  calctaxlimit;  /* 2015.03.16 eyha 산출세액 비교 변수        */
+     
+      
+     struct
+           {      double taxfr   ;
+                  double taxto   ;
+                  double taxrate ;
+                  double yearded ;
+           } taxtbl[10];
+           
+     char  jobempno[4+1]  = "";  /* 작업자사번   */                     
+           
+EXEC SQL END   DECLARE SECTION;
+
+FILE *fp = stdout;
+int     i=0;
+int     id;
+int     taxtblcnt=0;
+
+/*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno = 0; 
+
+void main(argc,argv)
+int     argc;
+char    *argv[];
+
+{
+     char FL_file[255];
+     
+     /*dsa2000 Rexec 대체 파라미터 추가...*/
+     if  (argc != 5) {  /* /hper8/HINSA/proc/bin/Kbin/pkq2100g 2014 D029 pkq2100g 2004110100000 */
+          printf("[Usage] : pkq2100g 1.정산년도 2.작업사번 3.프로그램ID 4.시작시간  \n");
+          exit(1);
+     }
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkq2100g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+                                         
+     sprintf(workyy,"%s",  argv[1]);                                            
+     sprintf(jobempno,"%s",  argv[2]);   
+     
+     /* Dsa2000  2004.02.24.  **********************************/
+     hinsa_log_print(0,"퇴직자 연말정산 계산 시작...");        
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /* Dsa2000  수정..End......................................*/
+     
+     /*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[2]);
+     strcpy(log_progid,   argv[3]);
+     strcpy(log_rundate,  argv[4]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+      
+     if  (strcmp(workyy, "2014") >= 0 )   {
+         Calc_Yearend_2014();
+     } else {
+         Calc_Yearend();     
+     }
+     
+     /* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          Write_batlog(seqno++, "ERROR ====== [작업 실패] =====\n");  /*dsa2000 Rexec 대체*/
+          error_quit("ERROR ====== [작업 실패] =====\n");
+     }
+     else  
+     {
+          Write_batlog(seqno++, "OK ====== [퇴직자 연말정산 작업성공] =====\n");  /*dsa2000 Rexec 대체*/
+          hinsa_exit(0,"OK ====== [퇴직자 연말정산 작업성공] =====\n");        
+     }
+}
+
+err_print(errcode,str)
+int errcode;
+char *str;
+{
+     fprintf(fp,"[ERRCODE : %d] %s\n",errcode,str);
+}
+
+/*  연세율표를 읽어 배열에 저장한다 */
+ReadTax()
+{
+     int i=0;
+
+     EXEC SQL DECLARE ctax CURSOR FOR
+     SELECT  NVL(TAXPAYFR,0),NVL(TAXPAYTO,0),NVL(TAXRATE,0),
+             NVL(YEARDED,0)
+     FROM    PKCPTAX
+     WHERE   TAXNUM = :TAXNUM;
+
+     EXEC    SQL OPEN ctax;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {       
+          Write_batlog(seqno++, "연세율표  fetch Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"연세율표  fetch Error");
+          exit(1);
+     }
+
+     while(1)
+     {
+          EXEC SQL FETCH ctax INTO
+          :taxtbl[i].taxfr,     :taxtbl[i].taxto,
+          :taxtbl[i].taxrate,   :taxtbl[i].yearded;
+
+
+          if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {       
+            Write_batlog(seqno++, "연말정산 기초자료 read Error");  /*dsa2000 Rexec 대체*/
+            err_print(sqlca.sqlcode,"연말정산 기초자료 read Error");
+                  exit(1);
+          }
+
+          if (sqlca.sqlcode == 1403)
+          {
+                  EXEC SQL close ctax;
+                  taxtblcnt = i;
+                  break;
+          }
+          i++;
+     }
+}
+
+double GetTax(double taxlevel)
+{
+     int i;
+     double res;
+     
+     res = 0;
+
+     for (i=0 ;i <taxtblcnt ; ++i)
+     {
+          if ((taxtbl[i].taxfr < taxlevel) && (taxtbl[i].taxto >= taxlevel))
+          {
+               res = taxlevel * taxtbl[i].taxrate / 100;
+               res = floor(res - taxtbl[i].yearded);
+               return res;
+          }
+
+     }
+}
+
+ReadPkcysbas()
+{
+     EXEC    SQL
+     SELECT  TAXNUM,      INDEDBASIC,    INDEDBRATE,   INDEDORATE,   INDEDLIMIT,
+             BASDED,      APPDED,        FEWDED1,      FEWDED2,      STDDED,       INSDEDLIMIT,
+             MEDDEDLIMIT, MEDORATE,      KINEDULIMIT,  CJKEDULIMIT,  UNIEDULIMIT,
+             BROEDUNO,    HSRATE,        HSDEDLIMIT,   GIVDEDRATE,   PENRATE,      PENDEDLIMIT,
+             TAXDEDBASIC, TAXDEDBRATE,   TAXDEDORATE,  TAXDEDLIMIT,  PRODEDRATE,
+             HSINTRATE,   /*STKDEDRATE,  STKDEDLIMIT,   parksh 20021224*/
+             JUTAXRATE,   NONGRATE,      INVESTRATE,   INVESTDEDRATE,
+             INDEDORATE2, INDEDLIMIT2,   CREDEDLIMIT,  CREDEDRATE ,   CREORATE   ,  CREDEDLRATE,
+             INDEDLIMIT3, INDEDORATE3,   OBSDEDLIMIT , NPENDEDLIMIT,   /*LSTKDEDRATE,OLSTKDEDRATE, */
+             INDEDLIMIT4, INDEDORATE4,   APPOLDDED,    /* parksh 20021224 추가 */
+             OBSEDULIMIT, OINVESTRATE,   OINVESTDEDRATE, SPGIVDEDRATE,  /* parksh 20021224 추가 */
+             DEBITDEDRATE, GIRODEDRATE,                             /* Dsa2000 추가  2003.12.     2004.12.FOREDEDRATE  삭제*/
+             APPOLDDED2,  SPECADDLIMIT,  POLILIMIT,    HSDEDLIMIT2, /* Dsa2000 추가  2004.12.*/
+             OBSDEDADD,                                             /* Dsa2000 추가  2005.12.*/
+             TAXDEDSECT1    ,TAXDEDSLIMIT1  ,TAXDEDSECT2    ,TAXDEDSLIMIT2
+       INTO  :TAXNUM,     :INDEDBASIC,   :INDEDBRATE,   :INDEDORATE,  :INDEDLIMIT,
+             :BASDED,     :APPDED,       :FEWDED1,     :FEWDED2,      :STDDED,      :INSDEDLIMIT,
+             :MEDDEDLIMIT,:MEDORATE,     :KINEDULIMIT, :CJKEDULIMIT,  :UNIEDULIMIT,
+             :BROEDUNO,   :HSRATE,       :HSDEDLIMIT,  :GIVDEDRATE,   :PENRATE,     :PENDEDLIMIT,
+             :TAXDEDBASIC,:TAXDEDBRATE,  :TAXDEDORATE, :TAXDEDLIMIT,  :PRODEDRATE,
+             :HSINTRATE,   /*:STKDEDRATE, :STKDEDLIMIT,  parksh 20021224*/
+             :JUTAXRATE,   :NONGRATE,    :INVESTRATE,  :INVESTDEDRATE  /*ADD ITEM 1998.12.15 LEERK */,
+             :INDEDORATE2, :INDEDLIMIT2, :CREDEDLIMIT, :CREDEDRATE ,   :CREORATE   , :CREDEDLRATE,
+             :INDEDLIMIT3, :INDEDORATE3, :OBSDEDLIMIT, :NPENDEDLIMIT, /*  :LSTKDEDRATE ,:OLSTKDEDRATE,*/
+             :INDEDLIMIT4, :INDEDORATE4, :APPOLDDED,     /* parksh 20021224 추가 */
+             :OBSEDULIMIT, :OINVESTRATE, :OINVESTDEDRATE, :SPGIVDEDRATE,
+             :DEBITDEDRATE,:GIRODEDRATE,               /* Dsa2000 추가  2003.12.      2004.12.삭제 :FOREDEDRATE */
+             :APPOLDDED2,  :SPECADDLIMIT, :POLILIMIT,   :HSDEDLIMIT2,         /* Dsa2000 추가  2004.12.*/
+             :OBSDEDADD,                                                       /* Dsa2000 추가  2005.12.  */
+             :TAXDEDSECT1    ,:TAXDEDSLIMIT1  ,:TAXDEDSECT2    ,:TAXDEDSLIMIT2
+       FROM  PKCYSBAS
+/*      WHERE  WORKYY = (SELECT WORKYY FROM PKCPBAS) ;*/
+      WHERE  WORKYY = :workyy ;      
+
+     if  (sqlca.sqlcode != 0)
+     {       
+          Write_batlog(seqno++, "연말정산기준 read Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"연말정산기준 read ERROR");
+          exit(1);
+     }
+     
+     EXEC   SQL
+     SELECT CHILDNOTAX
+       INTO :yuedunotax
+       FROM PKCPBAS;
+     if  (sqlca.sqlcode != 0)
+     {       
+          Write_batlog(seqno++, "급여 기준 read Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"급여 기준 read ERROR");
+          exit(1);
+     }
+}
+
+ClearVar()
+{
+     memset(empno,'\0',sizeof(empno));
+     memset(retdate,'\0',sizeof(retdate));     
+     taxgross  =foritaxgross =mate      =familyno   =0; /* =fami65no kth 20090318 65세 경로우대 폐지*/
+     mcogbonsum=0;
+     obstacleno=childno      =woman     =0;
+     medamt    =bmedamt      =0;
+     hireamt   =bhireamt     =0;
+     guaramt   =obsguaramt = 0;
+     ghosamt   =ohosamt      =nhosamt   =hosamt     =0;
+     keduno    =ueduno       = 0;
+     /*  keduno1   =keduamt1     = 0 ; */
+     seduamt   =keduamt      =ceduno    =ceduamt   = ueduamt  =0;
+     houseamt  =houseintamt  =agiveamt     =pgiveamt  = 0;
+     anuamt    =banuamt      =0;
+     penamt1   =penamt2      =bpenamt   = 0;
+     npenamt   =npenamt2     =0;
+     hloanamt  =foriamt      =etctamt   =0;
+     creditamt =  0;      
+     mintax    =mjutax       =bintax    = bjutax   =0;
+     mnongtax  =bnongtax     =0;
+     investamt = 0;      
+     /* new_calctax = 0; */
+     obseduno = obseduamt=spgivamt=oinvestamt=0;  /*parksh 20021224 추가*/
+     debitamt = giroamt = totcreditamt = 0;       /* dsa2000 ????  2003.12.*/
+     memset(juminid,'\0',sizeof(juminid));                           /* Dsa2000 추가  2003.12.*/
+     fami70no   = specaddno  = specaddded   = polided = SelfAge = 0; /* Dsa2000 추가  2004.12.*/
+     cashamt    = 0;                                                 /* Dsa2000 추가  2005.11.*/
+     costocktax = 0;                                                 /* Dsa2000 추가  2007.01.*/
+}
+
+
+Calc_Yearend_2014()
+{
+     double  medappded_A;  
+     double  medappded_B;
+     double  crededlimit2;
+     double  creamt1;
+     
+     medappded_A = medappded_B = crededlimit2 = creamt1 = 0;
+     
+     ReadPkcysbas();      /*  PKCYSBAS 연말정산기준 테이블 읽어오기 */ 
+     ReadTax();           /*  연세율표를 읽어 배열에 저장한다 */
+     
+     /* 귀속일 */
+     EXEC     SQL
+     UPDATE   PKMRYMAS a
+     SET  YSFRDATE = (select GREATEST(NVL(ORGEMPDATE,:workyy||'0101'),:workyy||'0101')
+                        from pkmrtmas b
+                       where a.empno = b.empno)
+     WHERE retdate like :workyy||'%' ;
+           
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "귀속일1 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"귀속일1 setting Error");
+          exit(1);
+     }
+                          
+                         
+     EXEC    SQL
+     UPDATE  PKMRYMAS a
+        SET  YSTODATE = RETDATE
+     WHERE retdate like :workyy||'%' ;
+      
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "귀속일2 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"귀속일2 setting Error");
+          exit(1);
+     }   
+     
+     EXEC   SQL
+     UPDATE  PKMRYMAS P
+        SET  LASTMONPAY = 
+      ( SELECT SUM( NVL(BASICAMT,0)    + NVL(INFOAMT,0)  + NVL(DUTYAMT,0)    +
+                    NVL(BBASICAMT,0)   + NVL(BINFOAMT,0) + NVL(BDUTYAMT,0)   +
+                    NVL(MATEAMT,0)     + NVL(PARTAMT,0)  + NVL(CHILDAMT,0)   +
+                    NVL(OVTMAMT,0)     + NVL(SPTMAMT,0)  + NVL(MCARTAXAMT,0) +
+                    NVL(BOKJISUPAMT,0) + NVL(AIDAMT1,0)  + NVL(AIDAMT2,0)    + 
+                    NVL(AIDAMT3,0)     + NVL(LICEAMT,0)  + NVL(MBONAMT,0)    + 
+                    NVL(ODTAXAMT,0)    + NVL(SOPAY,0)    + NVL(LONGSUPAMT,0) +
+                    NVL(CHILDEDUAMT,0) + NVL(MEDPAYAMT,0)+ NVL(TRAINSUPAMT,0)+ 
+                    NVL(OVMCAMT,0)     + NVL(TAXPAY,0)   + NVL(FIXPAY,0)     +
+                    NVL(QUATERPAY,0)   + NVL(HOLIPAY,0)  + NVL(ROLEAMT,0)    +
+                    NVL(R.ITAMT,0)   /*DSA2000 ADD  2005.01.12 */
+                  )
+         FROM  PKHPHIS R, (SELECT EMPNO MEMPNO, CALYN 
+                             FROM PKMRTMAS) 
+         WHERE  SUBSTR(PAYDATE,1,6) = DECODE(NVL(CALYN,'N'),'Y',SUBSTR(RETDATE,1,6),  /* PAYDATE 6 자리에서 8 자리 변경으로 인한 수정 [2018-09-18 이상용] */  
+                         TO_CHAR(ADD_MONTHS(TO_DATE(SUBSTR(RETDATE,1,6),'YYYYMM'),-1),'YYYYMM')) 
+           AND  P.EMPNO = R.EMPNO
+           AND  MEMPNO  = R.EMPNO
+      )
+     WHERE retdate like :workyy||'%' ;
+     
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.1 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.1 주급여 setting Error");
+          exit(1);
+     }
+     
+     
+     /*급여총액 : 급여이력 데이터 업데이트 */
+     EXEC   SQL
+     UPDATE PKMRYMAS P
+     SET    MPAYSUM = 
+      ( SELECT SUM(
+                   NVL(BASICAMT   ,0) +NVL(INFOAMT  ,0)+NVL(DUTYAMT   ,0)+
+                   NVL(BBASICAMT  ,0) +NVL(BINFOAMT  ,0)+NVL(BDUTYAMT  ,0)+
+                   NVL(MATEAMT  ,0) +NVL(PARTAMT  ,0)+NVL(CHILDAMT  ,0)+
+                   NVL(OVTMAMT  ,0) +NVL(SPTMAMT  ,0)+NVL(MCARTAXAMT  ,0)+
+                   NVL(BOKJISUPAMT  ,0) +NVL(AIDAMT1  ,0)+NVL(AIDAMT2   ,0)+ 
+                   NVL(AIDAMT3  ,0) +NVL(LICEAMT  ,0)+NVL(MBONAMT   ,0)+ 
+                   NVL(ODTAXAMT  ,0) +NVL(SOPAYSUM  ,0)+NVL(LONGSUPAMT  ,0)+
+                   /*NVL(YUEDUAMT  ,0) +*/
+                   nvl(YUEDUTAX,0)     + /*dsa2000  2005.01. 비과세처리 yueduamt */
+                   NVL(SELFEDUAMT  ,0) +
+                   NVL(DRVLICEAMT  ,0) +NVL(LECTSUPAMT  ,0)+
+                   NVL(EDUSUPAMT  ,0) +NVL(MEDSUPAMT  ,0)+NVL(SUPAMT1   ,0)+
+                   NVL(SUPAMT2  ,0) +NVL(SUPAMT3  ,0)+  
+                   NVL(CHILDEDUAMT  ,0) +NVL(MEDPAYAMT,0) + 
+                   NVL(TRAINSUPAMT  ,0) +NVL(OVMCAMT  ,0) +NVL(TAXPAY,0)    +
+                   NVL(FIXPAY  ,0) +NVL(ROLEAMT,0)   +
+                   NVL(QUATERPAY  ,0) +NVL(HOLIPAY,0)   +/*dsa2000 2004.01. 분기/명절연봉이 상여총액에 더해지던것을 급여총액으로*/ 
+                   NVL(ITAMT         ,0) + /*DSA2000 ADD  2005.01.12 */
+                   NVL(WINTERAMT     ,0) + /*DSA2000 ADD  2006.04.19. 요청서 월동보조비로 쓰던 칼럼을 영업인세티브 항목으로 사용 */
+                   NVL(HOMESUPAMT    ,0)   /*DSA2000 ADD  2006.06. 귀향지원금 => 선택적복리후생비로 변경 사용.*/
+            )
+          FROM   PKHPHIS R
+         WHERE   substr(paydate,1,4) = :workyy and p.empno = r.empno)
+     WHERE retdate like :workyy||'%' ;
+     
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.2 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.2 주급여 setting Error");
+          exit(1);
+     }
+
+/* printf(" mpaysum~~~~~~~~~ \n"); */
+  /*상여총액 : 급여이력 데이터 업데이트 */
+     EXEC   SQL
+     UPDATE  PKMRYMAS P
+        SET  MBONSUM = 
+             (SELECT SUM(NVL(BONUSAMT ,0)+NVL(INCENTAMT,0)+NVL(TRAINAMT,0)+
+                         /*NVL(WINTERAMT,0)+NVL(HOMESUPAMT,0)+NVL(YBONAMT,0)+ dsa2000  2006.04.19. 요청서 */
+                          NVL(YBONAMT,0)+ NVL(SBONTAXAMT,0) + NVL(SOBONSUM,0)  /*NVL(SBONAMT  ,0)  dsa2000  2005.12.*/             
+                        )
+                FROM  PKHPHIS R
+               WHERE  substr(paydate,1,4) = :workyy 
+                 and  p.empno = r.empno)
+     WHERE retdate like :workyy||'%' ;
+   
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.3 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.3 주급여 setting Error");
+          exit(1);
+     }
+     
+     /*비과세 급여 : 급여이력 데이터 업데이트 */
+     EXEC   SQL 
+     UPDATE  PKMRYMAS p
+        SET  (MNOTAX,NOTAXEXCEPT) = /*(SELECT SUM(NVL(NOTAXPAYSUM,0)) 2001-02-06 비과세급여는 식교비와 자가운전지원금의 비과세만 적용*/
+                    (select sum(LEAST(NVL(r.YUEDUAMT,0)-nvl(YUEDUTAX,0), TO_NUMBER(:yuedunotax))), /*유아보육비 비과세 추가 2005.01. DSA2000*/                                
+                            sum(NVL(r.ODAMT ,0)   - NVL(r.ODTAXAMT,0)  +         /* kth 2010.04.27 유치원 학자금을 제외한 비과세를 넣어 줌. 원천징수영수증에 표기 맞게*/
+                                NVL(r.MCARAMT,0)  - NVL(r.MCARTAXAMT,0))
+                       FROM PKHPHIS r
+                      WHERE substr(paydate,1,4) = :workyy and p.empno = r.empno)
+     WHERE retdate like :workyy||'%';
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.4 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.4 주급여 setting Error");
+          exit(1);
+     }
+     
+     /*상여총액 : 퇴직월 데이터 업데이트 */
+     EXEC  SQL
+     UPDATE  PKMRYMAS a
+        SET  MBONSUM = (select NVL(a.MBONSUM,0)+NVL(b.YENAMT,0)+NVL(b.MONAMT,0) 
+                          from pkmrtmas b       
+                         where a.empno = b.empno) 
+     WHERE retdate like :workyy||'%';   
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.5 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.5 주급여 setting Error");
+          exit(1);
+     }
+     
+     /*비과세 총액 : 퇴직월 데이터 업데이트 */
+     /*2010.04.27 kth 비과세 총액(유치원학자금 제외 ) : 퇴직월 데이터 업데이트 원천징수 영수증 표기 방법에 따라 수정*/
+     EXEC  SQL
+     UPDATE  PKMRYMAS A
+        SET  (MNOTAX,NOTAXEXCEPT) = (SELECT NVL(A.MNOTAX ,0) , /* 기타비과세급여 추가 + 
+                                            NVL(B.ODAMT ,0)  - NVL(B.ODTAXAMT,0)   +
+                                            NVL(B.MCARAMT,0) - NVL(B.MCARTAXAMT,0) +
+                                            NVL(B.NOTAXPAY,0) */
+                                            NVL(A.NOTAXEXCEPT ,0) + 
+                                            NVL(B.ODAMT ,0)  - NVL(B.ODTAXAMT,0)   +
+                                            NVL(B.MCARAMT,0) - NVL(B.MCARTAXAMT,0) +
+                                            NVL(B.NOTAXPAY,0) /* 기타비과세급여 추가 */
+                                       from PKMRTMAS B       
+                                      where A.EMPNO = B.EMPNO) 
+     WHERE retdate like :workyy||'%';   
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.6 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.6 주급여 setting Error");
+          exit(1);
+     }
+     
+        
+     
+     /*급여총액 : 퇴직월 데이터 업데이트 */
+     EXEC  SQL
+     UPDATE  PKMRYMAS A
+        SET  MPAYSUM = (SELECT NVL(MPAYSUM,0)   + NVL(BASICAMT,0) + NVL(INFOAMT,0) +
+                               NVL(DUTYAMT,0)   + NVL(PROMAMT ,0) + NVL(FAMIAMT,0) + 
+                               NVL(LICEAMT,0)   + NVL(ODTAXAMT,0) + NVL(MCARTAXAMT,0) +
+                               NVL(OVTMAMT,0)   + NVL(SPTMAMT ,0) + NVL(BOKJISPAMT,0) +
+                               NVL(AIDAMT1,0)   + NVL(AIDAMT2 ,0) + NVL(MBONAMT,0)+
+                               NVL(TAXPAY,0)    + NVL(FIXPAY,0)   + NVL(ROLEAMT,0)+
+                               NVL(QUATERPAY,0) + NVL(HOLIPAY,0)  + /*dsa2000 2004.01. 분기/명절연봉이 상여총액에 더해지던것을 급여총액으로*/ 
+                               NVL(ITAMT,0)     +      /*DSA2000 ADD  2005.01.12 */
+                               NVL(WINTERAMT,0) +      /*DSA2000 ADD  2006.04.19. 영업인센티브로 변경 사용 */
+                               NVL(HOMESUPAMT,0)+      /*DSA2000 ADD  2006.06.    선택적복리후생비로 변경사용*/
+                               NVL(WELFARECARDAMT,0)   /*hjku    ADD  2013.05.    선복비카드과세 추가*/
+                              FROM PKMRTMAS B
+                             WHERE A.EMPNO = B.EMPNO) 
+     WHERE retdate like :workyy||'%';
+    
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.7 주급여1 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.7 주급여1 setting Error");
+          exit(1);
+     }
+   
+     EXEC  SQL
+     UPDATE  PKMRYMAS A
+        SET  MBONSUM = (SELECT NVL(MBONSUM,0)  +NVL(BONUSAMT,0) +NVL(INCENTAMT,0) +
+                               /*NVL(TRAINAMT,0) +NVL(WINTERAMT,0) +NVL(SBONAMT,0) + NVL(HOMESUPAMT,0) dsa2000  2006.04.19. (상여총액에서 제외)*/
+                               NVL(TRAINAMT,0) +NVL(SBONAMT,0)
+                               /*NVL(QUATERPAY  ,0)+NVL(HOLIPAY  ,0)*/
+                          FROM PKMRTMAS B
+                         WHERE A.EMPNO = B.EMPNO)      
+     WHERE retdate like :workyy||'%';
+                  
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.7 주급여2 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.7 주급여2 setting Error");
+          exit(1);
+     }
+     
+     /*dsa2000  2007.01. 우리사주 인출시 과세액 반영 추가...*/
+     /*우리사주인출이력(PSDOHIS)의 WDSTAMT1 칼럼에 우리사주 시스템에서 과세금액 계산되어짐 (계산 시점 체크해야함)*/
+     EXEC SQL 
+     update PKMRYMAS M  
+        Set COSTOCKTAX = (Select sum(nvl(WDSTAMT1,0)) from PSDOHIS
+                           Where Substr(reqdate,1,4) = :workyy 
+                            And M.empno = empno             
+                          Group by empno )
+      Where Empno in (Select empno from PSDOHIS 
+                       Where Substr(reqdate,1,4) = :workyy  
+                         AND nvl(WDSTAMT1,0) <> 0   ) 
+      and retdate like :workyy||'%';
+                               
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          Write_batlog(seqno++, "3.8 우리사주 인출시 과세액 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.8 우리사주 인출시 과세액 setting Error");
+          exit(1);
+     }                              
+           /*******************************************************/
+           
+     EXEC SQL 
+     UPDATE  PKMRYMAS 
+        SET  familyno = nvl(fami16no,0)  + nvl(fami720no,0) + nvl(fami6064no,0) 
+                      + nvl(fami70no,0),                                              /* + nvl(fami65no,0) kth 2009.03.18 65세 경로우대 공제 페지*/
+             taxgross = nvl(mpaysum,0)   + nvl(mbonsum,0)   + nvl(bpaysum,0)     /* 총과세액 */
+                      + nvl(bbonsum,0)   + nvl(mcogbonsum,0) 
+                      + nvl(COSTOCKTAX,0)               ,                        /*우리사주인출 과세액 합산 2007.01.*/
+             notax    = nvl(mnotax,0)    + nvl(bnotax,0)
+     WHERE retdate like :workyy||'%';
+      
+     /* 주민번호 체크 위하여 추가함.  2004.01.05.  Dsa2000  강륜종  */
+     EXEC SQL 
+     UPDATE  PKMRYMAS p
+        SET  juminid = (Select juminid from pimpmas where p.empno=empno)
+     WHERE retdate like :workyy||'%';
+        
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, " 주민번호setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode," 주민번호 Setting Error");
+          exit(1);
+     }  
+     /********************************************************************************/  
+     /*dsa2000   2004.12  외국인 과세특례 신설에 따른 사항  */
+           /*          총근로소득의 30%를 추가로 비과세 처리한다. 
+     EXEC SQL
+     UPDATE PKMRYMAS
+     SET    MPAYSUM    = (MPAYSUM+NOTAX)    - floor((MPAYSUM+NOTAX)    * 30 / 100),
+            MBONSUM    = MBONSUM    - floor(MBONSUM    * 30 / 100),
+            MCOGBONSUM = MCOGBONSUM - floor(MCOGBONSUM * 30 / 100),
+            BPAYSUM    = (BPAYSUM+BNOTAX)    - floor((BPAYSUM+BNOTAX)    * 30 / 100),
+            BBONSUM    = BBONSUM    - floor(BBONSUM    * 30 / 100),
+            TAXGROSS   = (MPAYSUM+NOTAX)    - floor((MPAYSUM+NOTAX)    * 30 / 100) +
+                         MBONSUM    - floor(MBONSUM    * 30 / 100) +
+                         MCOGBONSUM - floor(MCOGBONSUM * 30 / 100) +
+                         (BPAYSUM+BNOTAX)    - floor((BPAYSUM+BNOTAX)    * 30 / 100) +
+                         BBONSUM    - floor(BBONSUM    * 30 / 100) ,
+            NOTAX      = floor((MPAYSUM+NOTAX)    * 30 / 100) +
+                         floor(MBONSUM    * 30 / 100) +
+                         floor(MCOGBONSUM * 30 / 100) +
+                         floor((BPAYSUM+BNOTAX)    * 30 / 100) +
+                         floor(BBONSUM    * 30 / 100) +
+                         NVL(MNOTAX,0)
+     WHERE  SUBSTR(JUMINID,8,1) in ('5','6');
+     
+     if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 )
+     {  
+      Write_batlog(seqno++, " 외국인 과세금액 setting Error"); 
+      err_print(sqlca.sqlcode," 외국인 과세금액 Setting Error");
+      exit(1);
+     }  
+     -------------------------------------------------------------*/
+     
+   
+     EXEC SQL 
+     UPDATE  PKMRYMAS p     
+        SET  (medamt, hireamt,  mintax, mjutax, anuamt) = 
+    /* 2014.05.23 하은영 퇴직자 연말정산 건강보험료 계산시 건강보험 정산분도 반영되도록 수정                        
+             (SELECT sum(meddamt), sum(empldamt),  */
+             (SELECT payutil.get_ys_meddamt(:workyy,p.empno) meddamt , sum(empldamt), 
+                     sum(intax), sum(jutax), sum(anudamt)
+                FROM  PKHPHIS r
+               WHERE  substr(paydate,1,4) = :workyy and p.empno = r.empno)
+     WHERE retdate like :workyy||'%';
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "12. 의보,고보등 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"12. 의보,고보등 setting Error");
+          exit(1);
+     }
+   
+     /*퇴직월 의보,고보 포함 */
+     EXEC SQL 
+     UPDATE   PKMRYMAS a
+        SET   medamt = (select nvl(medamt,0)+nvl(medamt1,0)
+                          from pkmrtmas b
+                         where a.empno = b.empno) 
+     WHERE retdate like :workyy||'%';
+          
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "12. 의보 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"12. 의보 setting Error");
+          exit(1);
+     }                   
+                        
+     EXEC SQL 
+     UPDATE  PKMRYMAS a
+        SET  hireamt=(select nvl(hireamt,0)+nvl(emplamt,0)
+                        from pkmrtmas b
+                       where a.empno = b.empno) 
+     WHERE retdate like :workyy||'%';
+           
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "12. 고보 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"12. 고보 setting Error");
+          exit(1);
+     }
+     
+     EXEC SQL 
+     UPDATE   PKMRYMAS a
+        SET   anuamt=(select  nvl(a.anuamt,0)+nvl(anuselfamt,0)
+                        from  pkmrtmas b
+                       where  a.empno = b.empno) 
+     WHERE retdate like :workyy||'%';
+           
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "12. 국민연금 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"12. 국민연금 setting Error");
+          exit(1);
+     }
+     
+   /******2001년이후입사자는 연금저축으로******/  
+       /*EXEC SQL
+       UPDATE PKMRYMAS a  2011.12.13 kth 주석처리
+             SET NPENAMT =  PENAMT1, PENAMT1 = 0
+             WHERE EMPNO IN (SELECT EMPNO FROM PKMRTMAS  WHERE empdate > '2001')
+              AND  EMPNO NOT IN (SELECT  NEWEMPNO FROM  PZNEWEMPNO) ; */
+              
+            /* Dsa2000  2004.01.14.  입사일자 기준테이블을 급여마스터 테이블로 변경 
+     EXEC SQL
+     UPDATE PKMRYMAS a
+        SET NPENAMT = PENAMT1, 
+            PENAMT1 = 0
+      WHERE EMPNO IN (SELECT EMPNO FROM PKMPMAS WHERE empdate > '2001')
+        AND EMPNO NOT IN (SELECT NEWEMPNO FROM PZNEWEMPNO) ;
+           
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          Write_batlog(seqno++, "13. 연금저축setting Error");  dsa2000 Rexec 대체
+          err_print(sqlca.sqlcode,"13. 연금저축 setting Error");
+          exit(1);
+     }                       */
+  
+  /* Dsa2000  2005.12.26. 노동조합비 일반기부금으로 공제토록 하기위하여 추가.  * 반영여부 미결정.  
+  EXEC SQL 
+  UPDATE   PKMRYMAS p
+  SET   pgiveamt = (SELECT sum(nojoamt)
+                 FROM PKHPHIS r
+                WHERE substr(paydate,1,4) = :workyy 
+                  AND p.empno = r.empno);
+  if ( sqlca.sqlcode != 0)
+  {  
+   Write_batlog(seqno++, "14. 일반기부금(노동조합비) setting Error");
+   err_print(sqlca.sqlcode,"14. 일반기부금(노동조합비) setting Error");
+   exit(1);
+  }   
+********************************************/  
+
+     EXEC SQL 
+     UPDATE  PKMRYMAS p
+        SET  mintax=nvl(mintax,0),
+             mjutax=nvl(mjutax,0),
+             anuamt=nvl(anuamt,0) 
+     WHERE retdate like :workyy||'%';
+        
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "14. 소득세 ,주민세등 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"14. 소득세 ,주민세등 setting Error");
+          exit(1);
+     }
+     
+      
+     EXEC SQL DECLARE c2 CURSOR FOR
+     select empno,retdate,nvl(taxgross,0),nvl(mate,0),nvl(familyno,0), /* nvl(fami65no,0), 20090318 65세 경로우대 폐지*/
+            nvl(obstacleno,0),nvl(childno,0),nvl(woman,0),nvl(medamt,0),
+            nvl(bmedamt,0),nvl(hireamt,0),nvl(bhireamt,0),nvl(guaramt,0),
+            nvl(obsguaramt,0),nvl(ghosamt,0),nvl(ohosamt,0),nvl(nhosamt,0),
+            nvl(keduno,0),nvl(ueduno,0),  nvl(ceduno,0),
+            /*nvl(keduno1,0), nvl(keduamt1,0), parksh 20021224 취학전아동교육비로 통합*/
+            nvl(seduamt,0),nvl(keduamt,0),nvl(ceduamt,0),nvl(ueduamt,0),
+            nvl(houseamt,0),nvl(houseintamt,0),nvl(agiveamt,0),nvl(pgiveamt,0),
+            nvl(anuamt,0), nvl(banuamt,0), nvl(penamt1,0),nvl(penamt2,0),nvl(bpenamt,0),
+            nvl(npenamt,0), nvl(npenamt2,0),nvl(propamt,0),nvl(bpropamt,0),nvl(hloanamt,0),
+            nvl(foriamt,0),nvl(etctamt,0),  /* nvl(stkamt,0),parksh nvl(lstkamt,0),*/
+            nvl(mintax,0),nvl(mjutax,0),nvl(bintax,0),nvl(bjutax,0), 
+            nvl(mnongtax,0),nvl(bnongtax,0), nvl(mcogbonsum,0),   
+            nvl(creditamt,0), nvl(investamt,0),
+            nvl(obseduno,0),/* parksh 20021224 추가 nvl(olstkamt,0),*/
+            nvl(obseduamt,0), nvl(oinvestamt,0), nvl(spgivamt,0), /* parksh 20021224 추가 */
+            nvl(DEBITAMT,0), nvl(GIROAMT,0), nvl(JUMINID,0),  /* dsa2000 추가 2003.12.
+            /*nvl(FOREIGNAMT,0), nvl(FOREIGNDED,0)              dsa2000 2004.12  삭제 */
+            nvl(poliamt,0),nvl(fami70no,0),nvl(specaddno,0),nvl(specaddded,0),nvl(shosamt,0),/*2004.12.  dsa2000*/
+            nvl(cashamt,0),                                     /* Dsa2000 추가  2005.11.*/
+            (to_number(to_char(sysdate,'YYYY')) -    
+            to_number(decode(substr(juminid,8,1),'1','19','2','19','5','19','6','19','20')||substr(juminid,1,2)) ) SelfAge /* Dsa2000 추가  2006.06.*/
+       from PKMRYMAS
+      WHERE retdate like :workyy||'%';
+     
+     EXEC   SQL open c2;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          Write_batlog(seqno++, "6. 근로소득공제1 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"6. 근로소득공제1 setting Error");
+          exit(1);
+     }
+     
+     while(1)
+     {
+          ClearVar();
+          
+          EXEC SQL FETCH c2 INTO
+          :empno,     :retdate,  :taxgross,  :mate,     :familyno,  /*:fami65no, 20090318 65세 경로우대 폐지*/
+          :obstacleno,:childno,  :woman,     :medamt,
+          :bmedamt,   :hireamt,  :bhireamt,  :guaramt,
+          :obsguaramt,:ghosamt,  :ohosamt,   :nhosamt,
+          :keduno,    :ueduno,   :ceduno,    /*:keduno1,   :keduamt1, parksh 20021224 */
+          :seduamt,   :keduamt,  :ceduamt,   :ueduamt,
+          :houseamt,  :houseintamt, :agiveamt, :pgiveamt,
+          :anuamt,    :banuamt,  :penamt1,   :penamt2,  :bpenamt,
+          :npenamt,   :npenamt2, :propamt,   :bpropamt, :hloanamt,
+          :foriamt,   :etctamt,  /*:stkamt, parksh :lstkamt, */
+          :mintax,    :mjutax,   :bintax,   :bjutax,
+          :mnongtax,  :bnongtax, :mcogbonsum,   
+          :creditamt, :investamt, 
+          :obseduno,  :obseduamt,:oinvestamt, :spgivamt, /* parksh 20021224 추가 :olstkamt,  */
+          :debitamt,  :giroamt,  :juminid,   /*:foreignamt, :foreignded,*/ /* Dsa2000 추가  2003.12.*/
+          :poliamt,   :fami70no, :specaddno, :specaddded, :shosamt,        /* Dsa2000 추가  2004.12.*/
+          :cashamt,   :SelfAge;                                            /* Dsa2000 추가  2005.11.*/
+                      
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {  
+               Write_batlog(seqno++, "6. 근로소득공제2 setting Error");  /*dsa2000 Rexec 대체*/
+               err_print(sqlca.sqlcode,"6. 근로소득공제2 setting Error");
+               exit(1);
+          }
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c2;
+               break;
+          }
+          
+taxgross = fmax(taxgross,0); 
+
+          if  (taxgross  <= INDEDBASIC)                               /* 2010.01.18 근로 소득금액 400만원 체크 추가 */
+          {    
+               laborded = trunc(taxgross   * INDEDBRATE /100) ;               
+          }     
+          else if ((taxgross > INDEDBASIC) && (taxgross <= INDEDLIMIT2))
+               laborded = trunc( INDEDBASIC  * INDEDBRATE /100  +
+                               ( taxgross - INDEDBASIC )*INDEDORATE / 100 );
+          else if ((taxgross > INDEDLIMIT2) && (taxgross <= INDEDLIMIT3))
+               laborded = trunc(INDEDBASIC * INDEDBRATE /100  +
+                               (INDEDLIMIT2 - INDEDBASIC)*INDEDORATE / 100 +                        
+                               (taxgross -  INDEDLIMIT2)*INDEDORATE2 / 100);
+                              
+          else if (taxgross > INDEDLIMIT3 && (taxgross <= INDEDLIMIT4))  /*parksh 20021213수정 */
+               laborded = trunc(INDEDBASIC * INDEDBRATE /100  +
+                               (INDEDLIMIT2-INDEDBASIC) * INDEDORATE /100 +
+                               (INDEDLIMIT3-INDEDLIMIT2) * INDEDORATE2 /100 +
+                               (taxgross - INDEDLIMIT3) * INDEDORATE3/100 );
+                         
+          else if (taxgross > INDEDLIMIT4)                              /*parksh 20021213 추가 근로소득공제4*/ 
+               laborded = trunc(INDEDBASIC * INDEDBRATE /100 +
+                               (INDEDLIMIT2 - INDEDBASIC)*INDEDORATE / 100 +
+                               (INDEDLIMIT3-INDEDLIMIT2) * INDEDORATE2 /100 +
+                               (INDEDLIMIT4-INDEDLIMIT3) * INDEDORATE3 /100 +
+                               (taxgross - INDEDLIMIT4) * INDEDORATE4/100 );
+   
+          laboramt  = trunc(taxgross - laborded);     
+
+laboramt   = fmax(laboramt,0);        
+laborlimit = laboramt;                                  
+          
+          
+          /*전산처리요청 2006.06.02.: 퇴직사원본인 관련외의 부양가족공제 안하도록 초기화 */
+          mate     = 0;
+          familyno = 0;
+          /*  fami65no = 0; 20090318 65세 경로우대 폐지*/
+          fami70no = 0;
+          childno  = 0;
+           
+
+           /*  본인공제  */
+          selfded = BASDED;
+
+selfded    = fmin( laborlimit,  selfded);
+laborlimit = fmax((laborlimit - selfded),0);          
+          
+          /* 2008.02.25********************************************************************/
+          /* 퇴직자들의 기본.추가공제사항들 적용 안시킴
+            -연말정산제도 변경시 지급조서 제출시 어려움 때문.  신영섭 대리 요청*/
+          /*  배우자 공제  
+           mateded = mate * BASDED;
+          
+               부양가족공제  
+                       famided = familyno * BASDED; */
+          famided = 0;
+          
+          /*기본공제 본인공제는 공제 허용 2008.02.25
+          basicded= selfded + mateded + famided; */
+          basicded= selfded;
+
+          if  (SelfAge >= 70)   /* 근로자본인 경로자 체크..*/
+               fami70no = 1;
+          /*else if (SelfAge >= 65 )  20090318 65세 경로우대 폐지
+            fami65no = 1;                */
+          /********************************************************************/
+                    
+          oldded  = fami70no * APPOLDDED2;
+          
+oldded     = fmin( laborlimit,  oldded);
+laborlimit = fmax((laborlimit - oldded),0);    
+
+          /* 장애자 공제 */
+          obsded  = obstacleno * OBSDEDADD;    
+
+obsded     = fmin( laborlimit,  obsded);
+laborlimit = fmax((laborlimit - obsded),0);                   
+               
+          /* 부녀자 공제 */
+          womanded = woman * APPDED;           
+
+womanded   = fmin( laborlimit,  womanded);
+laborlimit = fmax((laborlimit - womanded),0);                   
+
+
+                       /* 경로우대공제 
+                       ---oldded  = fami65no * APPOLDDED;            
+                       oldded  = oldded + fami70no * APPOLDDED2;  2004.12. dsa2000  경로우대70이상 추가공제
+          
+            장애자 공제
+                       obsded  = obstacleno * OBSDEDADD;     2005년 100 => 200만원으로 인상
+          
+            부녀자 공제 
+                       womanded = woman * APPDED;
+          
+            자녀양육비 공제      100만원으로 인상(2004.12.DSA2000)
+                       childded= childno * APPOLDDED;
+          
+              추가공제 
+                       appendded = oldded + obsded + womanded + childded;
+                       
+                       다자녀 추가공제
+                       if (fami16no + fami720no == 2)
+                       {
+                         fewded = FEWDED1;
+                       }
+                       else if (fami16no + fami720no > 2)
+                       {
+                         fewded = FEWDED1 + ( ((fami16no+fami720no)-2)*FEWDED2 );
+                       } */                
+                       
+                       /*  소수추가공제 폐지
+                       {if (mate+familyno == 0)
+                       {       fewno=1;
+                               fewded= FEWDED1;
+                       }
+                       else if (mate+familyno == 1)
+                       {       fewno=2;
+                               fewded=FEWDED2;
+                       }
+                       else
+                       {       fewno=0;
+                               fewded=0;
+                       }*/
+                       /* 2008.02.25********************************************************************/
+
+/* 연금보험료 공제 START ===============================================================================*/     
+   /* ==========================================================================
+      4.00       2001.12.14         유효성          연금보험료 추가
+   ============================================================================= */     
+        /*2002년부터 전액공제   anuded = (anuamt + banuamt) * 50 /100 ;*/
+     anuded = fmax((anuamt + banuamt),0)  ;
+                                     
+anuded      = fmin( laborlimit,  anuded);
+laborlimit  = fmax((laborlimit - anuded),0);    
+                                                        
+          medded = fmax((medamt + bmedamt),0);     /*  의료보험료  */
+          
+medded     = 0;
+laborlimit = fmax((laborlimit - medded),0);                             
+          
+          hireded= fmax((hireamt + bhireamt),0);   /*  고용보험료  */
+
+hireded     = 0;
+laborlimit  = fmax((laborlimit - hireded),0);          
+
+     specialded = medded + hireded;
+     chagamamt  = laborlimit;
+     taxlevel = laborlimit;      
+          
+     calctaxlimit = 0;     
+     if  (taxlevel < 0 )
+          taxlevel = 0;
+        
+     if  (taxlevel == 0)
+          calctax = 0;
+     else
+          calctax = GetTax(taxlevel);
+     calctaxlimit = calctax;   /* 2015.03.16 eyha 산출세액에서 차감해야함 */
+          
+          
+/*
+printf("DEBUG1 : empno=[%s],selfded=[%f],oldded=[%f],womanded=[%f],medded=[%f],hireded=[%f],anuded=[%f]\n",&empno[0], selfded,oldded,womanded,medded,hireded, anuded);          
+printf("DEBUG2 : empno=[%s],taxgross=[%f],laborded=[%f],laboramt=[%f],laborlimit=[%f],taxlevel=[%f],calctax=[%f]\n",&empno[0], taxgross,laborded,laboramt,laborlimit,taxlevel, calctax);          
+*/                     
+     
+/* 세액 공제  START=====================================================================*/
+     /*근로소득 세액공제*/
+     /*2015.06.02 eyha 근로소득세액공제 산식 변경*/
+     /*2017.03.17 eyha yeta와 동기화
+     if        (taxgross <= TAXDEDSECT1) {
+        incomtdedlimit = TAXDEDSLIMIT1;
+     }else if  (taxgross <= TAXDEDSECT2) {
+        incomtdedlimit = fmax(TAXDEDSLIMIT1-floor((taxgross-TAXDEDSECT1)*0.008),TAXDEDSLIMIT2);
+     }else if  (taxgross >  TAXDEDSECT2) {
+        incomtdedlimit = fmax(TAXDEDSLIMIT2-floor((taxgross-TAXDEDSECT2)*0.5),TAXDEDLIMIT  );
+     }}  */
+     
+     if        (taxgross <= TAXDEDSECT1) {
+        incomtdedlimit = TAXDEDSLIMIT1;
+     }else if  (taxgross <= TAXDEDSECT2) {
+        incomtdedlimit = fmax(floor(TAXDEDSLIMIT1-(taxgross-TAXDEDSECT1)*0.008),TAXDEDSLIMIT2);
+     }else if  (taxgross >  TAXDEDSECT2) {
+        incomtdedlimit = fmax(floor(TAXDEDSLIMIT2-(taxgross-TAXDEDSECT2)*0.5),TAXDEDLIMIT  );
+     }
+     
+     
+     if (calctax < TAXDEDBASIC) {
+          incomtded = calctax * TAXDEDBRATE / 100;
+     }else {
+          incomtded = (TAXDEDBASIC * TAXDEDBRATE / 100) +
+                                      (calctax - TAXDEDBASIC) * TAXDEDORATE /100 ;
+     }
+
+     incomtded    = fmin(incomtdedlimit,incomtded);
+     incomtded    = floor(incomtded);                   /* 2015.03.16 eyha 소수점 처리-세액공제계에서 오류남 */ 
+     incomtded    = fmin(calctaxlimit,incomtded);       /* 2015.03.16 eyha 산출세액보다 작아야 함 */
+     calctaxlimit = fmax(calctaxlimit-incomtded, 0);    /* 2015.03.16 eyha 산출세액에서 차감한 금액 비교 */
+                                     
+          /*  일반보험료 공제     */
+          guarded = 0;
+          
+/* ==========================================================================
+   4.00       2001.12.14         유효성          장애인전용보험료 추가
+============================================================================= */  
+          obsguarded = 0;
+      
+          insded = guarded + medded + hireded + obsguarded ;   /*  보험료공제   */
+              
+          /*  의료비 공제
+              과세급여액*MEDORATE를 초과하는 의료비중 MEDDEDLIMIT를 한도로 공제 ,
+              but 장애자,경로우대자의료비가 있는 경우 추가로 공제 
+              추가공제에 본인의료비(shosamt) 포함 2004년 귀속부터.   */
+          hosamt = ghosamt + ohosamt + nhosamt + shosamt;          
+          hosded = hosamt - (taxgross  * MEDORATE /100);
+          hosded = floor(hosded);
+          if  (hosded<0)
+               hosded=0;
+          
+          medappded_A = hosamt - (taxgross * MEDORATE / 100) - MEDDEDLIMIT;  /*한도초과분*/
+          if  (medappded_A < 0 ) 
+               medappded_A = 0;
+          
+          medappded_B = ohosamt + nhosamt + shosamt; /*한도 없는 의료비 총액*/
+          if  (medappded_A >= medappded_B ) 
+               hosded = hosded + medappded_B;
+          else
+               hosded = hosded + medappded_A;
+   
+   				hosded = 0;
+   				
+          /*본인 교육비*/
+          seduded = 0;
+
+          /*유치원 교육비*/   
+          keduded = 0;
+   
+          /*초중고교육비*/
+          ceduded = 0;              
+   
+          /*대학 교육비*/
+          ueduded = 0;
+   
+    /* 장애인특수교육비 PARKSH 20021224 추가*/ 
+     obseduded = 0;   /*2004.12.  dsa2000  장애인특수교육비 한도 폐지.*/
+                
+     eduded    = seduded + keduded + ceduded + ueduded +obseduded;    /*parksh 20021224 수정 + keduded1 */          
+
+      /*주택자금*/
+      /* --------------------------------------------------------------------------------
+        40.11   2003.12.18   강륜종   장기주택저당차입 이자상환 한도액 추가..
+        ①주택마련저축  ②주택임차 차입금상환 ③장기주택저당차입금
+                                      주택자금 공제시 ①+② 만 공제시에는 한도가 300만원까지
+                                                     ①+②+③ 공제시에는 한도가 1000만원까지
+        ------------------------------------------------------------------------------- */       
+     houseded = floor(houseamt * HSRATE / 100) + houseintamt ;
+     
+     if  (houseintamt > 0)
+     {
+          if ( houseded > HSDEDLIMIT2 )  houseded = HSDEDLIMIT2;
+     }
+     else
+     {
+          if ( houseded > HSDEDLIMIT )   houseded = HSDEDLIMIT;
+     }
+             
+     houseded = floor(houseded);
+     
+     houseded = 0;
+                                                
+       
+     /* 전액기부금 */
+     agiveded= 0;
+     
+           /* 정치기부금 : 세액공제 신설 => dsa2000  2004.12. 세액공제(10만원) 이상의 금액은 전액기부금 처리.*/
+     if  (poliamt > POLILIMIT)
+     {  
+          agiveded = agiveded + (poliamt - POLILIMIT);
+          polided  = POLILIMIT;
+     }
+     else
+     {
+          polided  = poliamt;   /*polided 정치자금 세액공제*/
+     }
+           
+      /* 특례지정기부금 parksh 20021224 추가 */
+     spgivded = spgivamt;
+     if  (spgivded > floor((laboramt-agiveded) * SPGIVDEDRATE / 100))
+          spgivded = floor((laboramt-agiveded) * SPGIVDEDRATE / 100) ;
+                    
+                 /* 지정기부금 parksh 20021224 수정*/
+     if  (pgiveamt > ((laboramt - agiveded - spgivded ) * GIVDEDRATE / 100))
+          pgiveded = (laboramt - agiveded - spgivded) * GIVDEDRATE / 100;
+     else
+          pgiveded = pgiveamt;
+       
+                   /* 기부금공제 = 전액기부금  + 특례지정기부금 + 지정기부금 parksh 20021224 */
+     giveded = agiveded + spgivded + pgiveded ;
+     giveded = floor(giveded); /*dsa2000*/
+     
+     agiveded  = 0;
+     spgivded  = 0;
+     pgiveded  = 0;
+     giveded   = 0;
+     
+     /* 특별공제 = 보험료공제 + 의료비공제 + 교육비공제 + 주택자금공제 +  기부금공제 +  결혼.장례.이사비용공제  */
+     specialded = 0;
+     
+     standded = STDDED;
+                
+     if  (specialded < STDDED)
+     {  
+          insded    = hosded   = eduded   = houseded   = giveded   = 0;
+          guarded   = obsguarded = obseduded = 0;
+          seduded   = keduded  = ceduded    = ueduded   = 0;  /*keduded1 dsa2000  2004.12.*/
+          agiveded  = pgiveded = spgivded = 0;
+          specialded = 0 ;  /*2001.12.26. 유효성 표준공제 컬럼추가   specialded = STDDED;*/
+          standded   = STDDED ;     specaddded = 0;
+          
+          standded   = fmin(calctaxlimit,standded);   /* 2015.03.16 eyha 산출세액보다 작아야 함 */                               
+
+          /*printf("[debug1] : empno=%s,calctaxlimit=%f,standded=%f ,taxgross=%f \n",empno, calctaxlimit, standded, taxgross);               */
+
+     }
+   
+
+        
+/* 조세특례법에의한 소득공제 START=====================================================================*/             
+   /*****개인연금*****/   
+     pended  = (penamt1 + penamt2 +bpenamt ) * PENRATE / 100;
+     
+     if  (pended > PENDEDLIMIT)
+          pended = PENDEDLIMIT;
+     
+     pended = 0;
+   /* ==========================================================================
+      4.00       2001.12.14         유효성          연금저축 추가
+   ============================================================================= */     
+     npended = npenamt + npenamt2 ;
+     
+     if  (npended > NPENDEDLIMIT) 
+          npended = NPENDEDLIMIT;
+     npended = 0;
+       
+     /*****투자조합********/      
+     INVESTLIMIT    = taxgross * INVESTDEDRATE;                
+     
+     if  (INVESTLIMIT < 0)
+          INVESTLIMIT = 0 ;
+        
+     investded  = investamt * INVESTRATE /100 ;     
+     
+     investded = 0;           
+     
+     if  (investded > INVESTLIMIT)
+          investded = INVESTLIMIT;
+     
+     /*parksh 20021224 투자조합00~01 */
+     OINVESTLIMIT    = taxgross * OINVESTDEDRATE;                
+     
+     if  (OINVESTLIMIT < 0)
+          OINVESTLIMIT = 0 ;
+        
+     oinvestded      = oinvestamt * OINVESTRATE /100 ;                
+     
+     if  (oinvestded > OINVESTLIMIT)
+          oinvestded = OINVESTLIMIT;
+     
+     oinvestded = 0;
+       
+     tinvestded = investded + oinvestded;      /*parksh  20021213  투자조합공제액합*/
+     
+      
+   /*================================================================================
+     2003.12. Dsa2000  추가....  => 2004.12  기명식선불카드 추가. 직불카드 요율 20%로 축소
+   ① 신용카드등 사용금액 = 신용카드+기명식 선불카드+직불카드+지로납부금액
+   ② 초과금액 = ①-(총급여액×10%)  : 공제대상금액
+   ③ 신용카드 =(②×신용카드금액/①)×20%
+   ④ 학원비   =(②×지로납부금액/①)×20%
+   ⑤ 직불카드 =(②×직불카드사용금액/①)×20%
+   ==> 총 공제금액 : ③+④+⑤       ☞ 한도액 :  총급여액×20%  와 500만원 중   적은 금액
+   ================================================================================ */
+     creditded = 0;
+     /*creditamt = credittotamt - creditdedamt;  신용카드 공제 가능금액 = 총 공제신청금액 - 법인 사용분 */              
+     
+     if (creditamt < 0)    creditamt = 0;         /*dsa2000  2005.01.31 추가.*/
+     
+     totcreditamt = creditamt + debitamt + giroamt + cashamt;  /*①*/     
+                
+     if (totcreditamt < 0) totcreditamt = 0; 
+                                               
+     crededlimit2    =  floor( totcreditamt - (taxgross  * CREORATE / 100) );  /*②*/
+     if  (crededlimit2 > 0)
+     {       
+          creditded =             floor((crededlimit2 * creditamt / totcreditamt) * CREDEDLRATE  /100) ; /*③*/                  
+          creditded = creditded + floor((crededlimit2 * debitamt  / totcreditamt) * DEBITDEDRATE /100) ; /*④*/
+          creditded = creditded + floor((crededlimit2 * giroamt   / totcreditamt) * GIRODEDRATE  /100) ; /*⑤*/ 
+          creditded = creditded + floor((crededlimit2 * cashamt   / totcreditamt) * CREDEDLRATE  /100) ; /*⑥*/ 
+     }
+             
+     /* 한도 체크 : 총과세급여액의 20%와 500만원중 적은금액 */
+     if  (creamt1 < CREDEDLIMIT )
+     { 
+          if  (creditded > creamt1  )           
+               creditded = creamt1;
+     }
+     else
+     {
+          if  (creditded > CREDEDLIMIT  )           
+               creditded = CREDEDLIMIT;
+     }                        
+      /* Dsa2000  2003.12.  End..........................................................*/                       
+     creditded = 0;   
+               
+     /*===============================================================================
+      2003.12. Dsa2000  추가....
+      외국인임직원 해외근무에 따른 추가비용 소득공제
+      - 공제비용 : 외국인학교 자녀교육비, 월세 지출액
+      - 공제한도 : (월정액급여 연간합계액-공제비용)의 40%      
+      ===============================================================================*/  
+     /* 2004.12. 외국인 세액개편에 따라...폐지.
+     FOREIGNDED = 0;
+      sprintf(JUMINID, "%.1s",JUMINID+7);
+      
+     if ( (strcmp(JUMINID, "5") == 0 ) || (strcmp(JUMINID, "6") == 0 ) ) 
+     {
+       FOREIGNDED = ( taxgross - FOREIGNAMT ) * FOREDEDRATE / 100;    
+       
+       if ( FOREIGNAMT < FOREIGNDED )
+          FOREIGNDED = FOREIGNAMT;       
+     }   
+      Dsa2000  2003.12.  End..........................................................*/
+     
+     /*조세특례법에의한 소득공제 합계*/
+       incomeded = basicded + appendded + specialded + standded + pended  +
+                   fewded   + creditded + tinvestded + anuded   + npended ;
+                              /*+ FOREIGNDED ;       2004.12. dsa2000 추가 외국인 추가공제...폐지*/
+       incomeded = 0;                       
+                
+     /*  주택차입금이자세액 공제  */
+     hloanded = floor(hloanamt * HSINTRATE / 100);
+     hloanded = 0;
+   
+                /*  외국납부세액공제   */
+     forided = foriamt;
+     
+     
+     
+     /*세액공제 합계*/
+     tdedsum = standded + incomtded + hloanded + forided + polided; 
+         
+     
+/* 갑근세 /주민세 / 농특세 START=====================================================================*/               
+     if  (calctax - tdedsum > 0) 
+     {
+
+          /* 2007.01. 
+          dintax = floor((calctax - tdedsum) / 10) * 10;
+          djutax = floor(dintax / 100) * 10 ;  */
+          
+          /* 2017.03.17 eyha yeta 동기화 처리 */
+          dintax = calctax - tdedsum;
+          djutax = floor(dintax / 10);  
+          
+          /*dintax = calctax - tdedsum;
+          djutax = dintax * 0.1;*/
+     }                
+     else 
+     {
+          dintax = 0 ;
+          djutax = 0 ;    
+     }              
+            
+      
+     if  (hloanded > 0 || tinvestded > 0)  /*parksh 수정*/
+     {
+          /* 2007.01.*/
+          dnongtax = floor( ( hloanded + (GetTax(tinvestded + taxlevel) - calctax)) * NONGRATE / 100) ;                
+          dnongtax = floor(dnongtax / 10) * 10;
+          /*dnongtax = (hloanded + (GetTax(tinvestded + taxlevel) - calctax)) * NONGRATE / 100;
+          dnongtax = dnongtax * 0.1;*/
+     }
+     else               
+          dnongtax = 0 ;                  
+       
+     intax   = mintax + bintax ;
+     jutax   = mjutax + bjutax ;
+     nongtax = mnongtax + bnongtax ;
+            
+     /* 2007.01. 원단위 절사방법 변경 - dintax를  floor를 안하고 yintax를 trunc하게끔 변경.
+     yintax   = dintax - intax,
+     yjutax   = djutax - jutax;
+     ynongtax = dnongtax - nongtax;   2017.02월까지 사용*/
+
+     /* 2017.03.16 eyha yeta와 원단위 처리 동기화 */
+     yintax   = trunc((dintax - intax) / 10 ) * 10,
+     yjutax   = trunc((djutax - jutax) / 10 ) * 10;
+     ynongtax = trunc((dnongtax - nongtax) / 10 ) * 10;   
+
+     
+     /*yintax   = trunc( (dintax   - intax  ) / 10 ) * 10;
+       yjutax   = trunc( (djutax   - jutax  ) / 10 ) * 10;
+       ynongtax = trunc( (dnongtax - nongtax) / 10 ) * 10;*/
+              
+     ycalctax = yintax + yjutax + ynongtax;
+    
+     UpdateResult();
+     }
+}
+
+Calc_Yearend()
+{
+     double  medappded_A;  
+     double  medappded_B;
+     double  crededlimit2;
+     double  creamt1;
+     
+     medappded_A = medappded_B = crededlimit2 = creamt1 = 0;
+     
+     ReadPkcysbas();      /*  PKCYSBAS 연말정산기준 테이블 읽어오기 */ 
+     ReadTax();           /*  연세율표를 읽어 배열에 저장한다 */
+     
+/*2014.01.13.hjku. 삭제(패러미터로 받음)     
+     EXEC  SQL
+     SELECT  max(retdate) 
+     INTO  :tempdate
+     FROM  PKMRYMAS;   
+     
+     if  (sqlca.sqlcode == 1403 )
+     {  
+          Write_batlog(seqno++, "1. 정산할 자료가 없습니다"); 
+          err_print(sqlca.sqlcode,"1. 정산할 자료가 없습니다");
+          exit(1);
+     }
+     else if( sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "2. 퇴직일  read Error");  
+          err_print(sqlca.sqlcode,"2. 퇴직일 read ERROR");
+          exit(1);
+     }
+     
+     sprintf(workyy,"%.4s",tempdate);*/
+     
+     /* 귀속일 */
+     EXEC     SQL
+     UPDATE   PKMRYMAS a
+     SET  YSFRDATE = (select GREATEST(NVL(ORGEMPDATE,:workyy||'0101'),:workyy||'0101')
+                        from pkmrtmas b
+                       where a.empno = b.empno)
+     WHERE retdate like :workyy||'%' ;
+           
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "귀속일1 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"귀속일1 setting Error");
+          exit(1);
+     }
+                          
+                         
+     EXEC    SQL
+     UPDATE  PKMRYMAS a
+        SET  YSTODATE = RETDATE
+     WHERE retdate like :workyy||'%' ;
+      
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "귀속일2 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"귀속일2 setting Error");
+          exit(1);
+     }   
+     
+     EXEC   SQL
+     UPDATE  PKMRYMAS P
+        SET  LASTMONPAY = 
+      ( SELECT SUM( NVL(BASICAMT,0)    + NVL(INFOAMT,0)  + NVL(DUTYAMT,0)    +
+                    NVL(BBASICAMT,0)   + NVL(BINFOAMT,0) + NVL(BDUTYAMT,0)   +
+                    NVL(MATEAMT,0)     + NVL(PARTAMT,0)  + NVL(CHILDAMT,0)   +
+                    NVL(OVTMAMT,0)     + NVL(SPTMAMT,0)  + NVL(MCARTAXAMT,0) +
+                    NVL(BOKJISUPAMT,0) + NVL(AIDAMT1,0)  + NVL(AIDAMT2,0)    + 
+                    NVL(AIDAMT3,0)     + NVL(LICEAMT,0)  + NVL(MBONAMT,0)    + 
+                    NVL(ODTAXAMT,0)    + NVL(SOPAY,0)    + NVL(LONGSUPAMT,0) +
+                    NVL(CHILDEDUAMT,0) + NVL(MEDPAYAMT,0)+ NVL(TRAINSUPAMT,0)+ 
+                    NVL(OVMCAMT,0)     + NVL(TAXPAY,0)   + NVL(FIXPAY,0)     +
+                    NVL(QUATERPAY,0)   + NVL(HOLIPAY,0)  + NVL(ROLEAMT,0)    +
+                    NVL(R.ITAMT,0)   /*DSA2000 ADD  2005.01.12 */
+                  )
+         FROM  PKHPHIS R, (SELECT EMPNO MEMPNO, CALYN 
+                             FROM PKMRTMAS) 
+         WHERE  SUBSTR(PAYDATE,1,6) = DECODE(NVL(CALYN,'N'),'Y',SUBSTR(RETDATE,1,6),   /* PAYDATE 6 자리에서 8 자리 변경으로 인한 수정 [2018-09-18 이상용] */  
+                         TO_CHAR(ADD_MONTHS(TO_DATE(SUBSTR(RETDATE,1,6),'YYYYMM'),-1),'YYYYMM')) 
+           AND  P.EMPNO = R.EMPNO
+           AND  MEMPNO  = R.EMPNO
+      )
+     WHERE retdate like :workyy||'%' ;
+     
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.1 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.1 주급여 setting Error");
+          exit(1);
+     }
+     
+     
+     /*급여총액 : 급여이력 데이터 업데이트 */
+     EXEC   SQL
+     UPDATE PKMRYMAS P
+     SET    MPAYSUM = 
+      ( SELECT SUM(
+                   NVL(BASICAMT   ,0) +NVL(INFOAMT  ,0)+NVL(DUTYAMT   ,0)+
+                   NVL(BBASICAMT  ,0) +NVL(BINFOAMT  ,0)+NVL(BDUTYAMT  ,0)+
+                   NVL(MATEAMT  ,0) +NVL(PARTAMT  ,0)+NVL(CHILDAMT  ,0)+
+                   NVL(OVTMAMT  ,0) +NVL(SPTMAMT  ,0)+NVL(MCARTAXAMT  ,0)+
+                   NVL(BOKJISUPAMT  ,0) +NVL(AIDAMT1  ,0)+NVL(AIDAMT2   ,0)+ 
+                   NVL(AIDAMT3  ,0) +NVL(LICEAMT  ,0)+NVL(MBONAMT   ,0)+ 
+                   NVL(ODTAXAMT  ,0) +NVL(SOPAYSUM  ,0)+NVL(LONGSUPAMT  ,0)+
+                   /*NVL(YUEDUAMT  ,0) +*/
+                   nvl(YUEDUTAX,0)     + /*dsa2000  2005.01. 비과세처리 yueduamt */
+                   NVL(SELFEDUAMT  ,0) +
+                   NVL(DRVLICEAMT  ,0) +NVL(LECTSUPAMT  ,0)+
+                   NVL(EDUSUPAMT  ,0) +NVL(MEDSUPAMT  ,0)+NVL(SUPAMT1   ,0)+
+                   NVL(SUPAMT2  ,0) +NVL(SUPAMT3  ,0)+  
+                   NVL(CHILDEDUAMT  ,0) +NVL(MEDPAYAMT,0) + 
+                   NVL(TRAINSUPAMT  ,0) +NVL(OVMCAMT  ,0) +NVL(TAXPAY,0)    +
+                   NVL(FIXPAY  ,0) +NVL(ROLEAMT,0)   +
+                   NVL(QUATERPAY  ,0) +NVL(HOLIPAY,0)   +/*dsa2000 2004.01. 분기/명절연봉이 상여총액에 더해지던것을 급여총액으로*/ 
+                   NVL(ITAMT         ,0) + /*DSA2000 ADD  2005.01.12 */
+                   NVL(WINTERAMT     ,0) + /*DSA2000 ADD  2006.04.19. 요청서 월동보조비로 쓰던 칼럼을 영업인세티브 항목으로 사용 */
+                   NVL(HOMESUPAMT    ,0)   /*DSA2000 ADD  2006.06. 귀향지원금 => 선택적복리후생비로 변경 사용.*/
+            )
+          FROM   PKHPHIS R
+         WHERE   substr(paydate,1,4) = :workyy and p.empno = r.empno)
+     WHERE retdate like :workyy||'%' ;
+     
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.2 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.2 주급여 setting Error");
+          exit(1);
+     }
+
+/* printf(" mpaysum~~~~~~~~~ \n"); */
+  /*상여총액 : 급여이력 데이터 업데이트 */
+     EXEC   SQL
+     UPDATE  PKMRYMAS P
+        SET  MBONSUM = 
+             (SELECT SUM(NVL(BONUSAMT ,0)+NVL(INCENTAMT,0)+NVL(TRAINAMT,0)+
+                         /*NVL(WINTERAMT,0)+NVL(HOMESUPAMT,0)+NVL(YBONAMT,0)+ dsa2000  2006.04.19. 요청서 */
+                          NVL(YBONAMT,0)+ NVL(SBONTAXAMT,0) + NVL(SOBONSUM,0)  /*NVL(SBONAMT  ,0)  dsa2000  2005.12.*/             
+                        )
+                FROM  PKHPHIS R
+               WHERE  substr(paydate,1,4) = :workyy 
+                 and  p.empno = r.empno)
+     WHERE retdate like :workyy||'%' ;
+   
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.3 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.3 주급여 setting Error");
+          exit(1);
+     }
+     
+     /*비과세 급여 : 급여이력 데이터 업데이트 */
+     EXEC   SQL 
+     UPDATE  PKMRYMAS p
+        SET  (MNOTAX,NOTAXEXCEPT) = /*(SELECT SUM(NVL(NOTAXPAYSUM,0)) 2001-02-06 비과세급여는 식교비와 자가운전지원금의 비과세만 적용*/
+                    (select sum(LEAST(NVL(r.YUEDUAMT,0)-nvl(YUEDUTAX,0), TO_NUMBER(:yuedunotax))), /*유아보육비 비과세 추가 2005.01. DSA2000*/                                
+                            sum(NVL(r.ODAMT ,0)   - NVL(r.ODTAXAMT,0)  +         /* kth 2010.04.27 유치원 학자금을 제외한 비과세를 넣어 줌. 원천징수영수증에 표기 맞게*/
+                                NVL(r.MCARAMT,0)  - NVL(r.MCARTAXAMT,0))
+                       FROM PKHPHIS r
+                      WHERE substr(paydate,1,4) = :workyy and p.empno = r.empno)
+     WHERE retdate like :workyy||'%';
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.4 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.4 주급여 setting Error");
+          exit(1);
+     }
+     
+     /*상여총액 : 퇴직월 데이터 업데이트 */
+     EXEC  SQL
+     UPDATE  PKMRYMAS a
+        SET  MBONSUM = (select NVL(a.MBONSUM,0)+NVL(b.YENAMT,0)+NVL(b.MONAMT,0) 
+                          from pkmrtmas b       
+                         where a.empno = b.empno) 
+     WHERE retdate like :workyy||'%';   
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.5 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.5 주급여 setting Error");
+          exit(1);
+     }
+     
+     /*비과세 총액 : 퇴직월 데이터 업데이트 */
+     /*2010.04.27 kth 비과세 총액(유치원학자금 제외 ) : 퇴직월 데이터 업데이트 원천징수 영수증 표기 방법에 따라 수정*/
+     EXEC  SQL
+     UPDATE  PKMRYMAS A
+        SET  (MNOTAX,NOTAXEXCEPT) = (SELECT NVL(A.MNOTAX ,0) , /* 기타비과세급여 추가 + 
+                                            NVL(B.ODAMT ,0)  - NVL(B.ODTAXAMT,0)   +
+                                            NVL(B.MCARAMT,0) - NVL(B.MCARTAXAMT,0) +
+                                            NVL(B.NOTAXPAY,0) */
+                                            NVL(A.NOTAXEXCEPT ,0) + 
+                                            NVL(B.ODAMT ,0)  - NVL(B.ODTAXAMT,0)   +
+                                            NVL(B.MCARAMT,0) - NVL(B.MCARTAXAMT,0) +
+                                            NVL(B.NOTAXPAY,0) /* 기타비과세급여 추가 */
+                                       from PKMRTMAS B       
+                                      where A.EMPNO = B.EMPNO) 
+     WHERE retdate like :workyy||'%';   
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.6 주급여 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.6 주급여 setting Error");
+          exit(1);
+     }
+     
+        
+     
+     /*급여총액 : 퇴직월 데이터 업데이트 */
+     EXEC  SQL
+     UPDATE  PKMRYMAS A
+        SET  MPAYSUM = (SELECT NVL(MPAYSUM,0)   + NVL(BASICAMT,0) + NVL(INFOAMT,0) +
+                               NVL(DUTYAMT,0)   + NVL(PROMAMT ,0) + NVL(FAMIAMT,0) + 
+                               NVL(LICEAMT,0)   + NVL(ODTAXAMT,0) + NVL(MCARTAXAMT,0) +
+                               NVL(OVTMAMT,0)   + NVL(SPTMAMT ,0) + NVL(BOKJISPAMT,0) +
+                               NVL(AIDAMT1,0)   + NVL(AIDAMT2 ,0) + NVL(MBONAMT,0)+
+                               NVL(TAXPAY,0)    + NVL(FIXPAY,0)   + NVL(ROLEAMT,0)+
+                               NVL(QUATERPAY,0) + NVL(HOLIPAY,0)  + /*dsa2000 2004.01. 분기/명절연봉이 상여총액에 더해지던것을 급여총액으로*/ 
+                               NVL(ITAMT,0)     +      /*DSA2000 ADD  2005.01.12 */
+                               NVL(WINTERAMT,0) +      /*DSA2000 ADD  2006.04.19. 영업인센티브로 변경 사용 */
+                               NVL(HOMESUPAMT,0)+      /*DSA2000 ADD  2006.06.    선택적복리후생비로 변경사용*/
+                               NVL(WELFARECARDAMT,0)   /*hjku    ADD  2013.05.    선복비카드과세 추가*/
+                              FROM PKMRTMAS B
+                             WHERE A.EMPNO = B.EMPNO) 
+     WHERE retdate like :workyy||'%';
+    
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.7 주급여1 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.7 주급여1 setting Error");
+          exit(1);
+     }
+   
+     EXEC  SQL
+     UPDATE  PKMRYMAS A
+        SET  MBONSUM = (SELECT NVL(MBONSUM,0)  +NVL(BONUSAMT,0) +NVL(INCENTAMT,0) +
+                               /*NVL(TRAINAMT,0) +NVL(WINTERAMT,0) +NVL(SBONAMT,0) + NVL(HOMESUPAMT,0) dsa2000  2006.04.19. (상여총액에서 제외)*/
+                               NVL(TRAINAMT,0) +NVL(SBONAMT,0)
+                               /*NVL(QUATERPAY  ,0)+NVL(HOLIPAY  ,0)*/
+                          FROM PKMRTMAS B
+                         WHERE A.EMPNO = B.EMPNO)      
+     WHERE retdate like :workyy||'%';
+                  
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "3.7 주급여2 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.7 주급여2 setting Error");
+          exit(1);
+     }
+     
+     /*dsa2000  2007.01. 우리사주 인출시 과세액 반영 추가...*/
+     /*우리사주인출이력(PSDOHIS)의 WDSTAMT1 칼럼에 우리사주 시스템에서 과세금액 계산되어짐 (계산 시점 체크해야함)*/
+     EXEC SQL 
+     update PKMRYMAS M  
+        Set COSTOCKTAX = (Select sum(nvl(WDSTAMT1,0)) from PSDOHIS
+                           Where Substr(reqdate,1,4) = :workyy 
+                            And M.empno = empno             
+                          Group by empno )
+      Where Empno in (Select empno from PSDOHIS 
+                       Where Substr(reqdate,1,4) = :workyy  
+                         AND nvl(WDSTAMT1,0) <> 0   ) 
+       and retdate like :workyy||'%';
+                               
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          Write_batlog(seqno++, "3.8 우리사주 인출시 과세액 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"3.8 우리사주 인출시 과세액 setting Error");
+          exit(1);
+     }                              
+           /*******************************************************/
+           
+     EXEC SQL 
+     UPDATE  PKMRYMAS 
+        SET  familyno = nvl(fami16no,0)  + nvl(fami720no,0) + nvl(fami6064no,0) 
+                      + nvl(fami70no,0),                                              /* + nvl(fami65no,0) kth 2009.03.18 65세 경로우대 공제 페지*/
+             taxgross = nvl(mpaysum,0)   + nvl(mbonsum,0)   + nvl(bpaysum,0)     /* 총과세액 */
+                      + nvl(bbonsum,0)   + nvl(mcogbonsum,0) 
+                      + nvl(COSTOCKTAX,0)               ,                        /*우리사주인출 과세액 합산 2007.01.*/
+             notax    = nvl(mnotax,0)    + nvl(bnotax,0)
+     WHERE retdate like :workyy||'%';
+      
+     /* 1346(전영상) 퇴직자 환급관련 과세급여 조정(임시사용)
+     EXEC SQL
+     UPDATE PKMRYMAS
+     SET    TAXGROSS = TAXGROSS - 39939310
+     WHERE  EMPNO = '1346';           
+   
+     if ( sqlca.sqlcode != 0)
+     {  
+      Write_batlog(seqno++, "4. 급여총액 setting Error");
+      err_print(sqlca.sqlcode,"4. 급여총액 setting Error");
+      exit(1);
+     }*/
+     
+     /* 주민번호 체크 위하여 추가함.  2004.01.05.  Dsa2000  강륜종  */
+     EXEC SQL 
+     UPDATE  PKMRYMAS p
+        SET  juminid = (Select juminid from pimpmas where p.empno=empno)
+     WHERE retdate like :workyy||'%';
+        
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, " 주민번호setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode," 주민번호 Setting Error");
+          exit(1);
+     }  
+     /********************************************************************************/  
+     /*dsa2000   2004.12  외국인 과세특례 신설에 따른 사항  */
+           /*          총근로소득의 30%를 추가로 비과세 처리한다. 
+     EXEC SQL
+     UPDATE PKMRYMAS
+     SET    MPAYSUM    = (MPAYSUM+NOTAX)    - floor((MPAYSUM+NOTAX)    * 30 / 100),
+            MBONSUM    = MBONSUM    - floor(MBONSUM    * 30 / 100),
+            MCOGBONSUM = MCOGBONSUM - floor(MCOGBONSUM * 30 / 100),
+            BPAYSUM    = (BPAYSUM+BNOTAX)    - floor((BPAYSUM+BNOTAX)    * 30 / 100),
+            BBONSUM    = BBONSUM    - floor(BBONSUM    * 30 / 100),
+            TAXGROSS   = (MPAYSUM+NOTAX)    - floor((MPAYSUM+NOTAX)    * 30 / 100) +
+                         MBONSUM    - floor(MBONSUM    * 30 / 100) +
+                         MCOGBONSUM - floor(MCOGBONSUM * 30 / 100) +
+                         (BPAYSUM+BNOTAX)    - floor((BPAYSUM+BNOTAX)    * 30 / 100) +
+                         BBONSUM    - floor(BBONSUM    * 30 / 100) ,
+            NOTAX      = floor((MPAYSUM+NOTAX)    * 30 / 100) +
+                         floor(MBONSUM    * 30 / 100) +
+                         floor(MCOGBONSUM * 30 / 100) +
+                         floor((BPAYSUM+BNOTAX)    * 30 / 100) +
+                         floor(BBONSUM    * 30 / 100) +
+                         NVL(MNOTAX,0)
+     WHERE  SUBSTR(JUMINID,8,1) in ('5','6');
+     
+     if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403 )
+     {  
+      Write_batlog(seqno++, " 외국인 과세금액 setting Error"); 
+      err_print(sqlca.sqlcode," 외국인 과세금액 Setting Error");
+      exit(1);
+     }  
+     -------------------------------------------------------------*/
+     
+   
+     EXEC SQL 
+     UPDATE  PKMRYMAS p
+        SET  (medamt, hireamt,  mintax, mjutax, anuamt) = 
+             (SELECT sum(meddamt), sum(empldamt), 
+                     sum(intax), sum(jutax), sum(anudamt)
+                FROM  PKHPHIS r
+               WHERE  substr(paydate,1,4) = :workyy and p.empno = r.empno)
+     WHERE retdate like :workyy||'%';
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "12. 의보,고보등 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"12. 의보,고보등 setting Error");
+          exit(1);
+     }
+   
+     /*퇴직월 의보,고보 포함 */
+     EXEC SQL 
+     UPDATE   PKMRYMAS a
+        SET   medamt = (select nvl(medamt,0)+nvl(medamt1,0)
+                          from pkmrtmas b
+                         where a.empno = b.empno) 
+     WHERE retdate like :workyy||'%';
+          
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "12. 의보 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"12. 의보 setting Error");
+          exit(1);
+     }                   
+                        
+     EXEC SQL 
+     UPDATE  PKMRYMAS a
+        SET  hireamt=(select nvl(hireamt,0)+nvl(emplamt,0)
+                        from pkmrtmas b
+                       where a.empno = b.empno) 
+     WHERE retdate like :workyy||'%';
+           
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "12. 고보 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"12. 고보 setting Error");
+          exit(1);
+     }
+     
+     EXEC SQL 
+     UPDATE   PKMRYMAS a
+        SET   anuamt=(select  nvl(a.anuamt,0)+nvl(anuselfamt,0)
+                        from  pkmrtmas b
+                       where  a.empno = b.empno) 
+     WHERE retdate like :workyy||'%';
+           
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "12. 국민연금 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"12. 국민연금 setting Error");
+          exit(1);
+     }
+     
+   /******2001년이후입사자는 연금저축으로******/  
+       /*EXEC SQL
+       UPDATE PKMRYMAS a  2011.12.13 kth 주석처리
+             SET NPENAMT =  PENAMT1, PENAMT1 = 0
+             WHERE EMPNO IN (SELECT EMPNO FROM PKMRTMAS  WHERE empdate > '2001')
+              AND  EMPNO NOT IN (SELECT  NEWEMPNO FROM  PZNEWEMPNO) ; */
+              
+            /* Dsa2000  2004.01.14.  입사일자 기준테이블을 급여마스터 테이블로 변경 
+     EXEC SQL
+     UPDATE PKMRYMAS a
+        SET NPENAMT = PENAMT1, 
+            PENAMT1 = 0
+      WHERE EMPNO IN (SELECT EMPNO FROM PKMPMAS WHERE empdate > '2001')
+        AND EMPNO NOT IN (SELECT NEWEMPNO FROM PZNEWEMPNO) ;
+           
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          Write_batlog(seqno++, "13. 연금저축setting Error");  dsa2000 Rexec 대체
+          err_print(sqlca.sqlcode,"13. 연금저축 setting Error");
+          exit(1);
+     }                       */
+  
+  /* Dsa2000  2005.12.26. 노동조합비 일반기부금으로 공제토록 하기위하여 추가.  * 반영여부 미결정.  
+  EXEC SQL 
+  UPDATE   PKMRYMAS p
+  SET   pgiveamt = (SELECT sum(nojoamt)
+                 FROM PKHPHIS r
+                WHERE substr(paydate,1,4) = :workyy 
+                  AND p.empno = r.empno);
+  if ( sqlca.sqlcode != 0)
+  {  
+   Write_batlog(seqno++, "14. 일반기부금(노동조합비) setting Error");
+   err_print(sqlca.sqlcode,"14. 일반기부금(노동조합비) setting Error");
+   exit(1);
+  }   
+********************************************/  
+
+     EXEC SQL 
+     UPDATE  PKMRYMAS p
+        SET  mintax=nvl(mintax,0),
+             mjutax=nvl(mjutax,0),
+             anuamt=nvl(anuamt,0) 
+     WHERE retdate like :workyy||'%';
+        
+     if  (sqlca.sqlcode != 0)
+     {  
+          Write_batlog(seqno++, "14. 소득세 ,주민세등 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"14. 소득세 ,주민세등 setting Error");
+          exit(1);
+     }
+     
+      
+     EXEC SQL DECLARE c1 CURSOR FOR
+     select empno,nvl(taxgross,0),nvl(mate,0),nvl(familyno,0), /* nvl(fami65no,0), 20090318 65세 경로우대 폐지*/
+            nvl(obstacleno,0),nvl(childno,0),nvl(woman,0),nvl(medamt,0),
+            nvl(bmedamt,0),nvl(hireamt,0),nvl(bhireamt,0),nvl(guaramt,0),
+            nvl(obsguaramt,0),nvl(ghosamt,0),nvl(ohosamt,0),nvl(nhosamt,0),
+            nvl(keduno,0),nvl(ueduno,0),  nvl(ceduno,0),
+            /*nvl(keduno1,0), nvl(keduamt1,0), parksh 20021224 취학전아동교육비로 통합*/
+            nvl(seduamt,0),nvl(keduamt,0),nvl(ceduamt,0),nvl(ueduamt,0),
+            nvl(houseamt,0),nvl(houseintamt,0),nvl(agiveamt,0),nvl(pgiveamt,0),
+            nvl(anuamt,0), nvl(banuamt,0), nvl(penamt1,0),nvl(penamt2,0),nvl(bpenamt,0),
+            nvl(npenamt,0), nvl(npenamt2,0),nvl(propamt,0),nvl(bpropamt,0),nvl(hloanamt,0),
+            nvl(foriamt,0),nvl(etctamt,0),  /* nvl(stkamt,0),parksh nvl(lstkamt,0),*/
+            nvl(mintax,0),nvl(mjutax,0),nvl(bintax,0),nvl(bjutax,0), 
+            nvl(mnongtax,0),nvl(bnongtax,0), nvl(mcogbonsum,0),   
+            nvl(creditamt,0), nvl(investamt,0),
+            nvl(obseduno,0),/* parksh 20021224 추가 nvl(olstkamt,0),*/
+            nvl(obseduamt,0), nvl(oinvestamt,0), nvl(spgivamt,0), /* parksh 20021224 추가 */
+            nvl(DEBITAMT,0), nvl(GIROAMT,0), nvl(JUMINID,0),  /* dsa2000 추가 2003.12.
+            /*nvl(FOREIGNAMT,0), nvl(FOREIGNDED,0)              dsa2000 2004.12  삭제 */
+            nvl(poliamt,0),nvl(fami70no,0),nvl(specaddno,0),nvl(specaddded,0),nvl(shosamt,0),/*2004.12.  dsa2000*/
+            nvl(cashamt,0),                                     /* Dsa2000 추가  2005.11.*/
+            (to_number(to_char(sysdate,'YYYY')) -    
+            to_number(decode(substr(juminid,8,1),'1','19','2','19','5','19','6','19','20')||substr(juminid,1,2)) ) SelfAge /* Dsa2000 추가  2006.06.*/
+       from PKMRYMAS
+      WHERE retdate like :workyy||'%';
+     
+     EXEC   SQL open c1;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          Write_batlog(seqno++, "6. 근로소득공제1 setting Error");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"6. 근로소득공제1 setting Error");
+          exit(1);
+     }
+     
+     ClearVar();
+     
+     while(1)
+     {
+          EXEC SQL FETCH c1 INTO
+          :empno,     :taxgross,  :mate,     :familyno,  /*:fami65no, 20090318 65세 경로우대 폐지*/
+          :obstacleno,:childno,  :woman,     :medamt,
+          :bmedamt,   :hireamt,  :bhireamt,  :guaramt,
+          :obsguaramt,:ghosamt,  :ohosamt,   :nhosamt,
+          :keduno,    :ueduno,   :ceduno,    /*:keduno1,   :keduamt1, parksh 20021224 */
+          :seduamt,   :keduamt,  :ceduamt,   :ueduamt,
+          :houseamt,  :houseintamt, :agiveamt, :pgiveamt,
+          :anuamt,    :banuamt,  :penamt1,   :penamt2,  :bpenamt,
+          :npenamt,   :npenamt2, :propamt,   :bpropamt, :hloanamt,
+          :foriamt,   :etctamt,  /*:stkamt, parksh :lstkamt, */
+          :mintax,    :mjutax,   :bintax,   :bjutax,
+          :mnongtax,  :bnongtax, :mcogbonsum,   
+          :creditamt, :investamt, 
+          :obseduno,  :obseduamt,:oinvestamt, :spgivamt, /* parksh 20021224 추가 :olstkamt,  */
+          :debitamt,  :giroamt,  :juminid,   /*:foreignamt, :foreignded,*/ /* Dsa2000 추가  2003.12.*/
+          :poliamt,   :fami70no, :specaddno, :specaddded, :shosamt,        /* Dsa2000 추가  2004.12.*/
+          :cashamt,   :SelfAge;                                            /* Dsa2000 추가  2005.11.*/
+                      
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {  
+               Write_batlog(seqno++, "6. 근로소득공제2 setting Error");  /*dsa2000 Rexec 대체*/
+               err_print(sqlca.sqlcode,"6. 근로소득공제2 setting Error");
+               exit(1);
+          }
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c1;
+               break;
+          }
+          
+          
+/*2013.01.08.hjku. 계산식 오류로 연말정산과 동일하게 수정          
+          if  (taxgross  <= INDEDBASIC )
+          {    if (taxgross < INDEDBASIC * INDEDBRATE /100 )
+                   laborded = taxgross   * INDEDBRATE /100  ; 
+               else 
+                   laborded = INDEDBASIC * INDEDBRATE /100 ;                                         
+          }    
+          else if ((taxgross > INDEDBASIC) && (taxgross <= INDEDLIMIT2))
+               laborded = rint( INDEDBASIC * INDEDBRATE / 100 +
+                              ( taxgross - INDEDBASIC )*INDEDORATE / 100);
+                             
+          else if ((taxgross > INDEDLIMIT2) && (taxgross <= INDEDLIMIT3))
+               laborded = rint( INDEDBASIC * INDEDBRATE / 100 +
+                              (INDEDLIMIT2 - INDEDBASIC)*INDEDORATE / 100 +                        
+                              (taxgross -  INDEDLIMIT2)*INDEDORATE2 / 100);
+                              
+          else if ((taxgross > INDEDLIMIT3) && (taxgross <= INDEDLIMIT4)) 
+               laborded = rint(INDEDBASIC * INDEDBRATE / 100 +
+                              (INDEDLIMIT2-INDEDBASIC) * INDEDORATE /100 +
+                              (INDEDLIMIT3-INDEDLIMIT2) * INDEDORATE2 /100 +
+                              (taxgross - INDEDLIMIT3) * INDEDORATE3/100 );    
+          else if (taxgross > INDEDLIMIT4) 
+               laborded = rint(INDEDBASIC * INDEDBRATE / 100 +
+                              (INDEDLIMIT2-INDEDBASIC)  * INDEDORATE /100 +
+                              (INDEDLIMIT3-INDEDLIMIT2) * INDEDORATE2 /100 +
+                              (INDEDLIMIT4-INDEDLIMIT3) * INDEDORATE3 /100 +
+                              (taxgross - INDEDLIMIT4)  * INDEDORATE4/100 );                  
+*/
+
+          if  (taxgross  <= INDEDBASIC)                               /* 2010.01.18 근로 소득금액 400만원 체크 추가 */
+          {    
+               laborded = trunc(taxgross   * INDEDBRATE /100) ;               
+          }     
+          else if ((taxgross > INDEDBASIC) && (taxgross <= INDEDLIMIT2))
+               laborded = trunc( INDEDBASIC  * INDEDBRATE /100  +
+                               ( taxgross - INDEDBASIC )*INDEDORATE / 100 );
+          else if ((taxgross > INDEDLIMIT2) && (taxgross <= INDEDLIMIT3))
+               laborded = trunc(INDEDBASIC * INDEDBRATE /100  +
+                               (INDEDLIMIT2 - INDEDBASIC)*INDEDORATE / 100 +                        
+                               (taxgross -  INDEDLIMIT2)*INDEDORATE2 / 100);
+                              
+          else if (taxgross > INDEDLIMIT3 && (taxgross <= INDEDLIMIT4))  /*parksh 20021213수정 */
+               laborded = trunc(INDEDBASIC * INDEDBRATE /100  +
+                               (INDEDLIMIT2-INDEDBASIC) * INDEDORATE /100 +
+                               (INDEDLIMIT3-INDEDLIMIT2) * INDEDORATE2 /100 +
+                               (taxgross - INDEDLIMIT3) * INDEDORATE3/100 );
+                         
+          else if (taxgross > INDEDLIMIT4)                              /*parksh 20021213 추가 근로소득공제4*/ 
+               laborded = trunc(INDEDBASIC * INDEDBRATE /100 +
+                               (INDEDLIMIT2 - INDEDBASIC)*INDEDORATE / 100 +
+                               (INDEDLIMIT3-INDEDLIMIT2) * INDEDORATE2 /100 +
+                               (INDEDLIMIT4-INDEDLIMIT3) * INDEDORATE3 /100 +
+                               (taxgross - INDEDLIMIT4) * INDEDORATE4/100 );
+   
+          laboramt  = trunc(taxgross - laborded);                               
+          
+          
+          /*전산처리요청 2006.06.02.: 퇴직사원본인 관련외의 부양가족공제 안하도록 초기화 */
+          mate     = 0;
+          familyno = 0;
+          /*  fami65no = 0; 20090318 65세 경로우대 폐지*/
+          fami70no = 0;
+          childno  = 0;
+           
+          if  (SelfAge >= 70)   /* 근로자본인 경로자 체크..*/
+               fami70no = 1;
+          /*else if (SelfAge >= 65 )  20090318 65세 경로우대 폐지
+            fami65no = 1;                */
+          /********************************************************************/
+          
+           /*  본인공제  */
+          selfded = BASDED;
+          
+          /* 2008.02.25********************************************************************/
+          /* 퇴직자들의 기본.추가공제사항들 적용 안시킴
+            -연말정산제도 변경시 지급조서 제출시 어려움 때문.  신영섭 대리 요청*/
+          /*  배우자 공제  
+           mateded = mate * BASDED;
+          
+               부양가족공제  
+                       famided = familyno * BASDED; */
+          
+          /*기본공제 본인공제는 공제 허용 2008.02.25
+          basicded= selfded + mateded + famided; */
+          basicded= selfded;
+               
+                       /* 경로우대공제 
+                       ---oldded  = fami65no * APPOLDDED;            
+                       oldded  = oldded + fami70no * APPOLDDED2;  2004.12. dsa2000  경로우대70이상 추가공제
+          
+            장애자 공제
+                       obsded  = obstacleno * OBSDEDADD;     2005년 100 => 200만원으로 인상
+          
+            부녀자 공제 
+                       womanded = woman * APPDED;
+          
+            자녀양육비 공제      100만원으로 인상(2004.12.DSA2000)
+                       childded= childno * APPOLDDED;
+          
+              추가공제 
+                       appendded = oldded + obsded + womanded + childded;
+                       
+                       다자녀 추가공제
+                       if (fami16no + fami720no == 2)
+                       {
+                         fewded = FEWDED1;
+                       }
+                       else if (fami16no + fami720no > 2)
+                       {
+                         fewded = FEWDED1 + ( ((fami16no+fami720no)-2)*FEWDED2 );
+                       } */                
+                       
+                       /*  소수추가공제 폐지
+                       {if (mate+familyno == 0)
+                       {       fewno=1;
+                               fewded= FEWDED1;
+                       }
+                       else if (mate+familyno == 1)
+                       {       fewno=2;
+                               fewded=FEWDED2;
+                       }
+                       else
+                       {       fewno=0;
+                               fewded=0;
+                       }*/
+                       /* 2008.02.25********************************************************************/
+                                                   
+          medded = medamt + bmedamt;     /*  의료보험료  */
+          hireded= hireamt + bhireamt;   /*  고용보험료  */
+          
+           /*  일반보험료 공제     */
+          guarded = guaramt;
+          if  (guarded < INSDEDLIMIT)
+               guarded = guaramt;
+          else
+               guarded = INSDEDLIMIT;   
+          
+/* ==========================================================================
+   4.00       2001.12.14         유효성          장애인전용보험료 추가
+============================================================================= */  
+          obsguarded = obsguaramt;
+      
+          if  (obsguarded > OBSDEDLIMIT)
+               obsguarded = OBSDEDLIMIT;
+
+          insded = guarded + medded + hireded + obsguarded ;   /*  보험료공제   */
+              
+          /*  의료비 공제
+              과세급여액*MEDORATE를 초과하는 의료비중 MEDDEDLIMIT를 한도로 공제 ,
+              but 장애자,경로우대자의료비가 있는 경우 추가로 공제 
+              추가공제에 본인의료비(shosamt) 포함 2004년 귀속부터.   */
+          hosamt = ghosamt + ohosamt + nhosamt + shosamt;          
+          hosded = hosamt - (taxgross  * MEDORATE /100);
+          hosded = floor(hosded);
+          if  (hosded<0)
+               hosded=0;
+          
+          medappded_A = hosamt - (taxgross * MEDORATE / 100) - MEDDEDLIMIT;  /*한도초과분*/
+          if  (medappded_A < 0 ) 
+               medappded_A = 0;
+          
+          medappded_B = ohosamt + nhosamt + shosamt; /*한도 없는 의료비 총액*/
+          if  (medappded_A >= medappded_B ) 
+               hosded = hosded + medappded_B;
+          else
+               hosded = hosded + medappded_A;
+   
+          /*본인 교육비*/
+          seduded = seduamt;
+
+          /*유치원 교육비*/   
+          if  (keduamt > keduno * KINEDULIMIT)
+               keduded = keduno*KINEDULIMIT;
+          else
+               keduded = keduamt;
+   
+          /*초중고교육비*/
+          if  (ceduamt > ceduno * CJKEDULIMIT)
+               ceduded = ceduno * CJKEDULIMIT;
+          else
+               ceduded = ceduamt;              
+   
+          /*대학 교육비*/
+           if  (ueduamt > ueduno*UNIEDULIMIT)
+                ueduded = ueduno*UNIEDULIMIT;
+           else
+                ueduded = ueduamt;
+   
+    /* 장애인특수교육비 PARKSH 20021224 추가*/ 
+    /*if (obseduamt > obseduno*OBSEDULIMIT)
+                  obseduded = obseduno*OBSEDULIMIT;
+           else */
+     obseduded = obseduamt;   /*2004.12.  dsa2000  장애인특수교육비 한도 폐지.*/
+                
+     eduded    = seduded + keduded + ceduded + ueduded +obseduded;    /*parksh 20021224 수정 + keduded1 */          
+
+      /*주택자금*/
+      /* --------------------------------------------------------------------------------
+        40.11   2003.12.18   강륜종   장기주택저당차입 이자상환 한도액 추가..
+        ①주택마련저축  ②주택임차 차입금상환 ③장기주택저당차입금
+                                      주택자금 공제시 ①+② 만 공제시에는 한도가 300만원까지
+                                                     ①+②+③ 공제시에는 한도가 1000만원까지
+        ------------------------------------------------------------------------------- */       
+     houseded = floor(houseamt * HSRATE / 100) + houseintamt ;
+     
+     if  (houseintamt > 0)
+     {
+          if ( houseded > HSDEDLIMIT2 )  houseded = HSDEDLIMIT2;
+     }
+     else
+     {
+          if ( houseded > HSDEDLIMIT )   houseded = HSDEDLIMIT;
+     }
+             
+     houseded = floor(houseded);
+                                                
+       
+     /* 전액기부금 */
+     agiveded= agiveamt;
+     
+           /* 정치기부금 : 세액공제 신설 => dsa2000  2004.12. 세액공제(10만원) 이상의 금액은 전액기부금 처리.*/
+     if  (poliamt > POLILIMIT)
+     {  
+          agiveded = agiveded + (poliamt - POLILIMIT);
+          polided  = POLILIMIT;
+     }
+     else
+     {
+          polided  = poliamt;   /*polided 정치자금 세액공제*/
+     }
+           
+      /* 특례지정기부금 parksh 20021224 추가 */
+     spgivded = spgivamt;
+     if  (spgivded > floor((laboramt-agiveded) * SPGIVDEDRATE / 100))
+          spgivded = floor((laboramt-agiveded) * SPGIVDEDRATE / 100) ;
+                    
+                 /* 지정기부금 parksh 20021224 수정*/
+     if  (pgiveamt > ((laboramt - agiveded - spgivded ) * GIVDEDRATE / 100))
+          pgiveded = (laboramt - agiveded - spgivded) * GIVDEDRATE / 100;
+     else
+          pgiveded = pgiveamt;
+       
+                   /* 기부금공제 = 전액기부금  + 특례지정기부금 + 지정기부금 parksh 20021224 */
+     giveded = agiveded + spgivded + pgiveded ;
+     giveded = floor(giveded); /*dsa2000*/
+     
+     /* 결혼.장례.이사비용공제(신설) - 건당 100만  2004.12. dsa2000  */
+     specaddded = specaddno * SPECADDLIMIT; 
+                 
+     /* 특별공제 = 보험료공제 + 의료비공제 + 교육비공제 + 주택자금공제 +  기부금공제 +  결혼.장례.이사비용공제  */
+     specialded = insded + hosded + eduded + houseded + giveded + specaddded;
+     
+     standded = 0;
+                
+     if  (specialded < STDDED)
+     {  
+          insded    = hosded   = eduded   = houseded   = giveded   = 0;
+          guarded   = hireded  = medded   = obsguarded = obseduded = 0;
+          seduded   = keduded  = ceduded    = ueduded   = 0;  /*keduded1 dsa2000  2004.12.*/
+          agiveded  = pgiveded = spgivded = 0;
+          specialded = 0 ;  /*2001.12.26. 유효성 표준공제 컬럼추가   specialded = STDDED;*/
+          standded   = STDDED ;     specaddded = 0;
+     }
+   
+/* 연금보험료 공제 START ===============================================================================*/     
+   /* ==========================================================================
+      4.00       2001.12.14         유효성          연금보험료 추가
+   ============================================================================= */     
+        /*2002년부터 전액공제   anuded = (anuamt + banuamt) * 50 /100 ;*/
+     anuded = (anuamt + banuamt)  ;
+        
+        
+/* 조세특례법에의한 소득공제 START=====================================================================*/             
+   /*****개인연금*****/   
+     pended  = (penamt1 + penamt2 +bpenamt ) * PENRATE / 100;
+     
+     if  (pended > PENDEDLIMIT)
+          pended = PENDEDLIMIT;
+     
+   /* ==========================================================================
+      4.00       2001.12.14         유효성          연금저축 추가
+   ============================================================================= */     
+     npended = npenamt + npenamt2 ;
+     
+     if  (npended > NPENDEDLIMIT) 
+          npended = NPENDEDLIMIT;
+       
+     /*****투자조합********/      
+     INVESTLIMIT    = taxgross * INVESTDEDRATE;                
+     
+     if  (INVESTLIMIT < 0)
+          INVESTLIMIT = 0 ;
+        
+     investded  = investamt * INVESTRATE /100 ;                
+     
+     if  (investded > INVESTLIMIT)
+          investded = INVESTLIMIT;
+     
+     /*parksh 20021224 투자조합00~01 */
+     OINVESTLIMIT    = taxgross * OINVESTDEDRATE;                
+     
+     if  (OINVESTLIMIT < 0)
+          OINVESTLIMIT = 0 ;
+        
+     oinvestded      = oinvestamt * OINVESTRATE /100 ;                
+     
+     if  (oinvestded > OINVESTLIMIT)
+          oinvestded = OINVESTLIMIT;
+       
+     tinvestded = investded + oinvestded;      /*parksh  20021213  투자조합공제액합*/
+     
+      
+   /*================================================================================
+     2003.12. Dsa2000  추가....  => 2004.12  기명식선불카드 추가. 직불카드 요율 20%로 축소
+   ① 신용카드등 사용금액 = 신용카드+기명식 선불카드+직불카드+지로납부금액
+   ② 초과금액 = ①-(총급여액×10%)  : 공제대상금액
+   ③ 신용카드 =(②×신용카드금액/①)×20%
+   ④ 학원비   =(②×지로납부금액/①)×20%
+   ⑤ 직불카드 =(②×직불카드사용금액/①)×20%
+   ==> 총 공제금액 : ③+④+⑤       ☞ 한도액 :  총급여액×20%  와 500만원 중   적은 금액
+   ================================================================================ */
+     creditded = 0;
+     /*creditamt = credittotamt - creditdedamt;  신용카드 공제 가능금액 = 총 공제신청금액 - 법인 사용분 */              
+     
+     if (creditamt < 0)    creditamt = 0;         /*dsa2000  2005.01.31 추가.*/
+     
+     totcreditamt = creditamt + debitamt + giroamt + cashamt;  /*①*/     
+                
+     if (totcreditamt < 0) totcreditamt = 0; 
+                                               
+     crededlimit2    =  floor( totcreditamt - (taxgross  * CREORATE / 100) );  /*②*/
+     if  (crededlimit2 > 0)
+     {       
+          creditded =             floor((crededlimit2 * creditamt / totcreditamt) * CREDEDLRATE  /100) ; /*③*/                  
+          creditded = creditded + floor((crededlimit2 * debitamt  / totcreditamt) * DEBITDEDRATE /100) ; /*④*/
+          creditded = creditded + floor((crededlimit2 * giroamt   / totcreditamt) * GIRODEDRATE  /100) ; /*⑤*/ 
+          creditded = creditded + floor((crededlimit2 * cashamt   / totcreditamt) * CREDEDLRATE  /100) ; /*⑥*/ 
+     }
+             
+     /* 한도 체크 : 총과세급여액의 20%와 500만원중 적은금액 */
+     if  (creamt1 < CREDEDLIMIT )
+     { 
+          if  (creditded > creamt1  )           
+               creditded = creamt1;
+     }
+     else
+     {
+          if  (creditded > CREDEDLIMIT  )           
+               creditded = CREDEDLIMIT;
+     }                        
+      /* Dsa2000  2003.12.  End..........................................................*/                       
+        
+               
+     /*===============================================================================
+      2003.12. Dsa2000  추가....
+      외국인임직원 해외근무에 따른 추가비용 소득공제
+      - 공제비용 : 외국인학교 자녀교육비, 월세 지출액
+      - 공제한도 : (월정액급여 연간합계액-공제비용)의 40%      
+      ===============================================================================*/  
+     /* 2004.12. 외국인 세액개편에 따라...폐지.
+     FOREIGNDED = 0;
+      sprintf(JUMINID, "%.1s",JUMINID+7);
+      
+     if ( (strcmp(JUMINID, "5") == 0 ) || (strcmp(JUMINID, "6") == 0 ) ) 
+     {
+       FOREIGNDED = ( taxgross - FOREIGNAMT ) * FOREDEDRATE / 100;    
+       
+       if ( FOREIGNAMT < FOREIGNDED )
+          FOREIGNDED = FOREIGNAMT;       
+     }   
+      Dsa2000  2003.12.  End..........................................................*/
+     
+     /*조세특례법에의한 소득공제 합계*/
+       incomeded = basicded + appendded + specialded + standded + pended  +
+                   fewded   + creditded + tinvestded + anuded   + npended ;
+                              /*+ FOREIGNDED ;       2004.12. dsa2000 추가 외국인 추가공제...폐지*/
+                              
+                
+/* 과세표준  START=====================================================================*/              
+     taxlevel = laboramt - basicded - appendded - fewded - specialded - standded -
+                pended - creditded - tinvestded - anuded - npended ;
+          /*- FOREIGNDED ;       2004.12. dsa2000 추가 외국인 추가공제... 페지*/
+        
+     if  (taxlevel < 0 )
+          taxlevel = 0;
+        
+     if  (taxlevel == 0)
+          calctax = 0;
+     else
+          calctax = GetTax(taxlevel);
+                     
+     
+/* 세액 공제  START=====================================================================*/
+    /*parksh 20021224  근로소득 세액 공제 */ 
+     if  (calctax < TAXDEDBASIC)
+          incomtded = floor(calctax * TAXDEDBRATE / 100);
+     else
+          incomtded = floor((TAXDEDBASIC * TAXDEDBRATE /100) +
+                         + (calctax - TAXDEDBASIC) * TAXDEDORATE / 100);
+     
+     if  (incomtded > TAXDEDLIMIT)
+          incomtded = TAXDEDLIMIT;
+     
+   /* 재형저축 세액공제 삭제
+   propded = (propamt+bpropamt)*0.15;
+   if (propded > PROP_LIMIT)
+     propded = PROP_LIMIT;  */
+     
+     /*  주택차입금이자세액 공제  */
+     hloanded = floor(hloanamt * HSINTRATE / 100);
+   
+    /*2002 주식저축공제 없어짐.parksh 20021224*/
+    /*  주식저축공제  */
+    /*stkded   = floor(stkamt * STKDEDRATE / 100); */
+    /*   if (stkded > STKDEDLIMIT)
+             stkded  = STKDEDLIMIT;
+             lstkded = floor(lstkamt * LSTKDEDRATE / 100) ;       
+
+         parksh 20021224 추가 전년도 장기주식저축 공제 *
+               olstkded = floor(olstkamt * OLSTKDEDRATE / 100);                 
+               tlstkded = lstkded + olstkded;    전년장기증권저축 + 당년 장기증권저축 */      
+
+                /*  외국납부세액공제   */
+     forided = foriamt;
+     
+     /*세액공제 합계*/
+     tdedsum = incomtded + hloanded + forided   /* parksh 20021213수정 lstkded->tlstkded, stkded 삭제*/  
+               + polided;   /*dsa2000  2004.12. 정치자금세액공제 추가.*/
+               /*+ tlstkded     dsa2000  2004.12. 장기증권저축세액공제 삭제  */   
+         
+     
+/* 갑근세 /주민세 / 농특세 START=====================================================================*/               
+     if  (calctax - tdedsum > 0) 
+     {
+          /* 2007.01.*/ 
+          dintax = floor((calctax - tdedsum) / 10) * 10;
+          djutax = floor(dintax / 100) * 10 ;
+          /*dintax = calctax - tdedsum;
+          djutax = dintax * 0.1;*/
+     }                
+     else 
+     {
+          dintax = 0 ;
+          djutax = 0 ;    
+     }              
+            
+      
+     if  (hloanded > 0 || tinvestded > 0)  /*parksh 수정*/
+     {
+          /* 2007.01.*/
+          dnongtax = floor( ( hloanded + (GetTax(tinvestded + taxlevel) - calctax)) * NONGRATE / 100) ;                
+          dnongtax = floor(dnongtax / 10) * 10;
+          /*dnongtax = (hloanded + (GetTax(tinvestded + taxlevel) - calctax)) * NONGRATE / 100;
+          dnongtax = dnongtax * 0.1;*/
+     }
+     else               
+          dnongtax = 0 ;                  
+       
+     intax   = mintax + bintax ;
+     jutax   = mjutax + bjutax ;
+     nongtax = mnongtax + bnongtax ;
+            
+     /* 2007.01. 원단위 절사방법 변경 - dintax를  floor를 안하고 yintax를 trunc하게끔 변경.*/
+     yintax   = dintax - intax,
+     yjutax   = djutax - jutax;
+     ynongtax = dnongtax - nongtax; 
+     /*yintax   = trunc( (dintax   - intax  ) / 10 ) * 10;
+       yjutax   = trunc( (djutax   - jutax  ) / 10 ) * 10;
+       ynongtax = trunc( (dnongtax - nongtax) / 10 ) * 10;*/
+              
+     ycalctax = yintax + yjutax + ynongtax;
+    
+     UpdateResult();
+     }
+}
+
+
+UpdateResult()
+{
+     exec sql
+     update PKMRYMAS
+        set 
+            taxgross    = :taxgross,
+            laborded    = :laborded,
+            laboramt    = :laboramt,
+            selfded     = :selfded,
+            mateded     = :mateded,
+            famided     = :famided,
+            basicded    = :basicded,
+            oldded      = :oldded,
+            obsded      = :obsded,
+            womanded    = :womanded,
+            childded    = :childded,
+            appendded   = :appendded,
+            fewno       = :fewno,
+            fewded      = :fewded,
+            medded      = :medded,
+            hireded     = :hireded,
+            guarded     = :guarded,
+            obsguarded  = :obsguarded,
+            insded      = :insded,
+            hosamt      = :hosamt,
+            hosded      = :hosded,
+            seduded     = :seduded,
+            keduded     = :keduded,
+            /* keduded1     = :keduded1, parksh 20021224*/
+            ceduded     = :ceduded,
+            ueduded     = :ueduded,
+            eduded      = :eduded,
+            houseded    = :houseded,
+            agiveded    = :agiveded,
+            pgiveded    = :pgiveded,
+            giveded     = :giveded,
+            specialded  = :specialded,
+            standded    = :standded,
+            anuded      = :anuded,
+            pended      = :pended,
+            npended     = :npended,
+            specaddded  = :specaddded,   /*dsa2000  2004.12.  특별추가공제(결혼.장례.이사비 공제액), 정치자금세액공제 추가*/
+            polided     = :polided,      /*dsa2000  2004.12.*/
+             investded  = :investded,
+            creditded   = :creditded,
+            incomeded   = :incomeded,
+            chagamamt   = :chagamamt,            
+            taxlevel    = :taxlevel,
+            calctax     = :calctax,
+            incomtded   = :incomtded,
+            hloanded    = :hloanded,
+            forided     = :forided,
+            obseduded   = :obseduded,
+            oinvestded  = :oinvestded,
+            tinvestded  = :tinvestded,
+            spgivded    = :spgivded,
+            tdedsum     = :tdedsum,
+            dintax      = :dintax,
+            djutax      = :djutax,
+            dnongtax    = :dnongtax,
+            intax       = :intax,
+            jutax       = :jutax,
+            nongtax     = :nongtax,
+            yintax      = :yintax,
+            yjutax      = :yjutax,
+            ynongtax    = :ynongtax,
+            ycalctax    = :ycalctax,
+            writetime   = to_char(sysdate,'yyyymmddhh24miss'),
+            writeman    = :jobempno
+            /*propded  = :propded,*/
+            /* stkded  = :stkded, parksh 20021224*
+            lstkded      = :lstkded,*/    
+            /*olstkded  = :olstkded, *
+            tlstkded     = :tlstkded,*/     
+     where empno   = :empno
+       and retdate = :retdate;
+       
+     if  (sqlca.sqlcode != 0 )
+     {  
+          Write_batlog(seqno++, "UpdateResult() 갱신중 ERROR");  /*dsa2000 Rexec 대체*/
+          err_print(sqlca.sqlcode,"UpdateResult() 갱신중 ERROR");
+          exit(1);
+     }
+}
+
+/*=== dsa2000 2004.12. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+} 

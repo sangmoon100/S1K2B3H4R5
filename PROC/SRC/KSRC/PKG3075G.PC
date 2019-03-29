@@ -1,0 +1,1970 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKG3075G(초과근무수당  계산 := notes 전송 data)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 수당
+ Programmer     : 김승회
+ Version        : 30.00
+ Date           : 1999.01.05
+
+SELECT : PKCHOLI, PKHOTHIS, PKCOTBAS, PKMPMAS, PKHYPHIS, PKCPBAS
+UPDATE : PKHOTHIS
+
+Update Contents
+ Version  date(yy.mm.dd)  programmer  description                 relevant doc.no
+ 1.00     1997.02.13       김승회     최초개발본                  설계명세서
+ 30.00    1999.01.05       민정숙     시간당통상임금계산로직변경  하나로재개발
+ 30.01    1999.08.17       이랑교     notes에서 초과근무 등록후 수당계산
+ 30.05    1999.10.20       이랑교     근무시간중 휴식시간을 분으로 받아서
+             총 초과근무시간 - 통상임금 * floor(휴식시간 /60)
+ 30.20    2001.08.09.      유효성     휴일근무시 식사시간 제외 추가       전(2001-3450)
+                                      (pkhothis에 mealhh, mealamt,excephh,excepamt 추가) 
+ 30.21    2004.02.24       강륜종     Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드
+ 30.41    2004.08.25       강륜종     2003년 02월 1일부터 초과근무 야근식대 인상 : 3000 => 3500 
+ 30.50    2004.08.27.      강륜종(dsa200)야근식대 DB에서(PKCOTBAS) 읽어오도록 변경 
+ 30.60    2004.11.         강륜종(dsa2000)  Rexec대체 서비스를 위한 수정작업.  
+ ============================================================================= */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+/*#define  SUCCESS     -1*/
+#define  FAIL        -2
+#define  FRTIME1  "2200"     /* 야간근무시작시간      */
+#define  TOTIME1  "3000"     /* 야간근무종료시간(익일06:00)  */
+#define  FRTIME2  "4600"     /* 야간근무시작시간(익일22:00)   */
+#define  TOTIME2  "4800"     /* 야간근무종료시간(익일24:00)  */
+
+/*** 함수 Prototype 선언  ***/
+
+/*DB package에서 계산 jissi. 2014.11.05
+double  get_tongpay(char *);
+*/
+int     Get_ConTerm(char *indate);
+void    get_lastsaturday(char* yymm, char* lastsaturday);
+void    get_dayname(char *indate,char *result);
+void    get_lastday(char* yymm, char* result);
+void    add_days(char* indate,int m, char* rdate);
+double  calc_term(char *frdate,char *todate);
+void    trail_spaces(char *dest);
+float   get_hourterm_con(int a,int b);
+float   get_hourterm(int a,int b);
+
+
+/* log File 관련 */
+void    CreateLog();
+void    WriteLog(char *message);
+/*********************************************
+  Global Variable
+**********************************************/
+
+EXEC SQL BEGIN DECLARE SECTION;
+
+/***  초과근무이력테이블(PKHOTHIS) 참조변수  ***/
+     char    ovtmdate[9]      = "";  /* 근무일자     */
+     char    empno[5]         = "";  /* 사번       */
+     char    korname[13]      = "";  /* 성명       */
+     char    paycl[4]         = "";  /* 직급       */
+     double  paygr            = 0;   /* 호봉       */
+     char    payra[4]         = "";  /* 직위       */
+     char    orgnum[4]        = "";  /* 조직차수     */
+     char    deptcode[7]      = "";  /* 부서코드     */
+     char    otkind[3]        = "";  /* 초과근무구분     */
+     char    daykind[2]       = "";  /* 근무일구분     */
+     char    frapptime[5]     = "";  /* 근무예정시간From  */
+     char    toapptime[5]     = "";  /* 근무예정시간To  */
+     char    toappdate[9]     = "";  /* 근무예정일To     */
+     char    ovtmdesc[31]     = "";  /* 근무내역     */
+     char    frrealtime[13]   = "";  /* 실제개시시간     */
+     char    torealtime[13]   = "";  /* 실제종료시간     */
+     float   exthh            = 0;   /* 연장근로시간     */
+     double  nighthh          = 0;   /* 야간근로시간     */
+     double  holihh           = 0;   /* 휴일근로시간     */
+     double  overhh           = 0;   /* 초과근무시간계  */
+     float   ovtmhh           = 0;   /* 초과근무시간총계  */
+     double  genext           = 0;   /* 일반연장근로시간  */
+     double  holiext          = 0;   /* 휴일연장근로시간  */
+     char    apptime[13]      = "";  /* 신청시각     */
+     char    conyn[2]         = "";  /* 결재여부     */
+     char    contime[13]      = "";  /* 결재일시     */
+     char    conemp[5]        = "";  /* 결재자사번     */
+     char    conlemp[5]       = "";  /* 최종결재자사번  */
+     char    conltime[8+1]    = "";  /* 최종결재일     */
+     char    giveyn[2]        = "";  /* 지급여부     */
+     double  ovtmrate         = 0;   /* 초과근무비율     */
+     double  extamt           = 0;   /* 연장근로수당     */
+     double  nightamt         = 0;   /* 야간근로수당     */
+     double  holiamt          = 0;   /* 휴일근로수당     */
+     double  overamt          = 0;   /* 초과근무수당계  */
+     double  ovtmamt          = 0;   /* 초과근무수당총계  */
+     double  ovmcamt          = 0;
+     char    tjobduty[3]      = "";  /* 담당직무      */
+     char    dinner[2]        = "";  /* 석식장소     */
+
+/* ==============================================================================
+ Version  date(yy.mm.dd)  programmer  description                 relevant doc.no
+ 30.00    1999.01.05       민정숙     시간당통상임금계산로직변경  하나로재개발
+ ============================================================================= */
+     double  totpay           = 0;
+     double  tongpay          = 0;
+   /*  double  basicamt  = 0;
+     double  infoamt     = 0;
+     double  dutyamt     = 0;  */
+   
+     double  t_nighthh        = 0;   /* 야간근로시간     */
+     float   t_genexthh       = 0;   /* 일반연장근로시간  */
+     double  t_holihh         = 0;   /* 휴일근로시간     */
+     double  t_holiexthh      = 0;   /* 휴일연장근로시간  */
+     double  t_extamt         = 0;   /* 연장근로수당     */
+     double  t_nightamt       = 0;   /* 야간근로수당     */
+     double  t_holiamt        = 0;   /* 휴일근로수당     */
+/* ==============================================================================
+ Version  date(yy.mm.dd)  programmer  description                 relevant doc.no
+ 30.01    1999.08.17       이랑교     notes에서 초과근무 등록후 수당계산
+ ============================================================================= */
+     double  t_restmm         = 0;   /* 초과근무제외시간  */
+     double  t_restamt        = 0;   /* 초과근무제외수당  */
+     double  t_sprestmm       = 0;   /* 근무시간에 휴식한 제외시간  */
+     double  t_sprestamt      = 0;   /* 근무시간에 휴식한 제외수당  */
+/* ==============================================================================
+ Version  date(yy.mm.dd)  programmer  description                   relevant doc.no  
+ 30.20    2001.08.09.      유효성     휴일근무시 식사시간 제외 추가  전(2001-3450)
+============================================================================= */  
+     double  t_mealhh        = 0;    /* 식사시간제외시간           */
+     double  t_excephh       = 0;    /* 9시간이상시 제외시간   */
+     double  t_mealamt       = 0;    /* 식사시간제외수당             */
+     double  t_excepamt      = 0;    /* 9시간이상시 제외수당   */
+   
+     double  s_totdd;
+     float   s_exthh;
+     double  s_nighthh;
+     double  s_holihh;
+     double  s_tothh;
+     float   s_genext;
+     double  s_holiext;
+     double  s_extamt; 
+     double  s_nightamt;
+     double  s_holiamt;
+     double  s_ovtmamt;
+     double  s_ovmcamt;
+     float   s_ovtmhh;
+   
+     char    workmm[7]         = "";   /* 작업년월  */
+     char    frworkdate[9]     = "";   /* 작업년월일 fr  */
+     char    toworkdate[9]     = "";   /* 작업년월일 to  */
+     char    frempno[5]        = "";   /* 사번FROM     */
+     char    toempno[5]        = "";   /* 사번TO     */
+     char    jobempno[5]       = "";   /* 작업자사번     */
+     char    comchdate[9]      = "";   /* 통상임금기준변경일 2014.11 jissi */
+     
+     char    t_paycl[4]      = "";  
+     char    workmon[6+1];
+     long    s_count         = 0;
+     long    f_count         = 0;
+     double  total_amt       = 0;
+     char    bgntime[5]      ="";    /* 석식시작 시간*/
+     char    endtime[5]      ="" ;   /* 석식end 시간*/
+           
+     double  ovminamt        = 0;    /* 기준통상임금(최저) 적용 (2008.02.18 추가)     */   
+     double  y_manrate       = 0;    /* 일반직 관리수수료율  (2008.03.20 추가),통상임금 계산시 사용     */              
+
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+/****************************************************************************** 
+  Other Variables
+******************************************************************************/ 
+/*char  logdir[100] = "/hper/insa/cron/ovtmlog/";*/
+char  logfile[40];
+char  logfile_fullname[140];
+int   id;
+char  dir[80];
+char  LSaturday[8+1]  = "";
+char  mm[3] = "";
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char  log_rundate[16]     = ""; 
+char  log_progid[16]      = "";
+char  log_writeman[5]     = "";
+char  log_buff[100]       = "";
+int   seqno = 0; 
+
+/***** Log Filspeciale Pointer *****/
+FILE *fp;  
+
+
+void main(int argc,char *argv[])
+{
+     int   flag;
+     char  FL_file[255];
+     char  curdatetime[20+1]="";
+     
+     /*dsa2000 Rexec 대체 파라미터 추가...*/
+     if  (argc != 5) {  /*/hper/insa/HINSA/proc/bin/Kbin/pkg3075g 0000 zzzz HINT pkg3075g */
+          printf("[Usage] : pkg3075g 1.사번fr 2.사번to 3.작업자사번 4.프로그램ID \n");
+          exit(1);
+     }  
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkg3075g");
+     
+     hinsa_get_filename(1, FL_file);
+     /*if (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }*/
+     
+     strcpy(frempno,argv[1]);
+     strcpy(toempno,argv[2]);
+     strcpy(jobempno,argv[3]);
+     
+     memset(dir,0x00,sizeof(dir));
+     memset(log_buff,0x00,sizeof(log_buff));
+     
+     /* Dsa2000  2004.02.24.  **********************************/
+     /* DB_connect(id,0); */
+     hinsa_log_print(0,"초과근무수당 계산 시작...[pkg3075g]"); 
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /*dsa2000  수정..End......................................*/
+     
+     
+     EXEC SQL LOCK TABLE PKHOTHIS
+       IN EXCLUSIVE  MODE  NOWAIT;
+           
+     EXEC SQL
+     SELECT to_char(add_months(to_date(FIXMON, 'YYYYMM'),1), 'YYYYMM') 
+       INTO  :workmon
+       FROM PKCOTBAS ;
+
+     /* 통상임금기준변경일 2014.11 jissi */   
+     EXEC SQL
+     SELECT  value1 
+       INTO  :comchdate
+       FROM PKCVARI
+      WHERE gubun ='CM';  
+     
+     EXEC SQL
+     SELECT  :workmon||'01',  to_char(sysdate, 'YYYYMMDD')
+       INTO  :frworkdate,:toworkdate
+       FROM  DUAL ;      
+     
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[3]);
+     strcpy(log_progid,   argv[4]);
+     strcpy(log_rundate,  toworkdate);  /*파라미터에서 안받고 시스템 시간 받음(cron으로 실행하므로)*/
+     \
+     /*jissi 테스트용
+     strcpy(frworkdate, "20141101")  ;  
+     strcpy(toworkdate, "20141130")  ;  
+     */   
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     sprintf(frworkdate,"%.8s",frworkdate);
+     sprintf(toworkdate,"%.8s",toworkdate);
+     
+     CreateLog();
+     
+     sprintf(log_buff, "작업년월일fr ~ to : %s ~ %s\n", frworkdate, toworkdate);
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+           
+     sprintf(log_buff, "사번fr ~ to : %s ~ %s\n", argv[1], argv[2]);
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+     
+     sprintf(log_buff, "작업자사번 : %s\n", argv[3]);
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+     
+     sprintf(log_buff, "  ");
+     
+     if  (clear_records() != SUCCESS)
+     {
+          fclose(fp);
+          sprintf(log_buff, "= 작업실패 ="); /*dsa2000 Rexec 대체*/
+          Write_batlog(seqno++, log_buff);
+          hinsa_exit(0," 작업실패. !!!\n");
+     }
+     
+     s_count = f_count = total_amt =  0;
+     
+     flag =  process_records();
+     
+     printf(log_buff,"\n (%ld)건에 대해서 초과근무시간 계산 성공.\n",s_count);
+     sprintf(log_buff,"\n (%ld)건에 대해서 초과근무시간 계산 성공.\n",s_count);
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff);  /*dsa2000 Rexec 대체*/
+     
+     printf(log_buff,"\n (%ld)건에 대해서 초과근무시간 계산 실패.\n",f_count);
+     sprintf(log_buff,"\n (%ld)건에 대해서 초과근무시간 계산 실패.\n",f_count);
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+     
+     printf(log_buff," 총수당액 : %10.0f 원\n",total_amt);
+     sprintf(log_buff," 총수당액 : %10.0f 원\n",total_amt);
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+     
+     /*** 종료시간 Print dsa2000 Add ***************************/
+     EXEC SQL  
+     SELECT TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS')
+       INTO :curdatetime
+       FROM DUAL;
+     
+     sprintf(log_buff, "종료시간 : %.14s \n ",curdatetime);
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff); 
+     /*********************************************************/
+     
+     if  (flag != SUCCESS)
+     {
+          sprintf(log_buff,"작업이 실패했습니다.\n");
+          WriteLog(log_buff);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          error_quit("작업이 실패했습니다.\n");
+     }
+     else
+     {
+          sprintf(log_buff,"작업이 성공적으로 완료되었습니다.\n");
+          WriteLog(log_buff);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          hinsa_exit(0,"OK 작업이 성공적으로 완료되었습니다.\n");
+     }
+     
+     fclose(fp);
+}
+
+/*****************************************************************************
+  계산 전 해당항목을 Clear하는 함수.  
+ *****************************************************************************/ 
+clear_records()
+{
+     ovminamt  = 0; /* 통상임금이 시간당 최저 임금보다 낮을 경우 최저임금으로 계산 */
+     y_manrate = 0;/* 일반직 통상임금 계산시 관리수수료율 사용 */
+     
+     EXEC SQL
+     SELECT  nvl(OVMINAMT,0) 
+       INTO  :ovminamt
+       FROM  PKCOTBAS;
+     
+     EXEC SQL
+     SELECT  nvl(Y_MANRATE,0) 
+       INTO  :y_manrate
+       FROM  PKCPBAS;  
+     
+     EXEC SQL
+     UPDATE  PKHOTHIS
+        SET
+             EXTHH      = 0,
+             NIGHTHH    = 0,
+             HOLIHH     = 0,
+             OVTMHH     = 0,
+             OVMCAMT    = 0,
+             GENEXT     = 0,
+             HOLIEXT    = 0,
+             EXTAMT     = 0,
+             NIGHTAMT   = 0,
+             HOLIAMT    = 0,
+             OVTMAMT    = 0,
+             RESTAMT    = 0,
+             SPRESTAMT  = 0,
+             WRITETIME  = '***',
+             MEALHH     = 0,
+             MEALAMT    = 0,
+             EXCEPHH    = 0,
+             EXCEPAMT   = 0                
+      WHERE  OVTMDATE BETWEEN  :frworkdate AND :toworkdate
+        AND  EMPNO BETWEEN  :frempno and :toempno
+        AND  PAYCL IS null;    /* Dsa2000 2003.12.05  deptcode is null */
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {
+          sprintf(log_buff,"ERROR_CODE : %d, 자료 Clear Error. \n", sqlca.sqlcode);
+          WriteLog(log_buff);
+          return(FAIL);
+     }
+     else
+          return(SUCCESS);
+}
+/*****************************************************************************
+  대상자료를 추출하는 함수.
+ *****************************************************************************/
+process_records()
+{
+     char  t_date[11]   = "";
+     char  maxcondate[8+1] = "";
+     int   holicnt = 0;
+     
+     EXEC    SQL
+     UPDATE  PKHOTHIS A
+        SET  (PAYCL,PAYGR,PAYRA,ORGNUM,DEPTCODE )=
+             (SELECT B.PAYCL,B.PAYGR,B.PAYRA,B.ORGNUM,B.DEPTCODE
+                FROM   PKMPMAS B
+               WHERE A.EMPNO = B.EMPNO
+             )
+      WHERE  OVTMDATE BETWEEN  :frworkdate AND :toworkdate
+        AND  (A.EMPNO >= :frempno AND A.EMPNO <= :toempno )
+        AND  UPPER(NVL(CONYN,' ')) = 'Y'
+        AND  WRITETIME  = '***';
+           
+     if  ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {
+           sprintf(log_buff,"ERROR_CODE : %d, 인사자료 SETTING Error. \n", sqlca.sqlcode);
+           WriteLog(log_buff);
+     }
+     
+     /*
+     EXEC SQL DECLARE cursor1 CURSOR FOR
+     SELECT  NVL(OVTMDATE,' '), NVL(A.EMPNO,' '),
+             NVL(A.KORNAME,' '),NVL(A.PAYCL,' '),
+             NVL(FRAPPTIME,'*'), NVL(FRREALTIME,'*'),
+             NVL(TOREALTIME,'*'), totpay,
+             substr(NVL(CONLTIME,'00000000'),1,8),CONLEMP,
+             NVL(RESTMM,0),NVL(SPRESTMM,0),NVL(TJOBDUTY, ' '),
+             case when OVTMDATE < :comchdate                         *2014.11.17이후 초과근무수당 계산할 때 통상임금이 총연봉 18분할에서 고정식교비포함 12분할로* 
+                  then hper.COMMONUTIL.GET_OLDBASEPAY(a.EMPNO)
+                  else hper.COMMONUTIL.GET_NEWBASEPAY(a.EMPNO) end   *DB package에서 계산 jissi. 2014.11.05* 
+       FROM  PKHOTHIS A, PKHYPHIS B, PKCPBAS C, PIMPMAS D
+      WHERE  OVTMDATE BETWEEN :frworkdate AND :toworkdate 
+        AND  A.EMPNO >= :frempno AND A.EMPNO <= :toempno 
+        AND  TO_CHAR(C.YEARPAYNUM) =  B.YEARPAYNUM 
+        AND  A.EMPNO = B.EMPNO 
+        AND  B.EMPNO = D.EMPNO
+        AND  UPPER(NVL(CONYN,' ')) = 'Y' 
+        AND  A.WRITETIME = '***'
+      ORDER  BY A.EMPNO, OVTMDATE;
+     */
+     EXEC SQL DECLARE cursor1 CURSOR FOR
+     SELECT  NVL(OVTMDATE,' '), NVL(A.EMPNO,' '),
+             NVL(A.KORNAME,' '),NVL(A.PAYCL,' '),
+             NVL(FRAPPTIME,'*'), NVL(FRREALTIME,'*'),
+             NVL(TOREALTIME,'*'), totpay,
+             substr(NVL(CONLTIME,'00000000'),1,8),CONLEMP,
+             NVL(RESTMM,0),NVL(SPRESTMM,0),NVL(TJOBDUTY, ' '),
+             case when OVTMDATE < :comchdate                                     /*2017.01.01이후 초과근무수당 계산할 때 통상임금이 기준시간 226hr->209hr*/
+                  then hper.COMMONUTIL.GET_OLDBASEPAY(a.EMPNO,c.YEARPAYNUM)
+                  else hper.COMMONUTIL.GET_NEWBASEPAY(a.EMPNO,c.YEARPAYNUM) end  /*DB package에서 계산 jissi. 2016.12.14*/
+       FROM  PKHOTHIS A, PKHYPHIS B, PKCPBAS C, PIMPMAS D
+      WHERE  OVTMDATE BETWEEN :frworkdate AND :toworkdate 
+        AND  A.EMPNO >= :frempno AND A.EMPNO <= :toempno 
+        AND  TO_CHAR(C.YEARPAYNUM) =  B.YEARPAYNUM 
+        AND  A.EMPNO = B.EMPNO 
+        AND  B.EMPNO = D.EMPNO
+        AND  UPPER(NVL(CONYN,' ')) = 'Y' 
+        AND  A.WRITETIME = '***'
+      ORDER  BY A.EMPNO, OVTMDATE;
+     
+     EXEC SQL OPEN cursor1;
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+         (sqlca.sqlcode != -1405)) 
+     {
+        
+          sprintf(log_buff,"In the Select ERROR_CODE : %d, Cursor1 Open Error\n", sqlca.sqlcode);
+          WriteLog(log_buff);
+                   
+          EXEC SQL CLOSE cursor1;
+          return(FAIL);
+     }
+     
+     while(1) 
+     {
+          EXEC SQL FETCH cursor1
+          INTO :ovtmdate, :empno, :korname, :paycl, 
+          	   :frapptime,:frrealtime, :torealtime, :totpay,
+               :conltime, :conlemp,
+               :t_restmm,:t_sprestmm ,:tjobduty, :tongpay;
+          
+          if  (sqlca.sqlcode == 1403) 
+          {
+               EXEC SQL CLOSE cursor1;
+               return(SUCCESS);
+          }
+          
+          trail_spaces(frapptime);
+          trail_spaces(frrealtime);
+          trail_spaces(torealtime);
+          trail_spaces(paycl);
+          
+          /*하절기 동절기 식사시간 세팅 :  동절기 근무제 폐지 2008.11 kth. 동절기 근무제 부활(2006.11.) dsa2000.    동절기 근무제 폐지(2004.11.) */
+          strncpy(mm,frrealtime+4,2) ; 
+          strcpy(bgntime, "1800")  ;  
+          strcpy(endtime, "1900")  ;      
+               
+                          
+/*     if ((strcmp( mm, "11") == 0 ) ||
+            (strcmp( mm, "12") == 0 ) ||
+            (strcmp( mm, "01") == 0 ) ||
+            (strcmp( mm, "02") == 0 ))
+       {
+             strcpy(bgntime, "1700")  ;  
+              strcpy(endtime, "1800")  ;
+          }  
+     else     
+          {
+              strcpy(bgntime, "1800")  ;  
+              strcpy(endtime, "1900")  ;
+          }                                  
+*/          
+
+
+                /*=================================================
+                  결재일범위(3일 )를    벗어난     결재'Y'자료를
+                             'N'로 변경한다.
+                  변경조건 :  근무일 + 3 + 휴일일수 < 결재일
+                 *=================================================*
+
+                 holicnt =  Get_ConTerm(ovtmdate);
+                 add_days(ovtmdate,holicnt,maxcondate );
+
+                 if (strcmp (empno,"0222") ==0 )
+                     printf("\n holicnt %d,ovtmdate[%s],maxcondate[%s]",
+                            holicnt,ovtmdate,maxcondate);
+
+                 if (strcmp( conltime,maxcondate  ) > 0 )
+                 {
+                     EXEC SQL
+                     UPDATE PKHOTHIS
+                     SET    CONYN     = 'N',
+                            VALIDDESC = '결재일범위 초과 '||:maxcondate,
+                            WRITEMAN = :jobempno,
+                            WRITETIME = TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS')
+                     WHERE  EMPNO = :empno
+                     AND    OVTMDATE = :ovtmdate
+                     AND    NVL(FRAPPTIME,'*')  = :frapptime
+                     AND    NVL(FRREALTIME,'*') = :frrealtime;
+
+* debug               printf("\n 사번[%s],초과근무일[%s],최종결재일[%s][%d]",
+                 empno ,ovtmdate,conltime,strcmp( conltime,maxcondate));
+                 *
+
+                     sprintf(buff,"\n 사번[%s],초과근무일[%s],최종결재일[%s] ,최종결재자[%s]",
+                                    empno ,ovtmdate,conltime,conlemp);
+                     WriteLog(buff);
+                     continue;              
+                 }
+
+                 *=================================================* 
+                 AFTERYN : Y면 사후등록 */
+                 
+          sprintf(log_buff,"   ");
+          WriteLog(log_buff);
+          
+          t_nighthh   = 0;
+          t_genexthh  = 0;
+          t_holihh    = 0;
+          t_holiexthh = 0;
+          t_mealhh    = 0;
+          t_excephh   = 0;
+
+/*
+printf("\n debug empno[%s],[%s],[%s]",empno ,frrealtime,torealtime); 
+*/
+
+                
+          if ( (get_nighthh(frrealtime,torealtime)    == SUCCESS) &&
+               (get_genexthh(frrealtime,torealtime)   == SUCCESS) &&
+               (process_holihh(frrealtime,torealtime) == SUCCESS) &&
+/* ==============================================================================
+ Version  date(yy.mm.dd)  programmer  description                relevant doc.no  
+ 30.20    2001.08.09.      유효성       휴일근무시 식사시간 제외 추가 
+============================================================================= */
+               (get_mealhh(frrealtime, torealtime) == SUCCESS) &&
+               (get_excepthh(frrealtime, torealtime)== SUCCESS) ) 
+          
+          {
+               if  (update_record() != SUCCESS) 
+               {
+                    sprintf(log_buff," 수당 수정 불가자 =>사번 : %s, 성명 : %s \n ",  empno,korname);
+                    WriteLog(log_buff);
+                   
+                    strncpy(t_date,ovtmdate,4);
+                    t_date[4] = '-';
+                    strncpy(t_date+5,ovtmdate+4,2);
+                    t_date[7] = '-';
+                    strncpy(t_date+8,ovtmdate+6,2);
+                    t_date[10] = '\0';
+                  
+               /*infra       sprintf(log_buff," 초과근무일자 : %s,  직급 : %s \n", t_date,paycl); */
+                    sprintf(log_buff," 초과근무일자 : %s,  BAND : %s \n", t_date,paycl);                                
+                                        WriteLog(log_buff);
+               }
+               s_count++;
+          }
+          else 
+          {
+               f_count++;
+               sprintf(log_buff," 계산에 실패한 EMPNO : %s, KORNAME : %s \n ", empno,korname);
+                                WriteLog(log_buff);
+                                
+               strncpy(t_date,ovtmdate,4);
+               t_date[4] = '-';
+               strncpy(t_date+5,ovtmdate+4,2);
+               t_date[7] = '-';
+               strncpy(t_date+8,ovtmdate+6,2);
+               t_date[10] = '\0';
+               
+               /* printf(" 초과근무일자 : %s \n",t_date); */
+               sprintf(log_buff," 초과근무일자 : %s \n",t_date);
+               WriteLog(log_buff);
+          }
+     }
+}
+
+/*****************************************************************************
+  야간근로시간을 실제근무시작시간과 실제근무종료시간으로 부터 
+  구하는 함수.
+******************************************************************************/
+get_nighthh(char *frtime, char *totime)
+{
+     int   dd       = 0;
+     int   tmp      = 0;
+     char  stime[5] = "";
+     char  etime[5] = "";
+     char  t_str[5] = "";
+     int   btime1 = 0;
+     int   btime2 = 0;
+     int   btime3 = 0;
+     int   btime4 = 0;     
+     int   istime = 0;
+     int   ietime = 0;
+     
+     strncpy(stime,frtime+8,4);
+     strncpy(etime,totime+8,4);
+     istime = atoi(stime);
+     ietime = atoi(etime);
+     btime1 = atoi(FRTIME1);
+     btime2 = atoi(TOTIME1);
+     btime3 = atoi(FRTIME2);
+     btime4 = atoi(TOTIME2);
+     
+     dd = check_datetime(frtime,totime);
+     if  (dd == FAIL)
+          return(FAIL);
+     
+     if  (dd == 1) 
+     {
+          strncpy(t_str,totime+8,4);
+          tmp   = atoi(t_str);
+          ietime  = tmp + 2400;
+     }
+     else if ((dd == 0) && (strcmp(stime,"0000") >= 0) && 
+              (strcmp(stime,"0800") < 0)) 
+     { 
+          strncpy(t_str,frtime+8,4);
+          tmp   = atoi(t_str);
+          istime   = tmp + 2400;
+          
+          strncpy(t_str,totime+8,4);
+          tmp = atoi(t_str);
+          ietime = tmp + 2400;
+     }
+     
+     if ( (istime >= btime1) && (istime <= btime2) && 
+          (ietime > btime2) )  
+     {
+           t_nighthh = get_hourterm(istime,btime2);
+     } 
+     else if ((ietime >= btime1) &&
+              (ietime <= btime2) &&
+              (istime < btime1)) 
+     {
+          t_nighthh = get_hourterm(btime1,ietime);
+     }
+     else if ((istime >= btime1) && (istime <= btime2) && 
+              (ietime <= btime2) && (ietime >  istime))  {
+          t_nighthh = get_hourterm(istime,ietime);
+     }
+     else if ((istime <= btime1) && (ietime >= btime2) &&
+              (ietime >  istime)) 
+     {
+          t_nighthh = get_hourterm(btime1,btime2);
+     }
+     else 
+     {
+          t_nighthh = 0;
+     }
+     
+     if ((ietime >= btime3) && (ietime <= btime4))
+          t_nighthh += get_hourterm(btime3,ietime);
+     
+     return(SUCCESS);
+}
+/* ==============================================================================
+ Version  date(yy.mm.dd)  programmer  description                 relevant doc.no  
+ 30.20    2001.08.09.      유효성       휴일근무시 식사시간 제외 추가 
+============================================================================= */  
+/*****************************************************************************
+  실제근무시작시간과 실제근무종료시간으로 부터 
+  식사시간을 구하는 함수.
+******************************************************************************/
+get_mealhh(char *frtime, char *totime)
+{
+     int     dd       = 0;
+     int     tmp      = 0;
+     char    stime[5] = "";
+     char    etime[5] = "";
+     char    t_str[5] = "";
+     char    str[8+1] = "";
+     int     btime1 = 0;
+     int     btime2 = 0;
+     int     istime = 0;
+     int     ietime = 0;
+     int     daykind = 0 ;
+     double  t_mealmm = 0 ;  
+     
+     strncpy(stime,frtime+8,4);
+     strncpy(etime,totime+8,4);
+     istime = atoi(stime);
+     ietime = atoi(etime);  
+     
+     
+     strncpy(str,frtime,8);
+     daykind   = get_daykind(str);        
+              
+     dd = check_datetime(frtime,totime);            
+        
+     
+     if  (dd == FAIL) 
+          return(FAIL);
+     
+     if ((daykind == 1)  && (dd == 0) ) /*평일이고 하루면 그냥 return*/           
+          return (SUCCESS) ;         
+   
+     if (dd == 1) 
+     {
+         strncpy(t_str,totime+8,4);
+         tmp     = atoi(t_str);
+         ietime  = tmp + 2400;
+     }
+          
+   
+   /* 아침, 점심, 저녁 식사시간을 차례로 계산 */ 
+   /*아침*/
+     if  (daykind == 4 ) 
+     {
+                  
+          btime1 = 800 ;
+          btime2 = 900 ;
+          
+          if ((istime >= btime1) && (istime <= btime2) && 
+              (ietime > btime2) )    
+          {                   
+               t_mealmm  = get_minterm(istime, btime2) ;     
+          } 
+          else if ((ietime >= btime1) && 
+                   (ietime <= btime2) &&
+                   (istime < btime1)) 
+          {     
+               t_mealmm  = get_minterm(btime1,ietime);         
+          }
+          else if ((istime >= btime1) && (istime <= btime2) && 
+                   (ietime <= btime2) && (ietime >  istime))  
+          {
+               t_mealmm = get_minterm(istime,ietime);
+          }
+          else if ((istime <= btime1) && (ietime >= btime2) &&
+                   (ietime >  istime)) 
+          {
+                t_mealmm = get_minterm(btime1,btime2);
+          }
+          else 
+          {
+               t_mealmm = 0;
+          }
+          
+          /*점심*/
+          btime1 = 1200 ;
+          btime2 = 1300 ;
+          
+          if ((istime >= btime1) && (istime <= btime2) && 
+               (ietime > btime2) )  
+          {         
+                t_mealmm +=  get_minterm(istime,btime2);
+          } 
+          else if ((ietime >= btime1) && 
+                   (ietime <= btime2) &&
+                   (istime < btime1)) 
+          {     
+               t_mealmm  += get_minterm(btime1,ietime);
+          }
+          else if ((istime >= btime1) && (istime <= btime2) && 
+                   (ietime <= btime2) && (ietime >  istime))  
+          {
+               t_mealmm += get_minterm(istime,ietime);
+          }
+          else if ((istime <= btime1) && (ietime >= btime2) &&
+                   (ietime >  istime)) 
+          {
+               t_mealmm += get_minterm(btime1,btime2);
+          }
+          else 
+          {
+               t_mealmm += 0;
+          }
+     }
+             
+          /*저녁*/
+     btime1 = atoi(bgntime) ;
+     btime2 = atoi(endtime) ;
+      
+      
+     if ((istime >= btime1) && (istime <= btime2) && 
+          (ietime > btime2) )  
+     {         
+          t_mealmm += get_minterm(istime,btime2);
+     } 
+     else if ((ietime >= btime1) && 
+              (ietime <= btime2) &&
+              (istime < btime1))
+     {     
+        t_mealmm += get_minterm(btime1,ietime);
+     }
+     else if ((istime >= btime1) && (istime <= btime2) && 
+              (ietime <= btime2) && (ietime >  istime))  
+     {
+          t_mealmm += get_minterm(istime,ietime);
+     }
+     else if ((istime <= btime1) && (ietime >= btime2) &&
+              (ietime >  istime)) {
+           t_mealmm += get_minterm(btime1,btime2);
+     }
+     else 
+     {
+          t_mealmm += 0;
+     }  
+         
+            
+          /*다음날 아침*/  
+         
+     if ((dd == 1) && (strcmp(etime,"0800") > 0))
+     {     
+          btime1 = 800 + 2400 ;
+          btime2 = 900 + 2400 ;
+          
+          if ( (istime >= btime1) && (istime <= btime2) && 
+               (ietime > btime2) )    
+          {                   
+                t_mealmm += get_minterm(istime, btime2) ;              
+          } 
+          else if ((ietime >= btime1) && 
+                   (ietime <= btime2) &&
+                   (istime < btime1)) 
+          {
+               t_mealmm += get_minterm(btime1,ietime);
+          }
+          else if ((istime >= btime1) && (istime <= btime2) && 
+                   (ietime <= btime2) && (ietime >  istime))  
+          {
+               t_mealmm += get_minterm(istime,ietime);
+          }
+          else if ((istime <= btime1) && (ietime >= btime2) &&
+                   (ietime >  istime)) 
+          {
+               t_mealmm += get_minterm(btime1,btime2);
+          }
+          else 
+          {
+               t_mealmm += 0;
+          }
+         
+     
+          /* 다음날 점심*/  
+            
+          btime1 = 1200 + 2400 ;
+          btime2 = 1300 + 2400 ;
+          
+          if ((istime >= btime1) && (istime <= btime2) && 
+              (ietime > btime2) )  
+          {                   
+               t_mealmm  +=  get_minterm(istime,btime2);     
+          } 
+          else if ((ietime >= btime1) && 
+                   (ietime <= btime2) &&
+                   (istime < btime1)) 
+          {     
+               t_mealmm  += get_minterm(btime1,ietime);
+          }
+          else if ((istime >= btime1) && (istime <= btime2) && 
+                   (ietime <= btime2) && (ietime >  istime))  
+          {
+               t_mealmm += get_minterm(istime,ietime);
+          }
+          else if ((istime <= btime1) && (ietime >= btime2) &&
+                   (ietime >  istime)) 
+          {
+               t_mealmm += get_minterm(btime1,btime2);
+          }
+          else 
+          {
+               t_mealmm += 0;
+          }
+              
+     /*다음날 저녁*/
+     
+          btime1 = atoi(bgntime) + 2400;
+          btime2 = atoi(endtime) + 2400;
+     
+     
+          if ((istime >= btime1) && (istime <= btime2) && 
+               (ietime > btime2) )  
+          {                   
+               t_mealmm  += get_minterm(istime,btime2);       
+          } 
+          else if ((ietime >= btime1) && 
+                   (ietime <= btime2) &&
+                   (istime < btime1)) 
+          {     
+                t_mealmm += get_minterm(btime1,ietime);
+          }
+          else if ((istime >= btime1) && (istime <= btime2) && 
+                   (ietime <= btime2) && (ietime >  istime))  
+          {
+               t_mealmm += get_minterm(istime,ietime);
+          }
+          else if ((istime <= btime1) && (ietime >= btime2) &&
+                   (ietime >  istime)) 
+          {
+               t_mealmm += get_minterm(btime1,btime2);
+          }
+          else 
+          {
+               t_mealmm += 0;
+          }
+        
+     }  
+            
+     t_mealhh = floor(t_mealmm / 60) ;          
+               
+     return(SUCCESS);
+}
+
+/****************************************************************************
+       19:00(18:00)~08:00 9시간이상근무시 1시간 제외하는 함수
+ ****************************************************************************/
+get_excepthh(char *frtime, char* totime)
+{
+     char ba[20];
+     char bb[20];
+     int term = 0 ;  
+     int tmp = 0 ;
+     
+     char str[8+1] ="";
+     
+     int dd;
+     sprintf(ba,"%s",frtime+8);
+     sprintf(bb,"%s",totime+8);
+     
+     dd = check_datetime(frtime,totime);
+     
+     if  (dd == 0)
+          return(SUCCESS);
+           
+     if  (dd == 1) 
+     {
+          if  (strcmp(ba, endtime) < 0 )        
+               strcpy(ba, endtime)  ;
+           
+          if  (strcmp(bb, "0800") > 0 )
+               strcpy(bb,  "0800") ;
+          
+          tmp = atoi(bb) + 2400 ;   
+            
+          tmp = (int)(get_minterm(atoi(ba), tmp) / 60)  ;
+
+          /*2014.05.20.hjku. 휴식초과가 한시간 미만일 경우 9시간 근무한 대상자에 대해 제외시간 처리.. 홍원영M          
+           if  (tmp >= 9 ) 
+                t_excephh = 1 ;    
+          */
+                
+          if  (( tmp >= 9 ) &&(floor(t_restmm/60)<1)) 
+                t_excephh = 1 ;                                        
+     }   
+         
+     return (SUCCESS) ;         
+}
+
+
+/****************************************************************************
+        시작시간과 종료시간 사이의 간격을 시간단위로 구하는 함수.
+ ****************************************************************************/
+float get_hourterm(int a,int b)
+{
+     int mm1,mm2;  
+     int hh1,hh2;
+     int result;
+     
+     hh1 = (int) (a/100);
+     hh2 = (int) (b/100);
+     mm1 = a - (hh1*100);
+     mm2 = b - (hh2*100);
+     
+     mm1 = hh1 * 60 + mm1;
+     mm2 = hh2 * 60 + mm2;
+     mm2 = mm2 - mm1;
+     
+     /*근무시간 오등록으로 음수가 나올 경우 check 2015.10.13 jissi*/  
+     if  (mm2 < 0) 
+          mm2 = 0;
+          
+     result = (int)(mm2/60);
+   
+   //printf("\nDEGUG 연장근무시간 :a[%d],b[%d],genexthh[%d]",a,b,result);  
+     return(result);
+}
+/****************************************************************************
+        시작시간과 종료시간 사이의 간격을 분단위로 구하는 함수.
+ ****************************************************************************/
+get_minterm(int a,int b)
+{
+     int mm1,mm2;  
+     int hh1,hh2;
+     
+     hh1 = (int) (a/100);
+     hh2 = (int) (b/100);
+     mm1 = a - (hh1*100);
+     mm2 = b - (hh2*100);
+     
+     mm1 = hh1 * 60 + mm1;
+     mm2 = hh2 * 60 + mm2;
+     mm2 = mm2 - mm1;
+     return(mm2);
+}
+
+
+/****************************************************************************
+       실제근무시작시간과 실제근무종료시간을 시간간격을 구하는 함수. 
+ ****************************************************************************/
+float get_ovtmhh(char *a, char* b)
+{
+     char  ba[20];
+     char  bb[20];
+     int   daykind1  = 0;
+     int   daykind2  = 0;
+     char  str[8+1]  = "";
+     int   i,j,dd;
+     int   tmp       = 0;
+     
+     sprintf(ba,"%s",a+8,4);
+     sprintf(bb,"%s",b+8,4);
+     i = atoi(ba);
+     j = atoi(bb);
+     
+     strncpy(str,a,8);
+     daykind1 = get_daykind(str);
+     
+     strncpy(str,b,8);
+     daykind2 = get_daykind(str);  
+     
+     dd = check_datetime(a,b);
+     
+     //if ((strcmp(paycl,"E1") == 0 )||(strcmp(paycl,"H1") == 0 ))E1,H1 을 담당직무 비서 09,기사 15로 변경함. KTH
+     if ((strcmp(tjobduty,"09") == 0 )||(strcmp(tjobduty,"15") == 0 ))
+     {
+          if  ((dd == 1)&&(daykind1!=4)) 
+          {
+               j  = j + 2400;  
+               
+               if ((strcmp(bb,"0600") > 0)&&(strcmp(bb,"0830") <= 0)&&(daykind2!=4)) 
+               {
+                    /*return(get_hourterm_con(i,j));
+                      평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+                    if ((strcmp(ba,"0900") >= 0) && (strcmp(ba,"1800") <= 0)) 
+                         return(get_hourterm_con(atoi("1800"),j)); 
+                    else  
+                         return(get_hourterm_con(i,j));
+               }
+               else 
+               {
+                    /*return(get_hourterm(i,j));
+                      평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+                    if ((strcmp(ba,"0900") >= 0) && (strcmp(ba,"1800") <= 0)) 
+                         return(get_hourterm(atoi("1800"),j)); 
+                    else  
+                         return(get_hourterm(i,j));
+               }
+          }
+          else if  ((dd == 1)&&(daykind1==4))  
+          {
+               j  = j + 2400;  
+               
+               if ((strcmp(bb,"0600") > 0)&&(strcmp(bb,"0830") <= 0)&&(daykind2!=4)) {
+                    return(get_hourterm_con(i,j));        
+               }
+               else
+               {      
+                    return(get_hourterm(i,j));
+               }
+          }
+          else if ((dd==0)&&(daykind1!=4))
+          {
+               if(((strcmp(ba,"0600") > 0)&&(strcmp(ba,"0830") <  0))||
+                  ((strcmp(bb,"0600") > 0)&&(strcmp(bb,"0830")<= 0))) 
+               {
+                    /*return(get_hourterm_con(i,j));
+                      평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+                    if ((strcmp(ba,"0900") >= 0) && (strcmp(ba,"1800") <= 0)) 
+                         return(get_hourterm_con(atoi("1800"),j)); 
+                    else  
+                         return(get_hourterm_con(i,j));
+               }
+               else 
+               {
+                    /*return(get_hourterm(i,j));
+                      평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+                    if ((strcmp(ba,"0900") >= 0) && (strcmp(ba,"1800") <= 0)) 
+                         return(get_hourterm(atoi("1800"),j)); 
+                    else  
+                         return(get_hourterm(i,j));
+               }           
+          }
+          else 
+          {
+               return(get_hourterm(i,j));
+          }
+     }
+     else 
+     {
+          if (daykind1!=4)
+          {	
+               if  (dd == 0)
+               {	
+                    /*return(get_hourterm(i,j));
+                    평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+                    if ((strcmp(ba,"0900") >= 0) && (strcmp(ba,"1800") <= 0)) 
+                         return(get_hourterm(atoi("1800"),j)); 
+                    else  
+                         return(get_hourterm(i,j)); 
+               }
+               else if (dd == 1) 
+               {
+                    j = j + 2400; 
+                    
+                    /*return(get_hourterm(i,j));
+                    평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+                    if ((strcmp(ba,"0900") >= 0) && (strcmp(ba,"1800") <= 0)) 
+                         return(get_hourterm(atoi("1800"),j)); 
+                    else  
+                         return(get_hourterm(i,j)); 
+               }
+               else 
+                    return(0);
+          }
+          else
+          {
+               if  (dd == 0)
+                    return(get_hourterm(i,j));
+               else if (dd == 1) 
+               {
+                    j = j + 2400; 
+                    return(get_hourterm(i,j));
+               }
+               else 
+                    return(0);
+          }		
+     }
+} 
+  
+/****************************************************************************
+  실제근무시간의 유효성을 Check 하는 함수.
+****************************************************************************/
+check_datetime(char *frtime,char *totime)
+{
+     int  len = 0;
+     int  dd;
+     char t_yy[3] = "";
+     char t_mm[3] = "";
+     char t_dd[3] = "";
+     char frstr[9] = "";
+     char tostr[9] = "";
+     
+     len = strlen(frtime);
+     if  (len != 12) 
+     {
+          sprintf(log_buff,"실제시작시간값이 유효하지 않습니다.\n");
+          WriteLog(log_buff);
+          return(FAIL);
+     }
+     
+     len  = strlen(totime);
+     if  (len != 12) 
+     {
+          sprintf(log_buff,"실제종료시간값이 유효하지 않습니다.\n");
+          WriteLog(log_buff);
+          return(FAIL);
+     }
+     
+     strncpy(frstr,frtime,8);
+     strncpy(tostr,totime,8);
+     dd = calc_term(frstr,tostr);
+     if  (dd == FAIL)
+          return(FAIL);
+     
+     if ((dd < 0) || (dd >= 2)) 
+     {
+          sprintf(log_buff,"시작일과 종료일의 간격이 유효하지 않습니다.\n");
+          WriteLog(log_buff);
+          return(FAIL);
+     }
+     
+     return(dd);
+}
+
+/****************************************************************************
+        E1,H1평일 오전 시작시간과 종료시간 사이의 간격을 시간단위로 구하는 함수.
+ ****************************************************************************/
+float get_hourterm_con(int a,int b)
+{
+     int mm1,mm2;  
+     int hh1,hh2;
+     float result;
+     int hh, qq;
+     
+     hh1 = (int) (a/100);
+     hh2 = (int) (b/100);
+     mm1 = a - (hh1*100);
+     mm2 = b - (hh2*100);
+     
+     mm1 = hh1 * 60 + mm1;
+     mm2 = hh2 * 60 + mm2;
+   
+   /*
+     mm2 = mm2 - mm1-1;
+     
+     result = round((float)mm2/60);
+   */  
+     mm2 = mm2 - mm1;
+
+     /*근무시간 오등록으로 음수가 나올 경우 check 2015.10.13 jissi*/  
+     if  (mm2 < 0) 
+          mm2 = 0;
+     
+     hh = ((int)mm2/60);
+     qq = ((int)(mm2 -hh*60)/15);
+     
+     result = hh + 0.25 * qq; /* 15분 단위로 계산 */
+     
+     return(result);
+}
+
+/***************************************************************************
+  일반연장시간을 처리하는 함수.
+****************************************************************************/
+get_genexthh(char *frtime,char *totime)
+{
+     int   tmp   = 0;
+     int   dd   = 0;
+   /*  int   daykind  = 0;*/
+     int   daykind1  = 0;
+     int   daykind2  = 0;
+     char   stime[5] = "";
+     char   etime[5] = "";
+     char   str[8+1]   = "";
+   
+     dd = check_datetime(frtime,totime);  
+        
+     if (dd == FAIL) return(FAIL);
+   
+     strncpy(stime,frtime+8,4);
+     strncpy(etime,totime+8,4);
+     strncpy(str,frtime,8);
+     
+   /*  daykind   = get_daykind(str);*/
+   
+     strncpy(str,frtime,8);
+     daykind1 = get_daykind(str);
+     
+     strncpy(str,totime,8);
+     daykind2 = get_daykind(str);  
+     
+     /* 2008.05.08. 추가 E1,H1 평일 오전 0600~0830 사이 초과 근무수당 15분단위로 연장근무로 인정(인력팀 정정명씨 통해서.)
+        2008.10.14  수정 E1,H1을 09,15 tjobduty 담당직무로 변경 */
+     if (daykind1 != 4) 
+     {
+   /*     dd = check_datetime(frtime,totime);
+        if (dd == FAIL)
+          return(FAIL);*/
+          if ((dd==1) && (strcmp(etime,"0800") > 0)) 
+          { /*다음날은 휴일 */
+               tmp      = atoi("0800");
+               tmp     = tmp + 2400;
+               /*t_genexthh = get_hourterm(atoi(stime),tmp);
+                 평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+               if ((strcmp(stime,"0900") >= 0) && (strcmp(stime,"1800") <= 0)) 
+                    t_genexthh = get_hourterm(atoi("1800"),tmp); 
+               else  
+                    t_genexthh = get_hourterm(atoi(stime),tmp);
+                    
+               t_holihh   = get_hourterm(atoi("0800"),atoi(etime));
+               if  (t_holihh > 8)
+                    t_holiexthh = t_holihh - 8;
+          }
+          else 
+          {
+               if (dd == 1) 
+               {
+                    //if (((strcmp(paycl,"E1") == 0 )||(strcmp(paycl,"H1") == 0 )) 09 비서 ,15 기사 tjobduty 담당직무로 변경
+                    if (((strcmp(tjobduty,"09") == 0 )||(strcmp(tjobduty,"15") == 0 )) &&
+                       ((strcmp(etime,"0600") > 0)&&(strcmp(etime,"0830") <= 0))) 
+                    {
+                         /*tmp      = atoi("0600");  */
+                         tmp     = atoi(etime);
+                         tmp     = tmp + 2400;            
+                         
+                         /*t_genexthh = get_hourterm_con(atoi(stime),tmp);
+                           평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+                         if ((strcmp(stime,"0900") >= 0) && (strcmp(stime,"1800") <= 0)) 
+                              t_genexthh = get_hourterm_con(atoi("1800"),tmp); 
+                         else  
+                              t_genexthh = get_hourterm_con(atoi(stime),tmp);          
+                    }
+                    else
+                    {          
+                         tmp   = atoi(etime);
+                         tmp   = tmp + 2400;
+                         /*t_genexthh = get_hourterm(atoi(stime),tmp);
+                           평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+                         if ((strcmp(stime,"0900") >= 0) && (strcmp(stime,"1800") <= 0)) 
+                              t_genexthh = get_hourterm(atoi("1800"),tmp); 
+                         else  
+                              t_genexthh = get_hourterm(atoi(stime),tmp);
+                    }
+               }
+               else 
+               {
+                    //if((strcmp(paycl,"E1") == 0 )||(strcmp(paycl,"H1") == 0 )){ //09 비서,15 기사 담당직무로 변경 
+                    if ((strcmp(tjobduty,"09") == 0 )||(strcmp(tjobduty,"15") == 0 ))
+                    {
+                         if (((strcmp(stime,"0600") > 0)&&(strcmp(stime,"0830") < 0))||
+                             ((strcmp(etime,"0600") > 0)&&(strcmp(etime,"0830") <= 0))) 
+                         {
+                              /*t_genexthh = get_hourterm_con(atoi(stime),atoi(etime));
+                                평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+                              if ((strcmp(stime,"0900") >= 0) && (strcmp(stime,"1800") <= 0)) 
+                                   t_genexthh = get_hourterm_con(atoi("1800"),atoi(etime));
+                              else
+                                   t_genexthh = get_hourterm_con(atoi(stime),atoi(etime));
+                         }
+                         else 
+                         {
+                              /*t_genexthh = get_hourterm(atoi(stime),atoi(etime));
+                                평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+                              if ((strcmp(stime,"0900") >= 0) && (strcmp(stime,"1800") <= 0)) 
+                                   t_genexthh = get_hourterm(atoi("1800"),atoi(etime));
+                              else
+                                   t_genexthh = get_hourterm(atoi(stime),atoi(etime));
+                         }                 
+                    }
+                    else
+                    {          
+                         /*t_genexthh = get_hourterm(atoi(stime),atoi(etime));
+                           평일 근무시작시간을 정규근무시간내 등록한 경우 check 2015.10.13 jissi*/
+                         if ((strcmp(stime,"0900") >= 0) && (strcmp(stime,"1800") <= 0)) 
+                     	        t_genexthh = get_hourterm(atoi("1800"),atoi(etime));
+                         else
+                              t_genexthh = get_hourterm(atoi(stime),atoi(etime));
+                    }
+               }
+          }
+          return(SUCCESS);
+     }
+     else 
+     {
+          t_genexthh = 0;
+          
+          return(SUCCESS);
+     }
+}
+
+/*****************************************************************************
+  기준월의 마지막 토요일을 구하는 함수.
+ *****************************************************************************/
+void get_lastsaturday(char* yymm, char* lastsaturday)
+{
+     char  t_date[8+1]  = "";
+     char  t_dayname[20]  = "";
+     
+     get_lastday(yymm,t_date);
+     while(1)
+     {
+          get_dayname(t_date,t_dayname);
+          if  (strcmp(t_dayname,"SATURDAY") == 0)
+               break;
+          add_days(t_date,-1,t_date);
+     }
+     sprintf(lastsaturday,"%.8s",t_date);
+}
+
+/*****************************************************************************
+  기준일+M 일을 구하는 함수.
+ *****************************************************************************/
+void add_days(char* indate,int m, char* rdate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t_date[8+1]  = "";
+          double  t_adddays;
+     EXEC SQL END DECLARE SECTION;
+     
+     sprintf(t_date,"%s",indate);
+     t_adddays = m;
+     
+     EXEC SQL
+     SELECT   TO_CHAR(TO_DATE(TO_CHAR(TO_DATE(:t_date,'YYYYMMDD')+
+              :t_adddays,'YYYYMMDD'),'YYYYMMDD'),'YYYYMMDD')
+       INTO  :t_date
+       FROM  DUAL;
+     
+     sprintf(rdate,"%s",t_date);
+}
+
+/*****************************************************************************
+  기준월의 마지막일을 구하는 함수.
+ *****************************************************************************/
+void get_lastday(char* yymm, char* result)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  basedate[9] = "";
+     EXEC SQL END DECLARE SECTION;
+     
+     sprintf(basedate,"%.6s01",yymm);
+     
+     EXEC SQL
+     SELECT  TO_CHAR(LAST_DAY(TO_DATE(:basedate,'YYYYMMDD')),'YYYYMMDD')
+       INTO  :basedate
+       FROM  DUAL;
+     
+     basedate[8] = '\0';
+     sprintf(result,"%s",basedate);
+}
+
+/****************************************************************************
+       요일명을 구하는 함수.
+ ***************************************************************************/
+void get_dayname(char *indate,char *result)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char idate[8+1]   = "";
+          char ddname[20] = "";
+     EXEC SQL END   DECLARE SECTION;
+     int count;
+     
+     strcpy(idate,indate);
+     EXEC SQL 
+     SELECT  TO_CHAR(TO_DATE(:idate,'YYYYMMDD'),'DAY')
+       INTO  :ddname
+       FROM  DUAL;
+     
+     count = 0;
+     while (ddname[count] != ' ')
+          count++;
+     ddname[count] = '\0';
+     
+     sprintf(result,"%s",ddname);
+}
+
+/****************************************************************************
+  근무일의 종류를 결정하는 함수.
+  1 -> 평일, 2 -> 휴무토요일, 3 -> 근무토요일, 4 -> 휴일
+ ****************************************************************************/
+get_daykind(char *indate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+        char day[8+1];
+        int  count;
+     EXEC SQL END   DECLARE SECTION;
+     
+     char dayname[100];
+     int i = 0;
+     
+     get_dayname(indate,dayname);
+     if  (strcmp(dayname,"SUNDAY") == 0)
+          return(4);
+     
+     sprintf(day,"%s",indate);
+     count = 0;
+     /*2015.10.06 jissi 휴일/평일적용 특이자 체크 추가
+     EXEC     SQL 
+     SELECT   COUNT(*) 
+       INTO  :count
+       FROM   PKCHOLI
+      WHERE   HOLIDATE = :day;
+     */    
+     
+     EXEC   SQL 
+     SELECT COUNT(*) 
+       INTO :count
+       FROM
+           (
+            SELECT   HOLIDATE     
+              FROM   PKCHOLI         
+             WHERE   HOLIDATE = :day  
+            UNION 	
+            SELECT   DUTYDATE
+              FROM   PKHOLIEMP
+             WHERE   DUTYDATE = :day
+               AND   EMPNO    = :empno
+               AND   DUKIND   = '49'     /*휴일적용*/
+            MINUS             
+            SELECT   DUTYDATE
+              FROM   PKHOLIEMP
+             WHERE   DUTYDATE = :day
+               AND   EMPNO    = :empno
+               AND   DUKIND   = '00'     /*평일적용*/	
+           );
+     /*printf("DEBUG count[%d],day[%s],empno[%s]\n",count,day,empno);*/
+     if  (count >= 1)
+     {
+          i = 4;
+          return(i);
+     }
+
+/*2004.8.4. 유효성 수정 : 주5일근무에따라 토요일도 휴일로 친다.. */
+/*  if (strcmp(dayname,"SATURDAY") == 0)
+  {
+     if (strcmp(indate,LSaturday) == 0)
+       i = 3;
+     else
+       i = 2;
+  }
+*/
+     if  (strcmp(dayname,"SATURDAY") == 0) 
+          i = 4;      
+     else
+          i = 1;
+
+     return(i);
+}
+ /************************************************************************
+  휴일근로시간과 휴일연장근로시간을 구하는 함수.
+ *************************************************************************/
+process_holihh(char *frtime, char *totime)
+{
+     char stime[5] = "";
+     char etime[5] = "";
+     char str[9]   = "";
+     int tmp = 0;
+     int dd  = 0;
+     int daykind = 0;
+     double  a,b;
+     
+     strncpy(stime,frtime+8,4);
+     strncpy(etime,totime+8,4);
+     strncpy(str,frtime,8);
+     
+     daykind    = get_daykind(str);
+     if  (daykind == 4) 
+     {
+          dd = check_datetime(frtime,totime);
+          if  (dd == FAIL)
+               return(FAIL);
+          if ((dd==1) && (strcmp(etime,"0800") > 0) ) 
+          {
+               tmp    = atoi("0800");
+               tmp   = tmp + 2400;
+               a = get_hourterm(atoi(stime),tmp);
+               b = get_hourterm(atoi("0800"),atoi(etime));
+               
+               t_holihh = a + b;
+     
+/**2001.08.10. 유효성 수정
+익일 0800 이후까지 근무시 분단위 계산 보정 */
+/*추가 start */                        
+               tmp  =  get_minterm(atoi(stime), atoi(etime) + 2400 ) ; 
+                        
+               if  (tmp - (t_holihh*60) >= 60)
+               {
+                    a += 1 ;
+                    t_holihh = a + b;
+               }
+/*추가 end */          
+               if  (a > 8)
+                    t_holiexthh = a - 8;
+               if  (b > 8)
+                    t_holiexthh = t_holiexthh + (b - 8);
+          }
+          else 
+          {
+               if  (dd == 1) 
+               {
+                    tmp      = atoi(etime);
+                    tmp      = tmp + 2400;
+                    t_holihh = get_hourterm(atoi(stime),tmp);
+               }
+               else
+                    t_holihh = get_hourterm(atoi(stime), atoi(etime));
+               if  (t_holihh > 8)
+                    t_holiexthh = t_holihh - 8;
+          }
+     }
+
+     return(SUCCESS);
+}
+/****************************************************************************
+   계산된 근무시간을 DB에 저장하는 Procedure.
+ ****************************************************************************/
+update_record()
+{
+     char  dname[100+1]  = "";
+     /*double  tongpay;  */
+     int  daykind;
+     double  ovtmnightamt;         /*dsa2000*/
+     char  t_date[8+1]  = "";
+     char  t_chkdate[5]  = ""; /* 야근 식대 처리 부분 저녁근무시 체크 2009.05.21 kth */
+   
+     /*tongpay = get_tongpay(paycl); */
+     
+     /*tongpay =  ceil(totpay/23/226);*/
+   
+     /*==========================================================================
+        DB package에서 계산 jissi. 2014.11.05 루틴에서 제외 
+        2008.06.03 시간당 최저 통상임금 적용 일반직 사원 관리수수료 제외      
+     if  (strncmp(empno,"Y",1)==0) 
+     {
+          tongpay = ceil(totpay/18/226); *  통상임금변경 /23 -> /18 로 변경함 kth 2009.03.11  2010.05.11 kth (1-y_manrate/100)) 없앰.*
+     }
+     else 
+     {
+          tongpay = ceil(totpay/18/226);
+     }  
+     
+     if(tongpay<ovminamt) tongpay = ovminamt;
+     ===========================================================================*/
+     
+     /*tongpay = ceil(totpay/12/226);
+     if(tongpay<ovminamt) tongpay = ovminamt;*/
+     
+     EXEC SQL
+          SELECT OVTMNIGHTAMT 
+            INTO :ovtmnightamt
+            FROM PKCOTBAS;
+            
+     /*2016.08.24 jissi HR팀 홍원영M 요청 SR-1608-0885
+       휴일근로시간이 1시간인 경우 기존처럼 식사제외시간을 제외하지 않고 0으로 반영
+       ※단, 일반연장근로는 제외함. */
+     /* printf("\n debug t_mealhh[%f] t_holihh[%f] t_genexthh[%f] t_holiexthh[%f]\n ",t_mealhh,t_holihh,t_genexthh,t_holiexthh); */      
+     if ((t_holihh == 1) && (t_genexthh == 0) && (t_holiexthh == 0)) 
+          t_mealhh = 0;     
+     /* printf("\n debug t_mealhh[%f] t_holihh[%f] t_genexthh[%f] t_holiexthh[%f]\n ",t_mealhh,t_holihh,t_genexthh,t_holiexthh); */ 
+       
+     t_extamt   = (t_genexthh  * tongpay * 1.5) +
+                  (t_holiexthh * tongpay * 0.5);
+     t_nightamt = t_nighthh    * tongpay * 0.5;
+     t_holiamt  = t_holihh     * tongpay * 1.5;
+     t_mealamt  = t_mealhh     * tongpay * 1.5 ;     
+     t_excepamt = t_excephh    * tongpay * 1.5 ;
+   
+     t_extamt   = ceil(t_extamt);
+     t_nightamt = ceil(t_nightamt);
+     t_holiamt  = ceil(t_holiamt);
+     t_mealamt  = floor(t_mealamt);
+     t_excepamt = floor(t_excepamt);
+     
+     ovtmhh     = get_ovtmhh(frrealtime,torealtime);
+   
+     /* ==============================================
+        초과근무에서 휴식시간분만큼을 제외하는 로직 추가
+     if (t_holihh > 0)
+         t_restamt  = floor(floor(t_restmm/60)  * tongpay * 1.5);
+     else if (t_nighthh > 0)
+         t_restamt  = floor(floor(t_restmm/60)  * tongpay * 0.5);
+     * ============================================== */
+   
+     t_restamt  = floor(floor(t_restmm/60)  * tongpay * 1.5);
+     
+     
+     /* ==============================================
+        일상근무에서 휴식시간분만큼을 제외하는 로직 추가
+     * ============================================== */        
+     t_sprestamt  = floor(floor(t_sprestmm/60) * tongpay );
+   
+     total_amt  = total_amt + (t_extamt + t_nightamt + t_holiamt)
+                  - t_restamt -t_sprestamt - t_mealamt - t_excepamt ;
+                        
+     if  (total_amt <= 0 )
+          sprintf(log_buff,"\n 오류자료입니다. 사번[%s],성명[%s],초과근무일[%s]", empno,korname,ovtmdate);
+     WriteLog(log_buff);
+           /****Write_batlog(seqno++, log_buff); dsa2000 Rexec 대체*/
+           
+     /*printf("\n 오류자료입니다. 사번[%s],성명[%s],초과근무일[%s]", empno,korname,ovtmdate);*/                     
+   
+     /* 야근식대처리부분 */  
+     sprintf(t_date,"%.8s",ovtmdate);
+     daykind    = get_daykind(t_date);
+     switch (daykind)
+     {
+          case 2 :
+          case 3 :
+          case 4 :
+               ovmcamt = 0;
+               break;
+          case 1 :       
+          /* ================================================
+             전산처리요청 : 이갑수 대리
+             신청일       : 1998-06-08
+             작업내용     : 98.06.17 부터 수요일에도 야근식대 지급
+             작업자       : 김승회
+             
+          get_dayname(t_date,dname);
+          if (strcmp(dname,"WEDNESDAY")   == 0)
+          {
+             if (strcmp(ovtmdate,"19980617") <  0)
+               ovmcamt = 0;
+             else
+               ovmcamt = 3000;
+   
+          }
+          else
+             ovmcamt = 3000;  
+              ================================================  */
+   /* 강륜종 2004년 08월 25일부터 초과근무 야근식대 인상 : 3000 => 3500원으로 (늦게 반영)*/
+   /*       ovmcamt = 3500;          */
+   
+   /* dsa2000 2004.08.27. 야근식대 DB에서(PKCOTBAS) 읽어오도록 변경 -초과근무기준관리에서 변경 가능 */
+               EXEC SQL
+               SELECT OVTMNIGHTAMT 
+                 INTO :ovtmnightamt
+                 FROM PKCOTBAS;
+               
+               ovmcamt = ovtmnightamt;
+   /* dsa2000 end ===============================================================================*/
+     }
+   /* 야근 식대 처리 오전근무 초과는 식대 금액 제외 kth 20090521*/  
+     strncpy(t_chkdate,frrealtime+8,4);      
+     if ( strcmp(t_chkdate,"1800") >= 0 )
+     {
+          ovmcamt = ovtmnightamt;
+     }
+     else 
+     { 
+          ovmcamt = 0;      
+     }       
+   
+     EXEC SQL
+     UPDATE  PKHOTHIS
+        SET
+             EXTHH      = (:t_genexthh + :t_holiexthh),
+             NIGHTHH    = :t_nighthh,
+             HOLIHH     = :t_holihh,
+             GENEXT     = :t_genexthh,
+             HOLIEXT    = :t_holiexthh,
+             OVTMHH     = :ovtmhh,
+             OVMCAMT    = :ovmcamt,
+             EXTAMT     = :t_extamt,
+             NIGHTAMT   = :t_nightamt,
+             HOLIAMT    = :t_holiamt,
+             OVTMAMT    = (:t_extamt + :t_nightamt + :t_holiamt - :t_restamt - :t_sprestamt - :t_mealamt - :t_excepamt),
+             RESTAMT    = :t_restamt,
+             SPRESTAMT  = :t_sprestamt,
+             MEALHH     = :t_mealhh, 
+             MEALAMT    = :t_mealamt ,
+             EXCEPHH    = :t_excephh,
+             EXCEPAMT   = :t_excepamt,                 
+             WRITEMAN   = :jobempno,
+             WRITETIME  = TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS')
+      WHERE  EMPNO = :empno 
+        AND  OVTMDATE = :ovtmdate 
+        AND  NVL(FRAPPTIME,'*') = :frapptime 
+        AND  NVL(FRREALTIME,'*') = :frrealtime ;
+           
+     if  (sqlca.sqlcode != 0) 
+     {
+          sprintf(log_buff,"in the result UPDATE ERROR ERROR_CODE : %d \n", sqlca.sqlcode);
+          WriteLog(log_buff);
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          return(FAIL);
+     }
+     else
+          return(SUCCESS);
+}
+
+/* ==============================================================================
+ Version  date(yy.mm.dd)  programmer  description                 relevant doc.no
+ 30.00    1999.01.05       민정숙     시간당통상임금계산로직변경  하나로재개발
+ ============================================================================= */
+/****************************************************************************
+   개인별 통상임금을 구하는 함수.
+ ***************************************************************************/
+double  get_tongpay(char *paycl)
+{
+     double baseamt = 0;
+   
+   /*infra   if (strlen(paycl) != 2) */
+     if  (strlen(paycl) != 3)
+          return(FAIL);
+   
+   /* infra  if ((strcmp(paycl,"10") >= 0) && (strcmp(paycl,"99") <= 0))  */
+     if ((strcmp(paycl,"C11") >= 0) && (strcmp(paycl,"D41") <= 0)) 
+     {
+          baseamt = ceil(totpay/18/226);  /*  통상임금변경 /23 -> /18 로 변경함 kth 2009.03.11 */
+          return(baseamt);
+     }
+     return(baseamt);
+}
+
+
+/****************************************************************************
+  trail_spaces function.
+ ****************************************************************************/
+void trail_spaces(char *dest)
+{
+     int len,i,flag;
+     
+     len = strlen(dest);
+     
+     i    = 0;
+     flag = 0;
+     while (i < len) 
+     {
+          if  (*(dest+i) == ' ') 
+          {
+               flag = 1;
+               break;
+          }
+          else
+               i++;
+     }
+     
+     if  (flag)
+          *(dest+i) = '\0';
+     else
+          *(dest+len) = '\0';
+}
+/****************************************************************************
+  calc_term function.
+ ****************************************************************************/
+double  calc_term(char *frdate,char *todate)
+{
+     EXEC SQL BEGIN DECLARE SECTION;
+          char  t1_date[9] = "";
+          char  t2_date[9] = "";
+          double  term;
+     EXEC SQL END   DECLARE SECTION;
+   
+     strncpy(t1_date,frdate,8);
+     strncpy(t2_date,todate,8);
+     EXEC SQL
+     SELECT  TO_DATE(:t2_date,'YYYYMMDD') - TO_DATE(:t1_date,'YYYYMMDD')
+       INTO  :term   
+       FROM  DUAL;
+   
+     if  (sqlca.sqlcode != 0)
+          return(FAIL);
+     else
+          return(term);
+}
+
+int Get_ConTerm(char *indate)
+{
+     int holicnt = 0;
+     int weekcnt = 0;
+     int daycnt  = 0;
+     
+     exec sql
+     select  count(holidate) holicnt
+       into  :holicnt
+       from  pkcholi
+      where  to_date(holidate,'YYYYMMDD') >= (TO_DATE(:indate,'YYYYMMDD')  +1)
+        and  to_date(holidate,'YYYYMMDD') <= (TO_DATE(:indate,'YYYYMMDD')  +3)
+        and  to_char(to_date(holidate,'yyyymmdd'),'d') not in ( '1', '7');
+     
+     
+     EXEC SQL
+     SELECT
+             DECODE( TO_CHAR( To_DATE(SUBSTR(:indate,1,6)||'01','YYYYMMDD'),'D'),'1',
+                            ( TO_CHAR( TO_DATE(substr(:indate,1,6),'YYYYMM') ,'d') - 1 ) +
+                              CEIL(TO_CHAR( TO_DATE(:indate,'YYYYMMDD') ,'dd') / 7     ) ,
+                     DECODE( FLOOR(TO_CHAR( To_DATE(:indate,'YYYYMMDD'),'D')/
+                                   TO_CHAR( To_DATE(SUBSTR(:indate,1,6)||'01','YYYYMMDD'),'D')
+                                   ) , 0,
+                                   CEIL(TO_CHAR( To_DATE(:indate,'YYYYMMDD'),'DD') / 7)+1 ,
+                                   CEIL(TO_CHAR( To_DATE(:indate,'YYYYMMDD'),'DD') / 7)
+                           )
+                   )WEEKCNT,
+             TO_CHAR( To_DATE(:indate,'YYYYMMDD'),'D') DAYCNT
+       INTO  :weekcnt ,: daycnt
+       FROM  DUAL;
+     
+     if ((((daycnt ==4) || (daycnt ==5) ) || (daycnt ==6) ) )
+     {
+          if  ((( weekcnt ==1) ||( weekcnt ==3 ) ) || ( weekcnt ==5 ) ) /* 휴토 */
+               holicnt = holicnt + 2;
+          else if  ( daycnt == 6  )
+               holicnt = holicnt + 1;   /*근무토 6*/
+          else
+               holicnt = holicnt + 0;   /*근무토 4,5*/
+     }
+     
+     if  (daycnt == 7 )              /*토요일이면 다음날은 꼭 일요일이므로 */
+          holicnt = holicnt + 1 ;
+     
+     holicnt = 3 + holicnt;
+     return ( holicnt) ;
+}
+
+void CreateLog()
+{
+     char  curdatetime[20+1]="";
+     char  *logdir;
+     logdir = hinsa_home();
+     /*printf("logdir : %s", logdir);*/
+     strcat(logdir,"/log/proc/pkg3075g/");        
+
+     EXEC SQL
+     SELECT TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS')
+       INTO   :curdatetime
+       FROM   DUAL;
+
+  /* 로그파일명을 세팅 */
+     sprintf(logfile_fullname, "%sovtm%.12s.log", logdir, curdatetime);
+     /* 로그파일 오픈 */
+     fp = fopen(logfile_fullname, "w+");
+     
+     if  (fp == NULL) 
+     {
+          printf("로그파일오픈(%s) 에러\n", logfile_fullname);
+          exit(1);
+     }
+     
+     sprintf(log_buff, "초과근무 cron program [pkg3075g] 을 실행합니다. \n ");
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+     
+     sprintf(log_buff, "실행시간 : %.14s \n ",curdatetime);
+     WriteLog(log_buff);
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+}
+
+
+void WriteLog(char *message)
+{
+     fprintf(fp, "%s", message);
+}
+
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);     
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

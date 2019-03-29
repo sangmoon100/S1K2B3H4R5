@@ -1,0 +1,1394 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : pkq4020g(퇴직충당금계산)
+ SYSTEM-NAME    : 급여   www.ei.go.kr 
+ SUBSYSTEM-NAME : 퇴직충당금
+ Programmer     : 이랑교
+ Version        : 1.00
+ Date           : 1999.02.25
+
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+   1.00       1999.02.25         이랑교          delphi => Pro*C
+   1.01       2000.03.28         유효성        연봉차수 변경관련
+   1.05       2001.03.13.        유효성        임원 연봉제에 따른 수정(기본급,직무수당 --> 월정연봉으로)   
+   3.00       2001.09.06         유효성        계산시점의 실제근속기준으로 정산
+                                                -->전반적 재구성 
+                                              당월중간정산자는 퇴충은 쌓지만 당월누계는 0으로한다. 
+   4.00      2002.06.21         유효성         임원 퇴직지급율 계산시 직위별 재임기간으로 
+                                               산정하게 제도 변경됨
+   4.01      2002.06.26         유효성         전(2002-2242) 재무관리팀 요청
+                                               -->직급='E0'(고문)은 퇴충대상에서 제외 
+             2003.07.03.    강륜종(Dsa2000)    퇴충계산의 시간단축을 위한 Sql Tunning
+             2003.09.03.    강륜종(Dsa2000)    Sql Tunning(Hint 추가)...  + index(B I2_PKHPHIS)                                               
+   Dsa2000   2004.02.04         강륜종         전산(2004-1280호)임원은 퇴충에서 제외(이사대우이상) 
+                                               - 2004년부터 급여가 하나로에서 안나가므로.
+   4.02      2004.02.24         강륜종         Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드.    
+   4.03      2004.04.21         강륜종         T_RETTBL 삭제후 HPER계정으로 PKRETTBL 재생성하여 사용토록 함.    
+   5.00      2004.11.           강륜종(dsa2000) Rexec대체 서비스를 위한 수정작업.  
+   5.01      2005.01.12         DSA2000        월차폐지 및 정보통신수당(ITAMT) 추가에 다른 수정.   
+   6.00      2006.01.02         dsa2000        PIMPMAS => PKMPMAS로 변경함.
+============================================================================= */
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+void   Ins_Record();
+void   CalcRzAmt();  /* 퇴직충당금계산   */
+void   CalcMonthamt();  /* 퇴직충당금분배액계산 */
+void   CalcAvgGross(char *frempno,char *toempno,char *frdate);/* 퇴직평균임금 계산   */
+void   CalcAvgGross_rest();
+void   CalcExdd();  /* 근속제외계산   */
+void   print_errmsg(int errcode, char *errmsg);
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+     char    curpaydate[6+1]       = ""; /* 최종급여월 = (평균임금산정시 기준)*/
+     char    baseempdate[8+1]      = ""; /* 입사기준일 = 계산기준월-1년*/
+     char    BASIC_YEARPAYNUM[6+1] = ""; /* 기준 연봉차수 */
+     double  avgodamt              = 0;  /* 평균자가운전 지원금 */
+     double  avgroleamt            = 0;  /* 평균직책수당 */
+     char    v_curpaydate[8+1]     = ""; /* */
+     char    jobempno[4+1];       /* 작업자*/
+     double  raiserate  = 0 ;      /* 임금인상반영시 비율로 인상   = ( 평균임금 * 999 / 100 )*/
+     double  raiseamt   = 0 ;      /* 임금인상반영시 금액으로 인상 = ( 평균임금 + 999999 )   */
+     int     cnt = 0 ; 
+EXEC SQL END   DECLARE SECTION;
+
+int     id;
+char    UserId[10+1];
+char    t_raiserate[5+1];  /*임금인상반영시 비율로 인상   = ( 평균임금 * 999 / 100 )  */
+char    t_raiseamt[12+1];  /*임금인상반영시 금액으로 인상 = ( 평균임금 + 999999 )     */
+char    tempmm[2+1] ="" ;
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char    log_rundate[16]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno = 0; 
+
+EXEC SQL INCLUDE sqlca;
+
+void main(int argc,char *argv[])
+{
+     char FL_file[255];
+     
+     if  (argc != 7) {   /* pkq4020g 201901 100 100000 D006 pkq2075g 2004110100000 */
+          printf("[Usage] : pkq4020g 1.최종급여지급월 2.임금인상비율 3.임금인상금액 4.작업자사번 5.프로그램ID 6.시작시간 \n");  
+          exit(1);
+     }   
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkq4020g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     memset(UserId,'\0',sizeof(UserId));
+     
+     sprintf(curpaydate ,"%s",argv[1]);  
+     sprintf(t_raiserate,"%s",argv[2]);
+     sprintf(t_raiseamt ,"%s",argv[3]);
+     sprintf(jobempno   ,"%s",argv[4]);
+     sprintf(UserId     ,"%s",argv[5]);
+     
+     /* Dsa2000  2004.02.24.  **********************************/
+     /* DB_connect(id,0); */
+     hinsa_log_print(0,"퇴직충당금 계산 시작...");            
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /*dsa2000  수정..End......................................*/
+     
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[4]);
+     strcpy(log_progid,   argv[5]);
+     strcpy(log_rundate,  argv[6]);  
+      
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+      
+     raiserate =  atof(t_raiserate);
+     raiseamt  =  atof(t_raiseamt);  /* 2003.06.02. PARKSH   t_raiserate를 t_raiseamt 수정  */
+     
+     EXEC SQL
+     SELECT to_char(last_day(add_months(to_date(:curpaydate, 'YYYYMM'),-12))+1 ,'YYYYMMDD')
+       into :baseempdate
+       from dual ;
+           
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"입사일 기준일 읽기 오류");
+          sprintf(log_buff, "입사일 기준일 읽기 오류");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+     
+     EXEC SQL
+     SELECT  AVGODAMT, AVGROLEAMT 
+       into  :avgodamt, :avgroleamt 
+       from  PKCPBAS ;
+           
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode," 평균자가운전지원금 기준읽기 오류");
+          sprintf(log_buff, " 평균자가운전지원금 기준읽기 오류");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }  
+      
+     Ins_Record();   /* 대상자 추출*/
+     CalcRzAmt();  /* 퇴직충당금계산 */
+     CalcMonthamt();  /* 퇴직충당금분배액계산 */
+     
+     /* Dsa2000  2004.02.27.  hinsa_exit()에서 DB Commit & DB접속종료함 .*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====\n");
+          Write_batlog(seqno++, log_buff);   
+          error_quit("ERROR ====== [작업 실패] =====\n");
+     }
+     else  
+     {
+          sprintf(log_buff, "OK ====== [ 작 업 성 공 ] =====\n");
+          Write_batlog(seqno++, log_buff); 
+          hinsa_exit(0,"OK ====== [ 작 업 성 공 ] =====\n");
+     }           
+}
+
+void Ins_Record()
+{
+     EXEC SQL  
+     INSERT INTO PKMRZMAS 
+         (EMPNO) 
+          (  SELECT b.EMPNO 
+               FROM PKMPMAS b  /* 2006.01.02  PIMPMAS => PKMPMAS로 변경함.*/
+               WHERE SUBSTR(b.EMPNO,1,1) <> 'Y' 
+               AND   (b.ORGEMPDATE <= :baseempdate
+                OR    NVL(b.GROUPEMPDATE,'99999999') <= :baseempdate)  /* 2010.01.04 kth 네트웍 입사자 처러 */
+               AND   b.EMPNO not like 'M%'  /*DSA2000   2004.02.04. 임원은 퇴충계산에서 제외(이사대우 까지) 재무팀 요청*/
+             MINUS   /*이미 퇴직충당금테이블에 등록되어 있는 사원은 제외*/
+             SELECT c.EMPNO 
+               FROM PKMRZMAS c 
+          ) ;
+      
+      if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+      {  
+           print_errmsg(sqlca.sqlcode," 대상자 추출 오류");
+           sprintf(log_buff, " 대상자 추출 오류");
+           Write_batlog(seqno++, log_buff); 
+           error_quit("작업실패...");
+      }    
+       
+      EXEC SQL
+      UPDATE PKMRZMAS a 
+         SET (KORNAME, PAYCL, PAYGR, PAYRA, PSTATE, 
+              ORGNUM, DEPTCODE, SEX, EMPDATE, RETDATE ) 
+           = (SELECT KORNAME, PAYCL, PAYGR, PAYRA, PSTATE, 
+                     ORGNUM, DEPTCODE, SEX, 
+                     CASE WHEN (EMPNO >= '2358' AND EMPNO <=  '2499') THEN GROUPEMPDATE /* 2010.01.04 kth 네트웍 입사자 처러 */
+                     ELSE ORGEMPDATE                                                   
+                     END  ORGEMPDATE,                                               
+                     RETDATE
+                FROM PKMPMAS b /* 2006.01.02  PIMPMAS => PKMPMAS로 변경함.*/
+               WHERE b.EMPNO = a.EMPNO ) 
+      WHERE a.EMPNO IN (SELECT EMPNO FROM PKMPMAS) ;
+      
+      if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+      {  
+           print_errmsg(sqlca.sqlcode," 대상자 UPDATE 오류");
+           sprintf(log_buff, " 대상자 UPDATE 오류");
+           Write_batlog(seqno++, log_buff); 
+           error_quit("작업실패...");
+      }  
+          
+      EXEC SQL
+      UPDATE PKMRZMAS A 
+         SET A.DIVCODE = (SELECT B.BONCODE 
+                            FROM PYCDEPT B 
+                           WHERE A.ORGNUM   = B.ORGNUM
+                             and A.DEPTCODE = B.DEPTCODE ),
+             A.CALCDATE = to_char(last_day(to_date(:curpaydate,'YYYYMM')), 'YYYYMMDD')                             
+       WHERE PSTATE  < '80' 
+         AND EMPDATE <= :baseempdate 
+         AND PAYCL   <>'H51'  /*infra         AND PAYCL   <>'E0' */
+         AND EMPNO not like 'M%';
+      
+      if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+      {  
+           print_errmsg(sqlca.sqlcode," DIVCODE UPDATE 오류");
+           sprintf(log_buff, " DIVCODE UPDATE 오류");
+           Write_batlog(seqno++, log_buff); 
+           error_quit("작업실패...");
+      }  
+      
+      /*EXEC SQL  DSA2000 위 쿼리에 병합.   2006.12.
+      UPDATE PKMRZMAS 
+         SET CALCDATE = to_char(last_day(to_date(:curpaydate,'YYYYMM')), 'YYYYMMDD')
+       WHERE PSTATE  < '80' 
+         AND EMPDATE <= :baseempdate                                                
+         AND PAYCL <>'E0'     -->직급='E0'(고문)은 퇴충대상에서제외 
+         AND EMPNO not like 'M%';  DSA2000   2004.02.04. 임원은 퇴충계산에서 제외(이사대우 까지) 재무팀 요청
+       
+      if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+      {  
+       print_errmsg(sqlca.sqlcode," CALCDATE UPDATE 오류");
+       sprintf(log_buff, " CALCDATE UPDATE 오류");
+                 Write_batlog(seqno++, log_buff);
+       error_quit("작업실패...");
+      }            */ 
+       
+/*1월이면 신년도 clear*/     
+     sprintf(tempmm, "%s", curpaydate+4) ;   
+     if  (strcmp(tempmm, "01") == 0)  
+     {
+          printf("\n 신년도 CLEAR ");
+          EXEC SQL         
+          UPDATE PKMRZMAS A 
+             SET (BYEARTOT, BMONTOT, CMONTOT, CYEARTOT, RETAMT)
+               = (SELECT nvl(CMONTOT,0), nvl(CMONTOT,0), 0, 0, 0 
+                    FROM PKHRZHIS B 
+                   WHERE A.EMPNO = B.EMPNO 
+                     AND B.CALCDATE LIKE TO_CHAR(ADD_MONTHS(TO_DATE(:curpaydate,'YYYYMM') ,-12),'YYYY')||'12%' )
+           WHERE A.PSTATE < '80'
+             AND EMPDATE  <= :baseempdate
+             AND A.PAYCL  <> 'H51'    /*infra          AND A.PAYCL  <> 'E0'   */
+             AND EMPNO not like 'M%'  /*DSA2000   2004.02.04. 임원은 퇴충계산에서 제외(이사대우 까지) 재무팀 요청*/
+             AND EXISTS (SELECT 1 FROM PKHRZHIS C 
+                         WHERE C.EMPNO = A.EMPNO 
+                           AND C.CALCDATE LIKE TO_CHAR(ADD_MONTHS(TO_DATE(:curpaydate,'YYYYMM') ,-12),'YYYY')||'12%') ; 
+                          
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {  
+               print_errmsg(sqlca.sqlcode," 신년도 CLEAR 1 오류");
+               sprintf(log_buff, " 신년도 CLEAR 1 오류");
+               Write_batlog(seqno++, log_buff);
+               error_quit("작업실패...");
+          }                                                   
+            
+            /* Dsa2000 추가  12월에 중간정산자는 전년도 누계액을 0으로 Setting 2006.02.*/
+          EXEC SQL         
+          UPDATE PKMRZMAS A 
+             SET BYEARTOT = 0
+           WHERE A.PSTATE <  '80'
+             AND EMPDATE  <= :baseempdate
+             AND A.PAYCL  <> 'H51'   /*infra          AND A.PAYCL  <> 'E0'*/
+             AND EMPNO in (SELECT empno FROM pkhmrhis 
+                            WHERE mrtodate like TO_CHAR(ADD_MONTHS(TO_DATE(:curpaydate,'YYYYMM') ,-12),'YYYY')||'12%');
+          
+          if  ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {  
+                print_errmsg(sqlca.sqlcode," 신년도 CLEAR 2 오류");
+                sprintf(log_buff, " 신년도 CLEAR 2 오류");
+                Write_batlog(seqno++, log_buff);
+                error_quit("작업실패...");
+          }                           
+     } 
+
+}  
+
+/* ========================================================
+  퇴직충당금계산
+======================================================== */
+void  CalcRzAmt()
+{
+     EXEC SQL
+     SELECT YEARPAYNUM 
+       into :BASIC_YEARPAYNUM
+       from PKCPBAS ;
+           
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode," 연봉차수 기준읽기 오류");
+          sprintf(log_buff," 연봉차수 기준읽기 오류");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+  
+  
+/* ========================================================
+ 1.1 대상자 추출 : 입사기준일 이전 입사자 중  재직자
+======================================================== */
+     printf("\n 1.1 대상자 추출 : 입사기준일 이전 입사자 중  재직자 ");
+     
+     EXEC SQL
+     DELETE FROM PKRETTBL;  /* DSA2000   2004.04.21.  DELETE FROM T_RETTBL; */
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"1. 대상자 추출1  ERROR");
+          sprintf(log_buff,"1. 대상자 추출  ERROR");
+          Write_batlog(seqno++, log_buff);    
+          error_quit("작업실패...");
+     }
+     
+     
+     EXEC SQL
+     INSERT  INTO PKRETTBL 
+             (EMPNO, ORGEMPDATE, EMPDATE, PAYCL, PAYGR1, PAYGR2)  /* DSA2000   2004.04.21. T_RETTBL => PKRETTBL */
+     SELECT  EMPNO, 
+             CASE WHEN (EMPNO >= '2358' AND EMPNO <=  '2499') THEN GROUPEMPDATE    /* 2010.01.04 kth 네트웍 입사자 처러 */
+             ELSE ORGEMPDATE                                                   
+             END  ORGEMPDATE, 
+             case WHEN (EMPNO >= '2358' AND EMPNO <=  '2499') THEN GROUPEMPDATE    /* 2010.01.04 kth 네트웍 입사자 처러 */
+             ELSE ORGEMPDATE                                                   
+             END  ORGEMPDATE,               
+             PAYCL, PAYGR , PAYGR 
+       FROM  PKMPMAS               /* 2006.01.02  PIMPMAS => PKMPMAS로 변경함.*/
+      WHERE  (ORGEMPDATE <= :baseempdate
+         OR   NVL(GROUPEMPDATE,'99999999') <= :baseempdate)                       /* 2010.01.04 kth 네트웍 입사자 처러 */
+        AND  SUBSTR(EMPNO,1,1) <> 'Y' 
+        AND  PSTATE < '80'
+        AND  PAYCL  <>'H51'         /*infra          AND A.PAYCL  <> 'E0' 유효성  2002.06.26  직급='E0'(고문)은 퇴충대상에서제외 */ 
+        AND  EMPNO not like 'M%';  /*DSA2000 2004.02.04. 임원은 퇴충계산에서 제외(이사대우 까지) 재무팀 요청*/
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"1. 대상자 추출  ERROR");
+          sprintf(log_buff,"1. 대상자 추출2  ERROR");
+          Write_batlog(seqno++, log_buff);    
+          error_quit("작업실패...");
+     }
+
+/* ========================================================
+   1.2 중간정산 반영
+ ======================================================== */
+     printf("\n 1.2 중간정산 반영");
+     EXEC SQL
+     UPDATE PKRETTBL  A   /* DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL */
+        SET (EMPDATE )  = (
+                           SELECT TO_CHAR(TO_DATE(MAX(MRTODATE),'YYYYMMDD')+1 , 'YYYYMMDD' )
+                             FROM PKHMRHIS B
+                           WHERE A.EMPNO = B.EMPNO
+                             AND B.MRTODATE < :curpaydate
+                           GROUP BY B.EMPNO ) 
+      WHERE EMPNO IN (SELECT DISTINCT EMPNO FROM PKHMRHIS 
+                       WHERE MRTODATE < :curpaydate );
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"2. 중간정산 반영");  
+          sprintf(log_buff,"2. 중간정산 반영");
+          Write_batlog(seqno++, log_buff);   
+          error_quit("작업실패...");
+     }
+
+
+
+     /* 퇴직기산일 특이자 update 추가 Start [2018-09-13 이상용] */
+     EXEC SQL
+     UPDATE PKRETTBL S SET
+            EMPDATE = (SELECT RETCALCDATE FROM PKZRTSPC T WHERE S.EMPNO = T.EMPNO )
+      WHERE EMPNO IN (SELECT EMPNO FROM PKZRTSPC );
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          print_errmsg(sqlca.sqlcode,"퇴직기산일 특이자  setting Error ");  
+          sprintf(log_buff, "퇴직기산일 특이자 setting Error ");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+     /* 퇴직기산일 특이자 update 추가 End [2018-09-13 이상용] */
+
+
+
+/* ========================================================
+   1.3 퇴직 직급반영 : 일반사원 : 10 &&  임원이사대우: 직급그대로        
+   2009.03.27 kth 단수제로 변경 retcl 을 사용 하지 않음.
+ ======================================================== */
+        /*printf("\n 1.3 퇴직 직급반영 : 일반사원 : 10 &&  임원이사대우: 직급그대로 ");
+  EXEC SQL
+  UPDATE   PKRETTBL   DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL 
+  SET   RETCL = '10'
+  WHERE   RETCL < '00' OR RETCL > '09' ;
+
+  if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+  {  
+   print_errmsg(sqlca.sqlcode,"3. 퇴직 직급반영");
+   sprintf(log_buff,"3. 퇴직 직급반영");
+             Write_batlog(seqno++, log_buff); 
+   error_quit("작업실패...");  
+  }*/
+
+
+/* ========================================================
+   1.4 임원 평균임금 산정
+ ======================================================== */
+     printf("\n 1.4 임원 평균임금 산정 ");
+     EXEC SQL
+     UPDATE PKRETTBL P
+        SET (PAY3SUM, BON12SUM, CALMM) =
+          /*(SELECT nvl(sum((ceil((nvl(fixpay,0)+nvl(bfixpay,0)+nvl(sopay,0) )*18/12)) +  */
+            (SELECT nvl(sum((ceil((nvl(fixpay,0)+nvl(bfixpay,0)+nvl(sopay,0) ))) +    /*2014.11.14 하은영 통상임금 규정변경으로 인한 시스템 적용 (18 -> 12, 통상임금, 통상임금수당도 포함) */
+                             least(nvl(roleamt,0), :avgroleamt) +
+                             nvl(mateamt,0)+nvl(partamt,0)+nvl(childamt,0)+
+                             nvl(ovtmamt,0)+nvl(sptmamt,0)+nvl(mcaramt,0)+
+                             nvl(liceamt,0)+nvl(mbonamt,0)+nvl(sobon,0)+  
+                             decode(nvl(odamt,0),0,0,:avgodamt)  
+                            ),0),  
+                    0, 
+                    COUNT(EMPNO)
+               FROM PKHPHIS R
+              WHERE P.EMPNO = R.EMPNO
+                AND SUBSTR(R.PAYDATE,1,6)>=TO_CHAR(ADD_MONTHS(TO_DATE(:curpaydate,'YYYYMM'),-2),'YYYYMM')
+                AND SUBSTR(R.PAYDATE,1,6)<=:curpaydate)
+      where paycl <= 'A99'        /*infra        where paycl <= '09'*/
+        AND EMPNO like 'M%';/*DSA2000   2004.02.04. 임원은 퇴충계산에서 제외(이사대우 까지) 재무팀 요청*/
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"4. 임원 평균임금 산정 ");
+          sprintf(log_buff,"4. 임원 평균임금 산정 ");
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...");
+     }
+        
+     /*임원평균임금=(기본연봉+업적연봉+중식비연간총액)/12 */
+     EXEC SQL
+     UPDATE  PKRETTBL a
+        SET  AVGPAYBON =  (select ceil((nvl(totpay,0) + avgmcaramt)/12)  
+                             from pkhyphis  b, pkcpbas c
+                            where a.empno = b.empno
+                              and b.yearpaynum(+) = :BASIC_YEARPAYNUM)
+      where  paycl <= 'A99'  /*infra        where paycl <= '09'*/
+        AND  EMPNO like 'M%';  /*DSA2000   2004.02.04. 임원은 퇴충계산에서 제외(이사대우 까지) 재무팀 요청*/
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"1.6.1 임원 통상 임금과 평균임금");
+          sprintf(log_buff,"1.6.1 임원 통상 임금과 평균임금");
+          Write_batlog(seqno++, log_buff);
+          error_quit("작업실패...");
+     }
+
+/* ========================================================
+   1.5 임원제외 평균임금 산정  
+ ======================================================== */
+     printf("\n 1.5 임원제외 평균임금 산정 ");
+     CalcAvgGross("0000","zzzz",curpaydate);
+
+/* ========================================================
+   1.  휴직자
+ ======================================================== */
+     printf("\n 1.5.2 휴직자 평균임금 산정 ");
+     CalcAvgGross_rest();
+
+/* ========================================================
+   1.6 통상 임금
+ ======================================================== */
+     printf("\n 1.6 통상 임금 ");
+  
+     EXEC SQL
+     UPDATE  PKRETTBL  A   /* DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL */
+        SET  COMMONAMT =
+/*          (SELECT NVL(NVL(B.TOTPAY,0),P.FIXPAY * 18 ) /18   통상임금변경 /23 -> /18 로 변경함 kth 2009.03.11 */
+            (SELECT NVL(CEIL((B.TOTPAY + B.TONGAMT1 + B.TONGAMT2 + B.TONGAMT3) /12), P.FIXPAY)   /*  2014.11.14 하은영 통상임금 규정변경으로 인한 시스템 적용 (18 -> 12, 통상임금, 통상임금수당도 포함) */
+               FROM PKMPMAS P, PKHYPHIS B
+              WHERE A.EMPNO = B.EMPNO(+)
+                AND B.YEARPAYNUM (+) = :BASIC_YEARPAYNUM 
+                AND A.EMPNO = P.EMPNO
+             ) ;
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"1.6.2 통상 임금");
+          sprintf(log_buff,"1.6.2 통상 임금");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+     
+     EXEC SQL
+     UPDATE  PKRETTBL    /* DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL */
+        SET  AVGPAYBON = Greatest(nvl(AVGPAYBON,0),nvl(commonamt,0)) ;        
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"1.6.1 통상 임금과 평균임금");
+          sprintf(log_buff,"1.6.1 통상 임금과 평균임금");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+     
+/* ========================================================
+   1.7 임금인상율/액 적용
+ ======================================================== */
+     printf("\n 1.7 임금인상율/액 적용 ");
+     EXEC SQL
+     UPDATE  PKRETTBL     /* DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL */
+        SET  AVGPAYBON = Ceil(AVGPAYBON * (1 + :raiserate / 100 )) + :raiseamt;
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"1.7 임금인상율/액 적용 ");
+          sprintf(log_buff,"1.7 임금인상율/액 적용 ");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+     
+/* ==========================================================================
+  1.8 근속일수 계산
+ ========================================================================== */
+     printf("\n 1.8.1 근속일수 계산 : 실제 근속기준으로 ");
+
+     EXEC SQL
+     SELECT   to_char(last_day(to_date(:curpaydate, 'yyyymm')),'yyyymmdd')
+       INTO   :v_curpaydate
+       FROM   DUAL;
+
+     printf("\n 근속기준일 : [%s]",v_curpaydate);
+
+     EXEC SQL
+     UPDATE PKRETTBL     /* DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL */
+        SET DUTYMM = CEIL(MONTHS_BETWEEN(TO_DATE(:v_curpaydate,'YYYYMMDD') + 1 ,
+                                         TO_DATE(EMPDATE,'YYYYMMDD')
+                                        )
+                        );
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"8. 근속일수 계산 ");
+          sprintf(log_buff,"8. 근속일수 계산 ");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+
+     printf("\n 1.8.2 근속제외일수 계산 ");
+     CalcExdd();
+
+/* ==========================================================================
+  1.9 실근속일수계산
+ ========================================================================== */
+     printf("\n 1.9 실근속일수 계산 ");
+     EXEC SQL
+     UPDATE PKRETTBL     /* DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL */
+        SET REALMM = DUTYMM - NVL(EXTMM,0);
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"9.실근속일수계산");
+          sprintf(log_buff,"9.실근속일수계산");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+
+/* ==========================================================================
+  1.10 지급율계산
+ ========================================================================== */
+     printf("\n 1.10 지급율계산");
+     EXEC SQL
+     UPDATE PKRETTBL P    /* DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL */
+     SET RETRATE =  ROUND(P.REALMM/12,2);                         /* 누진제에서 단수제로 전환작업 RETRATE ->  ROUND(REALMM/12,2) kth 2009.03.17*/
+     
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"10.지급율계산");
+          sprintf(log_buff,"10.지급율계산");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+  
+  
+/* =================================================================================
+   Version    date(yy.mm.dd)     programmer      description     relevant doc.no
+    4.00      2002.06.21         유효성        임원 퇴직지급율 계산시 직위별 재임기간으로 
+                                               산정하게 제도 변경됨
+    5.00      2004.04.09.        강륜종        임원 퇴직금 계산 안하므로 삭제                                                
+==================================================================================== */     
+     /* dsa2000  2004.04.09. 임원 퇴직금 계산 안하므로 삭제 
+     EXEC SQL
+     SELECT COUNT(*)
+     INTO  :cnt
+     FROM PKHRTDIR
+     WHERE CALCDATE = to_char(last_day(to_date(:curpaydate,'YYYYMM')), 'YYYYMMDD') ;
+        
+     if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode," 임원퇴직금 계산여부 읽기 오류");
+          sprintf(log_buff," 임원퇴직금 계산여부 읽기 오류");
+                Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+     
+     if (cnt == 0) 
+     {
+         print_errmsg(sqlca.sqlcode,"임원 퇴직 지급율 계산 내역 없음");
+         error_quit("작업실패...");  
+     }
+
+     EXEC SQL
+     UPDATE PKRETTBL A    
+        SET RETRATE = (SELECT NVL(SUM(NVL(B.CLRETRATE,0)),0) 
+                         FROM PKHRTDIR B       
+                        WHERE A.EMPNO = B.EMPNO
+                          AND B.CALCDATE = to_char(last_day(to_date(:curpaydate,'YYYYMM')), 'YYYYMMDD')
+                        GROUP BY B.EMPNO)
+      WHERE EMPNO IN (SELECT EMPNO 
+                        FROM PKHRTDIR
+                       WHERE CALCDATE = to_char(last_day(to_date(:curpaydate,'YYYYMM')), 'YYYYMMDD')
+          GROUP BY EMPNO) ;
+
+    if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+       {  print_errmsg(sqlca.sqlcode,"11.퇴직금계산_임원지급율");
+        sprintf(log_buff,"11.퇴직금계산_임원지급율");
+               Write_batlog(seqno++, log_buff);
+        error_quit("작업실패...");
+       }  */
+/**Ver 4.00 추가 END**/
+
+  
+
+/* ==========================================================================
+  1.11 퇴직금 계산 
+ ========================================================================== */
+     printf("\n 1.11.퇴직금 계산 ");
+     EXEC SQL
+     UPDATE PKRETTBL    /* DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL */
+     SET RETAMT = CEIL(RETRATE * nvl(AVGPAYBON,0)) ;  
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"11.퇴직금계산");
+          sprintf(log_buff,"11.퇴직금계산");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+     
+
+/* ==========================================================================
+  1.13 퇴직충당금 TABLE에 INSERT
+ ========================================================================== */
+
+     printf("\n 1.13 퇴직충당금 TABLE에 INSERT");
+     
+     EXEC SQL
+     UPDATE PKMRZMAS P
+        SET        (RETRATE ,PAY3SUM,  BON12SUM,  AVGGROSS   ,
+                    CYEARTOT,EMPDATE,  REALMM,    EXTYY,EXTMM,
+                    TOTMM,TOTYY,TOTDD,
+                    PAYCL) =
+            (SELECT R.RETRATE, R.PAY3SUM, R.BON12SUM, R.AVGPAYBON,
+                    R.RETAMT, EMPDATE, R.REALMM, FLOOR(EXTMM/12), 
+                    EXTMM-FLOOR(EXTMM/12) *12,
+                    REALMM - FLOOR(REALMM/12)*12,FLOOR(REALMM/12),
+                    LAST_DAY(TO_DATE(:curpaydate,'YYYYMM')) + 1 - TO_DATE(EMPDATE,'YYYYMMDD'),
+                    PAYCL
+               FROM PKRETTBL R    /* DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL */
+              WHERE P.EMPNO=R.EMPNO)
+     WHERE EMPNO IN (SELECT EMPNO FROM PKRETTBL);
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     { 
+          print_errmsg(sqlca.sqlcode,"13.퇴직충당금 TABLE에 INSERT");
+          sprintf(log_buff,"13.퇴직충당금 TABLE에 INSERT");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+}
+
+/* ==========================================================================
+  퇴직충당금 분배액 계산
+ ========================================================================== */
+void CalcMonthamt()
+{	
+/* ==========================================================================
+  2.1 기본값 SETTING
+ ========================================================================== */
+     printf("\n 2.1 기본값 SETTING");
+     EXEC SQL
+     UPDATE  PKMRZMAS                 
+     SET   CALCYN  = 'N',         
+      RETAMT  =  0 ,             
+      CMONTOT = NVL(BMONTOT,0) ;
+   
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    print_errmsg(sqlca.sqlcode,"2.1 기본값 SETTING");
+          sprintf(log_buff,"2.1 기본값 SETTING");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+   
+/* ==========================================================================
+  2.2 급여지급자 설정
+========================================================================== */
+     printf("\n 2.2 급여지급자 설정");
+     EXEC SQL
+     UPDATE PKMRZMAS A                        
+        SET A.BMONTOT = 0,                    
+            A.CALCYN  = 'Y'
+      WHERE A.EMPNO IN (SELECT  B.EMPNO         
+                          FROM  PKMPMAS B  /* 2006.01.02  PIMPMAS => PKMPMAS로 변경함.*/
+                         WHERE  PSTATE <'80'
+                           AND  RETDATE IS NULL 
+                           AND  (ORGEMPDATE <= :baseempdate 
+                            OR    NVL(b.GROUPEMPDATE,'99999999') <= :baseempdate)     /* 2010.01.04 kth 네트웍 입사자 처러 */
+                           AND  PAYCL <>'H51'  /*//infra                              AND PAYCL <>'E0' */
+                           AND  EMPNO not like 'M%');  /*DSA2000   2004.02.04. 임원은 퇴충계산에서 제외(이사대우 까지) 재무팀 요청*/
+   
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"2.2 급여지급자 설정");
+          sprintf(log_buff,"2.2 급여지급자 설정");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+   
+/* ==========================================================================
+  2.3 전월누계설정(당해년도)
+ ========================================================================== */
+      printf("\n 2.3 전월누계설정(당해년도)");
+      /* 2001-10-11 유효성 :  중간정산월 이후 퇴직금만 누계시킨다.*/
+      EXEC SQL
+      UPDATE PKMRZMAS A1                                    
+         SET BMONTOT = (SELECT SUM(NVL(A2.RETAMT,0))        
+                          FROM PKHRZHIS A2 , PKMPMAS B      
+                         WHERE A2.EMPNO = A1.EMPNO
+                           AND A2.EMPNO = B.EMPNO
+                           AND NVL(B.MRTODATE,'0' ) < A2.CALCDATE 
+                           AND A2.CALCDATE >= SUBSTR(:curpaydate,1,4) 
+                           AND A2.CALCDATE <  :curpaydate
+                         GROUP BY A2.EMPNO )               
+       WHERE A1.CALCYN = 'Y'
+         AND A1.EMPNO IN (SELECT A3.EMPNO                   
+                            FROM PKHRZHIS A3 , PKMPMAS B     
+                           WHERE A3.EMPNO = B.EMPNO   
+                             AND NVL(B.MRTODATE,'0') < A3.CALCDATE
+                             AND (A3.CALCDATE >= SUBSTR(:curpaydate,1,4) 
+                             AND  A3.CALCDATE <  :curpaydate)    
+                           GROUP BY A3.EMPNO ) ;
+   
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    print_errmsg(sqlca.sqlcode,"2.3 전월누계설정");
+          sprintf(log_buff,"2.3 전월누계설정");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+     
+   /*2001-10-11 유효성 추가
+   **당월중간정산자 전월누계설정 
+   */
+     EXEC SQL 
+     UPDATE PKMRZMAS A1                                    
+        SET BMONTOT = (SELECT SUM(NVL(A2.RETAMT,0))        
+                         FROM PKHRZHIS A2 
+                        WHERE (A2.EMPNO = A1.EMPNO)  AND                               
+                              (A2.CALCDATE >= SUBSTR(:curpaydate,1,4) AND  
+                               A2.CALCDATE <  :curpaydate )     
+                        GROUP BY A2.EMPNO )               
+     WHERE (A1.CALCYN = 'Y') AND                         
+           (A1.EMPNO IN (SELECT empno
+                           from pkhmrhis
+                          where mrtodate = a1.calcdate))  ;
+         
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"2.3 전월누계설정");
+          sprintf(log_buff,"2.3 전월누계설정");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }                        
+/******2001-10-11******/
+
+/* ==========================================================================
+  2.4 당해년도에 중간정산을 받은 경우는 전년 누계를 0으로 setting
+ ========================================================================== */
+     printf("\n 2.4 당해년도에 중간정산을 받은 경우는 전년 누계를 0으로 setting");
+      
+     EXEC SQL
+     UPDATE PKMRZMAS
+        SET BYEARTOT = 0
+      WHERE EMPNO in (SELECT EMPNO FROM PKHMRHIS
+                       WHERE MRTODATE LIKE SUBSTR(:curpaydate,1,4)||'%'
+                         AND MRTODATE < :curpaydate )
+        AND CALCYN ='Y';
+   
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"2.4 당해년도에 중간정산을 받은경우는 전년 누계를 0으로 setting ");
+          sprintf(log_buff,"2.4 당해년도에 중간정산을 받은경우는 전년 누계를 0으로 setting ");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+   
+/* ==========================================================================
+  2.5 전월누계
+ ========================================================================== */
+     printf("\n 2.5 전월누계");
+     EXEC SQL
+     UPDATE PKMRZMAS
+        SET BMONTOT = NVL(BMONTOT,0) + NVL(BYEARTOT,0)
+      WHERE CALCYN = 'Y';
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"2.5 전월누계");
+          sprintf(log_buff, "2.5 전월누계");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+
+/* ==========================================================================
+  2.5.1 잔여액  설정
+ ========================================================================== */
+     EXEC SQL
+     UPDATE PKMRZMAS
+        SET MONTHAMT  = NVL(CYEARTOT,0) - NVL(BMONTOT,0)
+      WHERE CALCYN = 'Y';
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"2.5.1 잔여액  설정");
+          sprintf(log_buff, "2.5.1 잔여액  설정");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }  
+
+
+/* ==========================================================================
+  2.6 당월추계액,당년추계액 계산
+ ========================================================================== */
+     printf("\n 2.6 당월추계액,당년추계액 계산\n");
+     
+     EXEC   SQL
+     UPDATE PKMRZMAS A
+        SET CALCDATE  = TO_CHAR(LAST_DAY(TO_DATE(:curpaydate,'YYYYMM')),'YYYYMMDD'),
+            RETAMT    = NVL(MONTHAMT,0),      /*당월충당금*/
+            CMONTOT   = NVL(BMONTOT,0) + NVL(MONTHAMT,0),   /*당월충당금누계*/
+            WRITETIME = TO_CHAR(SYSDATE,'YYYYMMDDHH24MISSD'),
+            WRITEMAN  = :jobempno
+      WHERE CALCYN = 'Y' ;
+   /*AND   EMPNO NOT IN ( SELECT EMPNO FROM PKHMRHIS  B       당월 중간정산자는 충당안함 
+                           WHERE A.CALCDATE = B.MRTODATE
+                             AND MRTODATE   = TO_CHAR(LAST_DAY(TO_DATE(:curpaydate,'YYYYMM')),'YYYYMMDD')
+     ); */
+
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"2.6.1 당월추계액,당년추계액 계산__정산할경우");
+          sprintf(log_buff, "2.6.1 당월추계액,당년추계액 계산__정산할경우");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+
+/* 2001-10-10 유효성 추가*/
+/* ==========================================================================
+  2.7 당월중간정산자는 당월누계를 0으로
+ ========================================================================== */
+     printf("\n 2.7 당월중간정산자는 당월누계를 0으로\n");
+  
+     EXEC   SQL
+     UPDATE PKMRZMAS A
+        SET CMONTOT   = 0 ,
+            CYEARTOT  = 0 
+      WHERE CALCYN = 'Y' 
+        AND EMPNO IN ( SELECT  EMPNO FROM PKHMRHIS  B       
+                        WHERE  A.CALCDATE = B.MRTODATE
+                          AND  MRTODATE   = TO_CHAR(LAST_DAY(TO_DATE(:curpaydate,'YYYYMM')),'YYYYMMDD')
+                     ); 
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  
+          print_errmsg(sqlca.sqlcode,"2.7  당월중간정산자는 당월누계를 0으로");
+          sprintf(log_buff, "2.7  당월중간정산자는 당월누계를 0으로");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }  
+}
+/* ======================================================= */
+
+/* =======================================================
+  퇴직 평균임금 계산
+ ======================================================= */
+void CalcAvgGross(char *frempno,char *toempno,char *frdate)
+{
+     char argfrempno[4+1]="" ;
+     char argtoempno[4+1]="" ;
+     char argpaydate[6+1]="" ;
+     char t_workyy[4+1] = "";   /* 과도기 구간(2017~2018년) 연차수당 기준년도*/   
+     
+     /*--------------------------------------------------------------------------------------------------------*/     
+     /* PKCAFLD(통상평균임금항목관리) 테이블적용을 위한 Sql문을 저장하는 변수선언 및 Clear [2018-09-13 이상용] */
+     /*--------------------------------------------------------------------------------------------------------*/     
+     char   sqlstr[1024];
+     char   tmpstr[256];
+     char   sqlstr1[1024];
+     char   tmpstr1[256];
+     char   sumstr1[128];
+     char   sumstr2[128];
+     
+     memset(sqlstr,'\0',sizeof(sqlstr));
+     memset(tmpstr,'\0',sizeof(tmpstr));   
+     memset(sumstr1,'\0',sizeof(sumstr1));   
+     memset(sumstr2,'\0',sizeof(sumstr2));   
+     memset(sqlstr1,'\0',sizeof(sqlstr1));
+     memset(tmpstr1,'\0',sizeof(tmpstr1));   
+
+
+     /*--------------------------------------------------------------------------------------------------------*/     
+
+/* ================================================ *
+  급여/제수당 * 3개월분   정규직(일반직 사원 연봉이 1/18 에서 1/12로 변경됨.2008.11.22)
+* ================================================ */
+     sprintf(argfrempno,"%s",frempno);
+     sprintf(argtoempno,"%s",toempno);
+     sprintf(argpaydate,"%s",frdate);
+        
+/*  2003.07.07. 강륜종(Dsa2000) Sql Tunning(Hint 추가)...+ index(B I2_PKHPHIS)    */
+
+    if (strcmp(argpaydate,"201804") <= 0)
+    {
+       EXEC SQL
+       UPDATE  PKRETTBL  a
+          SET  (PAY3SUM,CALMM) =
+               (SELECT /*+ index(B I2_PKHPHIS) */
+                     /*  NVL(SUM(CEIL((NVL(fixpay,0)+NVL(bfixpay,0)+NVL(sopay,0))*18/12)     */
+                         NVL(SUM(case when paydate <= '201412' then CEIL((NVL(FIXPAY,0)+NVL(SOPAY,0))*18/12) else NVL(FIXPAY,0)+NVL(SOPAY,0) end   /* 2014.11.05 하은영 통상임금 규정변경으로 인한 시스템 적용 (18 -> 12, 통상임금, 통상임금수당도 포함)   */
+                         + LEAST(NVL(roleamt,0), :avgroleamt) /* 2018.03.14 eyha 100000 -> 기준값으로 */  /*2001.11.1 직책수당은 평균직책수당 값 반영  nvl(roleamt,0)+*/  
+                         + NVL(mateamt,0)    + NVL(partamt,0)
+                         + NVL(childamt,0)   + NVL(ovtmamt,0)
+                         + NVL(sptmamt,0)    + NVL(mcaramt,0)
+                         + NVL(liceamt,0)    + NVL(mbonamt,0)
+                         + NVL(sobon,0)      /*2000.9.28. 급여소급에따른 sobon 추가*/
+                         + DECODE(NVL(odamt,0),0,0,:avgodamt) /* 2018.03.14 eyha 150000 -> 기준값으로 */
+                         + nvl(itamt,0)      /*dsa2000  2005.01. 정보통신수당 추가.*/
+                         ), 0)
+                         , COUNT(*)
+                  FROM  pkhphis b
+                 WHERE  a.empno = b.empno
+                   AND  paydate BETWEEN TO_CHAR(ADD_MONTHS(TO_DATE(:argpaydate,'yyyymm'),-2),'yyyymm') AND :argpaydate
+                  )
+        WHERE  empno between :argfrempno and :argtoempno
+          AND  paycl >= 'C11'   /*/infra         AND  paycl > '09' */
+          AND  empno not like 'Q%' 
+          AND  empno not like 'P%' 
+          AND  PAYCL <> 'H10';        /*DSA2000  2017.01.05. J사번체계 변경에 따른 수정작업 empno not like 'J%' => PAYCL <> 'H10' */
+          /*AND  empno not like 'J%'  kth 일반직 사원 연봉이 1/18 에서 1/12로 변경됨.2008.11.22 */
+
+        if ((sqlca.sqlcode != 0 ) && (sqlca.sqlcode != 1403 ))
+        {
+             print_errmsg(sqlca.sqlcode,"1.5.1 급여및 제수당 3개월분...update  \n");
+             sprintf(log_buff, "1.5.1 급여및 제수당 3개월분...update");
+             Write_batlog(seqno++, log_buff); 
+             error_quit("작업실패...");
+        }
+     } else
+     { 
+        /* PKCAFLD(통상평균임금항목관리) 테이블을 활용하여 정규직 평균임금 구함 Start [2018-09-13 이상용] */
+        EXEC SQL 
+        SELECT REGEXP_REPLACE(WM_CONCAT(DATAFLD), ',', '+')
+          INTO :sumstr1  
+          FROM PKCAFLD
+         WHERE PAYKIND = '2'
+           AND DATAFLD IN ('FIXPAY', 'SOPAY')     
+           AND SUBSTR(:argpaydate,1,6) BETWEEN FMONTH AND TMONTH;
+        
+        EXEC SQL 
+        SELECT REPLACE(REPLACE(REGEXP_REPLACE(WM_CONCAT(DATAFLD), ',', '+'),'ODAMT','DECODE(ODAMT,0,0,AVGODAMT)'),'ROLEAMT', 'LEAST(ROLEAMT, AVGROLEAMT)')   
+          INTO :sumstr2  
+          FROM PKCAFLD A, PKCPBAS B
+         WHERE PAYKIND = '2'
+           AND DATAFLD NOT IN ('FIXPAY', 'SOPAY')     
+           AND SUBSTR(:argpaydate,1,6) BETWEEN A.FMONTH AND A.TMONTH;
+        
+
+/*
+        printf("PKCAFLD(통상평균임금항목관리) argpaydate  : %s \n",argpaydate);
+        printf("PKCAFLD(통상평균임금항목관리) 테이블1  : %s \n",sumstr1);
+        printf("PKCAFLD(통상평균임금항목관리) 테이블2  : %s \n",sumstr2);
+*/
+
+        sprintf(sqlstr," UPDATE  PKRETTBL  a  SET  (PAY3SUM,CALMM) = ");
+        sprintf(tmpstr,"(SELECT /*+ index(B I2_PKHPHIS) */ NVL(SUM(case when substr(paydate,1,6) <= '201412' then CEIL((%s)*18/12) else %s end ",sumstr1, sumstr1);
+        strcat(sqlstr,tmpstr);
+        memset(tmpstr,'\0',sizeof(tmpstr)); 
+        sprintf(tmpstr," + %s ),0), COUNT(*) FROM  pkhphis b, pkcpbas c WHERE  a.empno = b.empno AND  substr(paydate,1,6) BETWEEN TO_CHAR(ADD_MONTHS(TO_DATE(SUBSTR('%s',1,6),'yyyymm'),-2),'yyyymm') AND SUBSTR('%s',1,6) )",sumstr2, argpaydate, argpaydate );
+        strcat(sqlstr,tmpstr);
+        memset(tmpstr,'\0',sizeof(tmpstr)); 
+        sprintf(tmpstr," WHERE  empno between '%s' and '%s' AND  paycl >= 'C11' AND  substr(empno,1,1) <> 'Q' AND substr(empno,1,1) <> 'P' AND  PAYCL <> 'H10' ",argfrempno, argtoempno );
+        strcat(sqlstr,tmpstr);
+        
+/*        printf("PKCAFLD(통상평균임금항목관리) 테이블을 활용하여 정규직 평균임금 구함1  : %s \n",sqlstr); */
+        
+        EXEC  SQL EXECUTE IMMEDIATE :sqlstr;
+        /* PKCAFLD(통상평균임금항목관리) 테이블을 활용하여 정규직 평균임금 구함 End [2018-09-13 이상용] */
+        if ((sqlca.sqlcode != 0 ) && (sqlca.sqlcode != 1403 ))
+        {
+             print_errmsg(sqlca.sqlcode,"1.5.1 급여및 제수당 3개월분...update  \n");
+             sprintf(log_buff, "1.5.1 급여및 제수당 3개월분...update");
+             Write_batlog(seqno++, log_buff); 
+             error_quit("작업실패...");
+        }
+/*        printf("PKCAFLD(통상평균임금항목관리) 테이블을 활용하여 정규직 평균임금 구함2 \n"); */
+     } 
+
+  
+/* ================================================ *
+  급여/제수당 * 3개월분   계약직(계약직 사원 연봉이 1/18 에서 1/12로 변경됨.2008.11.22)
+* ================================================ */
+        
+/*  2003.07.07. 강륜종(Dsa2000) Sql Tunning(Hint 추가)...+ index(B I2_PKHPHIS)    */
+    if (strcmp(argpaydate,"201804") <= 0)
+    {
+        EXEC SQL
+        UPDATE  PKRETTBL  a
+           SET  (PAY3SUM,CALMM) =
+                (SELECT  /*+ index(B I2_PKHPHIS) */
+                         NVL(SUM(CEIL((NVL(fixpay,0))+NVL(bfixpay,0)+NVL(sopay,0))  
+                         + LEAST(NVL(roleamt,0), :avgroleamt)  /* 2018.03.14 eyha 100000 -> 기준값으로 */ /*2001.11.1 직책수당은 평균직책수당 값 반영  nvl(roleamt,0)+*/
+                         + NVL(mateamt,0)    + NVL(partamt,0)
+                         + NVL(childamt,0)   + NVL(ovtmamt,0)
+                         + NVL(sptmamt,0)    + NVL(mcaramt,0)
+                         + NVL(liceamt,0)    + NVL(mbonamt,0)
+                         + NVL(sobon,0)      /*2000.9.28. 급여소급에따른 sobon 추가*/
+                         + DECODE(NVL(odamt,0),0,0,:avgodamt) /* 2018.03.14 eyha 150000 -> 기준값으로 */
+                         + nvl(itamt,0)      /*dsa2000  2005.01. 정보통신수당 추가.*/
+                         ), 0)
+                         , COUNT(*)
+                   FROM  pkhphis b
+                  WHERE  a.empno = b.empno              
+                    AND  paydate BETWEEN TO_CHAR(ADD_MONTHS(TO_DATE(:argpaydate,'yyyymm'),-2),'yyyymm') AND :argpaydate
+                )
+        WHERE  empno between :argfrempno and :argtoempno
+          AND  paycl >= 'C11'      /*//infra           AND  paycl > '09'*/
+          AND  EMPNO not like 'M%'
+          AND  (empno like 'Q%' or empno like 'P%' or paycl='H10'); /*DSA2000  2017.01.05. J사번체계 변경에 따른 수정작업 'J%' => PAYCL='H10' */
+        /*AND  (empno like 'Q%' or empno like 'P%' or empno like 'J%')  kth 일반직 사원 연봉이 1/18 에서 1/12로 변경됨.2008.11.22 */
+
+        if ((sqlca.sqlcode != 0 ) && (sqlca.sqlcode != 1403 ))
+        {
+             print_errmsg(sqlca.sqlcode,"1.5.1 급여및 제수당 3개월분...update  \n");
+             sprintf(log_buff, "1.5.1 급여및 제수당 3개월분...update");
+             Write_batlog(seqno++, log_buff); 
+             error_quit("작업실패...");
+        }
+
+    } else
+    {
+        /* PKCAFLD(통상평균임금항목관리) 테이블을 활용하여 계약직 평균임금 구함 Start [2018-09-13 이상용] */
+        EXEC SQL 
+        SELECT REGEXP_REPLACE(WM_CONCAT(DATAFLD), ',', '+')
+          INTO :sumstr1  
+          FROM PKCAFLD
+         WHERE PAYKIND = '2'
+           AND DATAFLD IN ('FIXPAY', 'SOPAY')     
+           AND SUBSTR(:argpaydate,1,6) BETWEEN FMONTH AND TMONTH;
+        
+        EXEC SQL 
+        SELECT REPLACE(REPLACE(REGEXP_REPLACE(WM_CONCAT(DATAFLD), ',', '+'),'ODAMT','DECODE(ODAMT,0,0,AVGODAMT)'),'ROLEAMT', 'LEAST(ROLEAMT, AVGROLEAMT)')   
+          INTO :sumstr2  
+          FROM PKCAFLD A, PKCPBAS B
+         WHERE PAYKIND = '2'
+           AND DATAFLD NOT IN ('FIXPAY', 'SOPAY')     
+           AND SUBSTR(:argpaydate,1,6) BETWEEN A.FMONTH AND A.TMONTH;
+
+        sprintf(sqlstr1," UPDATE PKRETTBL  a SET  (PAY3SUM,CALMM) = ");
+        sprintf(tmpstr1," (SELECT /*+ index(B I2_PKHPHIS) */ NVL(SUM(CEIL((%s) + %s)), 0), COUNT(*) FROM pkhphis b, pkcpbas c WHERE a.empno = b.empno ", sumstr1, sumstr2 );             
+        strcat(sqlstr1,tmpstr1);
+        memset(tmpstr1,'\0',sizeof(tmpstr1)); 
+        sprintf(tmpstr1," AND substr(paydate,1,6) BETWEEN TO_CHAR(ADD_MONTHS(TO_DATE(substr('%s',1,6),'yyyymm'),-2),'yyyymm') AND substr('%s',1,6) )",argpaydate, argpaydate);
+        strcat(sqlstr1,tmpstr1);
+        memset(tmpstr1,'\0',sizeof(tmpstr1)); 
+        sprintf(tmpstr1," WHERE empno between '%s' and '%s' AND  paycl >= 'C11' AND  substr(empno,1,1) <> 'M' AND (substr(empno,1,1) = 'Q' or substr(empno,1,1) = 'P' or paycl='H10') ", argfrempno, argtoempno );
+        strcat(sqlstr1,tmpstr1);
+
+/*        printf("PKCAFLD(통상평균임금항목관리) 테이블을 활용하여 정규직 평균임금 구함3  : %s \n",sqlstr1); */
+        
+        EXEC  SQL EXECUTE IMMEDIATE :sqlstr1;
+        /* PKCAFLD(통상평균임금항목관리) 테이블을 활용하여 계약직 평균임금 구함 End [2018-09-13 이상용] */
+          
+        if ((sqlca.sqlcode != 0 ) && (sqlca.sqlcode != 1403 ))
+        {
+             print_errmsg(sqlca.sqlcode,"1.5.1 급여및 제수당 3개월분...update  \n");
+             sprintf(log_buff, "1.5.1 급여및 제수당 3개월분...update");
+             Write_batlog(seqno++, log_buff); 
+             error_quit("작업실패...");
+        }
+/*        printf("PKCAFLD(통상평균임금항목관리) 테이블을 활용하여 정규직 평균임금 구함4 \n"); */
+     }
+     
+     memset(sqlstr,'\0',sizeof(sqlstr));
+     memset(tmpstr,'\0',sizeof(tmpstr));   
+     memset(sumstr1,'\0',sizeof(sumstr1));   
+     memset(sumstr2,'\0',sizeof(sumstr2));   
+     memset(sqlstr1,'\0',sizeof(sqlstr1));
+     memset(tmpstr1,'\0',sizeof(tmpstr1));   
+
+     /* ================================================ *
+       연차수당
+     * ================================================ */
+     /*2017.01.  dsa2000 임단협 결정으로 연차수당 후지급으로 변경에 따른 과도기 구간(2017~2018년) 루틴 추가. */
+     if ((strcmp(argpaydate,"201701") >= 0) && (strcmp(argpaydate,"201812") <= 0)) 
+     {
+         sprintf(t_workyy,"%.4s",argpaydate);
+         EXEC SQL
+         UPDATE  PKRETTBL A
+            SET  BON12SUM = (SELECT Nvl(Ybonamt,0)
+                               FROM Pkbonsim B
+                              WHERE A.Empno = B.Empno AND Workyy =:t_workyy)
+          WHERE  empno between :argfrempno and :argtoempno  
+            AND  paycl >= 'C11';
+     
+         if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403)) 
+         {
+             printf("임단협 기준 : %s\n",t_workyy);
+             print_errmsg(sqlca.sqlcode,"1.5.2 임단협 기준 : 연차수당...update  \n");
+             sprintf(log_buff, "1.5.2 임단협 기준 : 연차수당...update ");
+             Write_batlog(seqno++, log_buff); 
+             error_quit("작업실패...");
+         }
+     }
+     else /*정상기간 루틴*/
+     {   /*  2003.09.03. 강륜종(Dsa2000) Sql Tunning(Hint 추가)...  + index(B I2_PKHPHIS)   */        
+         EXEC SQL
+         UPDATE  PKRETTBL  a 
+            SET  BON12SUM =
+                (SELECT   /*+ index(B I2_PKHPHIS) */ 
+                         SUM( NVL(YBONAMT,0) ) 
+                   FROM  PKHPHIS  B
+                  WHERE  A.EMPNO = B.EMPNO
+                    AND  SUBSTR(PAYDATE,1,6) BETWEEN TO_CHAR(ADD_MONTHS(TO_DATE(:argpaydate,'YYYYMM'),-12),'YYYYMM')
+                    AND  :argpaydate    )
+          WHERE  empno between :argfrempno and :argtoempno  
+            AND  paycl >= 'C11';
+           
+         if ((sqlca.sqlcode != 0 ) && (sqlca.sqlcode != 1403 ))
+         {
+              print_errmsg(sqlca.sqlcode,"1.5.2 연차수당...update  \n");
+              sprintf(log_buff, "1.5.2 연차수당...update ");
+              Write_batlog(seqno++, log_buff); 
+              error_quit("작업실패...");
+         }         
+         
+         /* 2011.08.03 kth 휴직자 연차금액 수정 */     
+         /* 휴직자 휴직전에 급여로 계산되고 연차는 계산년도가 다르기 때문에  */     
+         /* 연차는 수정해서 넣어 줘야 됨.  */     
+         EXEC SQL
+         UPDATE  PKRETTBL  a
+            SET  BON12SUM =
+                (SELECT   /*+ index(B I2_PKHPHIS) */ 
+                         SUM( NVL(YBONAMT,0) ) 
+                   FROM  PKHPHIS  B
+                  WHERE  A.EMPNO = B.EMPNO
+                    AND  SUBSTR(PAYDATE,1,6) BETWEEN :argpaydate 
+                    AND  TO_CHAR(ADD_MONTHS(TO_DATE(:argpaydate,'YYYYMM'),12),'YYYYMM')    )
+          WHERE  empno between :argfrempno and :argtoempno 
+            AND  EMPNO in  (SELECT EMPNO FROM PKHRCHIS WHERE PAYDATE =:curpaydate 
+                               AND CONYN   = 'Y' 
+                               AND SUBSTR(BASEDATE,1,4) <> SUBSTR(:curpaydate,1,4) ) 
+            AND  paycl >= 'C11'   /*//infra         AND  paycl > '09'*/
+            AND  EMPNO not like 'M%';  /*DSA2000   2004.02.04. 임원은 퇴충계산에서 제외(이사대우 까지) 재무팀 요청*/
+            
+         if ((sqlca.sqlcode != 0 ) && (sqlca.sqlcode != 1403 ))
+         {
+              print_errmsg(sqlca.sqlcode,"1.5.2.1 연차수당...update  \n");
+              sprintf(log_buff, "1.5.2.1 연차수당...update ");
+              Write_batlog(seqno++, log_buff); 
+              error_quit("작업실패...");
+         }  /*printf("\n 1.5.2 연차수당...update   End.... \n");*/   
+     }
+
+     EXEC SQL
+     UPDATE  PKRETTBL
+        SET  PAY3SUM  = nvl(PAY3SUM,0),
+             BON12SUM = nvl(BON12SUM,0)
+      WHERE  empno between :argfrempno and :argtoempno
+        AND  PAYCL   >= 'C11'
+        AND  EMPNO not like 'M%';
+
+     if ((sqlca.sqlcode != 0 ) && (sqlca.sqlcode != 1403 ))
+     {
+          print_errmsg(sqlca.sqlcode,"1.5.3 null...update  \n");
+          sprintf(log_buff, "1.5.2 연차수당...update ");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+     /*printf("\n 1.5.3 null...update   End.... \n");*/
+
+     EXEC SQL
+     UPDATE PKRETTBL
+        SET AVGPAYBON = ceil(pay3sum/decode(calmm,0,1,calmm)) +
+                        ceil(bon12sum/12)
+      WHERE empno between :argfrempno and :argtoempno          
+        AND PAYCL   >= 'C11'  /*AND paycl > '09'*/
+        AND EMPNO not like 'M%';
+
+     if ((sqlca.sqlcode != 0 ) && (sqlca.sqlcode != 1403 ))
+     {
+          print_errmsg(sqlca.sqlcode,"1.5.4 평균임금...update  \n");
+          sprintf(log_buff, "1.5.4 평균임금...update  ");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+}       /*printf("\n 1.5.4 평균임금...update   End.... \n");*/
+
+/* =======================================================
+  퇴직 평균임금 계산  : 휴직자 
+ ======================================================= */
+void CalcAvgGross_rest()
+{
+     char  p_empno[4+1]="";
+     char  p_maxpaydate[6+1]="";
+     
+      /*  2003.09.03. 강륜종(Dsa2000) 시간단축을 위한 Sql Tunning(Hint 추가)  +use_nl (a,b,c) 
+          2011.07.28 KTH 주석 처러 PKHRCHIS 테이블로 관리 변경
+     EXEC SQL DECLARE cur2 CURSOR FOR
+     SELECT   use_nl (a,b,c)  
+             A.EMPNO, MAX(C.PAYDATE)
+       FROM  PKHPHIS C, PKRETTBL A, PKMPMAS B    DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL 
+      WHERE  A.EMPNO = B.EMPNO                   2006.01.02  PIMPMAS => PKMPMAS로 변경함.
+        AND  A.EMPNO = C.EMPNO
+        AND  B.PSTATE  LIKE '7%'
+      GROUP  BY A.EMPNO;   */
+      
+     /* 2011.07.28 KTH  PKHRCHIS 테이블로 관리 처리 */
+     EXEC SQL DECLARE cur2 CURSOR FOR 
+     SELECT EMPNO,SUBSTR(BASEDATE,1,6) BASEDATE  
+       FROM PKHRCHIS
+      WHERE PAYDATE =:curpaydate
+        AND CONYN   = 'Y'  
+        AND SUBSTR(ENDTODATE,1,6) >= SUBSTR(:curpaydate,1,6);      
+             
+     EXEC SQL OPEN cur2;
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) &&
+         (sqlca.sqlcode != -1405))
+     {
+          print_errmsg(sqlca.sqlcode,"1.5.2.1 휴직자 평균 임금 계산중...Open\n");
+          sprintf(log_buff, "1.5.2.1 휴직자 평균 임금 계산중...Open ");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+     
+           /*printf("\n 1.5.2.1 휴직자 평균 임금 계산   End.... \n");*/
+     
+     while(1)
+     {
+          EXEC SQL  FETCH  cur2
+          INTO    :p_empno ,:p_maxpaydate;
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE cur2;
+               break;
+          }
+          
+          if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != -1405))
+          {
+               print_errmsg(sqlca.sqlcode,"1.5.2.2 평균 임금 계산중...Cursor\n");
+               sprintf(log_buff, "1.5.2.2 평균 임금 계산중...Cursor ");
+               Write_batlog(seqno++, log_buff); 
+               error_quit("작업실패...");
+          }
+          sprintf(p_empno,"%.4s",p_empno);
+          sprintf(p_maxpaydate,"%.6s",p_maxpaydate);
+          
+/*          printf("\n ~~~ empno[%s],paydate[%s] ",p_empno,p_maxpaydate); */
+          
+          CalcAvgGross(p_empno,p_empno,p_maxpaydate);
+     }
+}
+
+/* ==========================================================================
+  근속제외월 계산
+ ========================================================================== */
+void CalcExdd()
+{
+     EXEC SQL
+     UPDATE PKRETTBL R   /* DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL */
+        SET EXTMM = ( SELECT sum( FLOOR( MONTHS_BETWEEN( TO_DATE(LEAST(A.EXTODATE,:v_curpaydate) ,'YYYYMMDD')+1,
+                                                         TO_DATE(GREATEST(A.EXFRDATE,NVL(BMRTODATE,A.EXFRDATE)),'YYYYMMDD') 
+                                                        )
+                                        )
+                                 )                 
+                        FROM PKMPMAS C, PKHEXDD A,  /* 2006.01.02  PIMPMAS => PKMPMAS로 변경함.*/
+                             ( SELECT EMPNO BEMPNO, MAX(MRTODATE) BMRTODATE 
+                                 FROM PKHMRHIS
+                                WHERE MRTODATE < :curpaydate
+                                GROUP BY EMPNO
+                             )  
+                       WHERE EXFIXYN ='Y'
+                         AND A.EMPNO = BEMPNO(+)
+                         AND A.EMPNO = C.EMPNO
+                         AND A.EMPNO = R.EMPNO
+                         AND RETDATE IS NULL
+                         AND A.EXTODATE  >= NVL(BMRTODATE,A.EXFRDATE)   
+                    )
+      WHERE EMPNO IN
+            (
+              SELECT A.EMPNO
+                FROM PKMPMAS C, PKHEXDD A, /* 2006.01.02  PIMPMAS => PKMPMAS로 변경함.*/
+                    (
+                     SELECT EMPNO BEMPNO, MAX(MRTODATE) BMRTODATE 
+                       FROM PKHMRHIS
+                      WHERE MRTODATE < :curpaydate
+                      GROUP BY EMPNO
+                     ) 
+               WHERE  EXFIXYN ='Y'
+                 AND  A.EMPNO = BEMPNO(+)
+                 AND  A.EMPNO = C.EMPNO      
+                 AND  RETDATE IS NULL
+                 AND A.EXTODATE  >= NVL(BMRTODATE,A.EXFRDATE)      
+            );   
+   
+   
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          print_errmsg(sqlca.sqlcode,"근속제외월수1 계산 중...\n");
+          sprintf(log_buff, "근속제외월수 계산 중...");
+          Write_batlog(seqno++, log_buff); 
+          error_quit("작업실패...");
+     }
+   
+     EXEC SQL
+     UPDATE PKRETTBL R    /* DSA2000   2004.04.21. 테이블 이름 변경 T_RETTBL => PKRETTBL */
+        SET EXTMM = NVL(EXTMM,0);
+   
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+         print_errmsg(sqlca.sqlcode,"근속제외월수2 계산 중...\n");
+         sprintf(log_buff, "근속제외월수 계산 중...");
+         Write_batlog(seqno++, log_buff); 
+         error_quit("작업실패...");
+     }
+
+}
+
+/***************************************************************************
+  print_errmsg  Function.
+ ***************************************************************************/
+void print_errmsg(int errcode, char *errmsg)
+{
+     printf("[ERRCODE : %d] %s\n", errcode,errmsg);
+     /*  printf(" [ERR_CODE] : (%d)\n", errcode);
+         printf(" [ERR_POSITION] : (%s)\n",errmsg);
+     
+     EXEC SQL
+     ROLLBACK WORK RELEASE;
+     */  
+}  
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

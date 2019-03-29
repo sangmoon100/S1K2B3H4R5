@@ -1,0 +1,1218 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : PKQ2070G(퇴직자 월급여 계산)
+ SYSTEM-NAME    : 급여
+ SUBSYSTEM-NAME : 퇴직정산
+ Programmer     : 민정숙
+ Version        : 30.00
+ Date           : 1999.02.28
+
+Update Contents
+ Version  date(yy.mm.dd)  programmer   description            relevant doc.no
+  1.00     1997.02.16      이인환      최초개발본             설계명세서
+  30.00    1999.02.28      민정숙      연봉제관련             하나로재개발
+  30.01    2004.02.24      강륜종      Oracle8i 업그레이드에 의한 관련 라이브러리 업그레이드. 
+  31.10    2004.11.    강륜종(dsa2000) Rexec대체 서비스를 위한 수정작업.      
+  32.00    2005.01.12  강륜종(dsa2000) 정보통신수당 추가 및 월차수당 폐지.
+
+퇴직월 월차 계산     : /bin/Kbin/pkq2071g %.6s %s %s %s   ==> 2005.01부터 폐지.
+퇴직월 초과근무 수당 : /bin/Kbin/pkg3070g %.6s %4s %4s %c %4s 0 %s
+퇴직월 상여금 계산   : /bin/Kbin/pkq2072g 퇴직월 작업자 dbuser
+============================================================================= */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+void  update_bonus();
+
+EXEC SQL INCLUDE sqlca;
+EXEC SQL BEGIN DECLARE SECTION;
+     char  workyymmdd[9];
+     char  ovtmyymm[7];
+     char  DayOfWeek[4];
+     char   tempdate[9];
+     char  LastDay[3];
+     char  HoliDate[9];
+     char  empno[5];
+     char  bldcode[3];
+     char  retdate[9];
+     int   mcarday;
+     char  GSempno[5];
+     double  mcarnotax;
+EXEC SQL END   DECLARE SECTION;
+
+FILE *fp = stdout;
+
+enum  { WEEKDAY=0, WEEKEND=1 } day[33];
+char  cmdline[256];
+int   db;
+int   id;
+char  UserId[20];
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+char  log_rundate[16]     = ""; 
+char  log_progid[16]      = "";
+char  log_writeman[5]     = "";
+char  log_buff[100]       = "";
+int   seqno = 0; 
+
+void main(argc,argv)
+int  argc;
+char *argv[];
+{
+     char FL_file[255];
+               
+     if (argc != 4) {  /* /hper8/HINSA/proc/bin/Kbin/pkq2070g D006 pkq2070g 2004110100000 */
+              printf("[Usage] : pkq2070g  1.작업자사번 2.프로그램ID 3.시작시간 \n");  
+              exit(1);
+     }
+     
+     memset(UserId,'\0',sizeof(UserId));
+     strcpy(UserId,argv[2]);
+     
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,"pkq2070g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     /* Dsa2000  2004.02.24.  **********************************/
+     /* DB_connect(id,0); */
+     hinsa_log_print(0,"퇴직자 월급여 계산 시작...");                       
+     hinsa_db_connect();  /*DB Connect 실시..*/
+     /*dsa2000  수정..End......................................*/
+     
+     /*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[1]);
+     strcpy(log_progid,   argv[2]);
+     strcpy(log_rundate,  argv[3]);  
+       
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+     /*========================================================*/
+     
+     sprintf(GSempno,"%4s",argv[1]);
+     
+     CalcPay();
+     
+     /* Dsa2000  2004.02.25.  hinsa_exit()에서 DB Commit & DB접속종료함.*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====\n");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/  
+          error_quit("ERROR ====== [작업 실패] =====\n");
+     }
+     else  
+     {
+          sprintf(log_buff, "OK ====== [퇴직월 급여 계산 작업이 성공] =====\n");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          hinsa_exit(0,"OK ====== [퇴직월 급여 계산 작업이 성공] =====\n");
+     }  
+
+}
+
+err_print(errcode,str)
+int  errcode;
+char *str;
+{
+     fprintf(fp,"[ERRCODE : %d] %s\n",errcode,str);
+}
+
+/* =========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련항목추가      하나로재개발
+============================================================================= */
+CalcPay()
+{
+     char *HOMEDIR;
+     HOMEDIR = hinsa_home();  /* "/hper/insa/HINSA" 읽어오기...dsa2000 */
+     strcat(HOMEDIR,"/proc");
+     
+     printf("\n 1. 기본사항 갱신 중 ....");
+     sprintf(log_buff, "\n 1. 기본사항 갱신 중 ....");
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+     
+     EXEC   SQL
+     UPDATE  PKMRTMAS
+        SET  PAYSUM     = 0, BASICAMT   = 0, INFOAMT    = 0, DUTYAMT     = 0,
+             PROMAMT    = 0, FAMIAMT    = 0, LICEAMT    = 0, MCARAMT     = 0,
+             OVTMAMT    = 0, SPTMAMT    = 0, BOKJISPAMT = 0, AIDAMT1     = 0,
+             AIDAMT2    = 0, AIDAMT3    = 0, MBONAMT    = 0, BONUSAMT    = 0,
+             INCENTAMT  = 0, TRAINAMT   = 0, WINTERAMT  = 0, SBONAMT     = 0,
+             DEDTOT     = 0, MEDAMT1    = 0, EMPLAMT    = 0, ANUSELFAMT  = 0,
+             TICKETAMT  = 0, REALPAY    = 0, ODAMT      = 0, ODTAXAMT    = 0,
+             MCARTAXAMT = 0, TAXPAY     = 0, NOTAXPAY   = 0,
+             FIXPAY     = 0, QUATERPAY  = 0, HOLIPAY    = 0, ROLEAMT     = 0,
+             ITAMT      = 0;  /*정보통신수당 추가 2005.01. DSA2000 */
+     
+     /*  퇴직자의 퇴직월 급여가 계산되었으면 급여정산여부를 'Y'로 셋팅한다  */
+     EXEC SQL
+     UPDATE  PKMRTMAS
+        SET  CALYN = 'N';
+     
+     EXEC SQL
+     UPDATE  PKMRTMAS p
+        SET  CALYN = 'Y'
+      WHERE  EMPNO IN (SELECT EMPNO
+                        FROM   PKHPHIS
+                       WHERE   SUBSTR(PAYDATE,1,6) = SUBSTR(P.RETDATE,1,6)); /* 이상용 */
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {    err_print(sqlca.sqlcode,"1. 급여 정산 check ERROR");
+          sprintf(log_buff, "1. 급여 정산 check ERROR");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+     
+     /*
+       급여마스터로부터 직무수당, 업무추진비, 가족수당, 자격수당,
+              의료보험료,국민연금, 복지연금지원금을 셋팅한다.
+     */
+     
+     printf("\n 2. 지급금 갱신 중 ....");
+     sprintf(log_buff, "\n 2. 지급금 갱신 중 ....");
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+  /* ********************************************************
+     중도퇴사자 경우 급여마스터의
+    급여액(기본급,정보통신, 직무수당, 업무추진비)을 일할계산합니다. 확인 요청
+   ******************************************************** */
+
+/* =========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제                 하나로재개발
+                                      FIXPAY, FAMIAMT 일할계산 추가
+                                      ITAMT  일할계산 추가 KTH 2010.08.10
+============================================================================= */
+     EXEC SQL
+     UPDATE  PKMRTMAS p
+        SET  (BASICAMT, INFOAMT, DUTYAMT, PROMAMT, FIXPAY, FAMIAMT,ITAMT )
+            =
+             (SELECT CEIL(NVL(BASICAMT,0)*
+                          TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') /
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ),
+                     CEIL(NVL(INFOAMT,0) *
+                          TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') /
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ) ,
+                     CEIL(NVL(DUTYAMT,0) *
+                          TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD')  /
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ),
+                     CEIL(NVL(PROMAMT ,0) *
+                          TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') /
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ),
+                     CEIL(NVL(FIXPAY ,0) *
+                          TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') /
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ),
+                     CEIL(NVL(FAMIAMT ,0)*
+                          TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') /
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ),
+                     CEIL(NVL(ITAMT ,0)*
+                          TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') /
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         )
+      FROM  PKMPMAS R
+     WHERE  P.EMPNO=R.EMPNO)
+     WHERE  CALYN='N'        ;
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {    err_print(sqlca.sqlcode,"2. 인사자료 갱신 ERROR");
+          sprintf(log_buff, "2. 인사자료 갱신 ERROR");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+
+/* =========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.03    1999.04.06      이랑교     급여를 받은후 환수부분이 빠짐
+                                      FIXPAY, FAMIAMT 일할계산 추가
+                                      퇴직일이 말일이 아닌 경우만 급여환수를 한다.
+                                      ITAMT  일할계산 추가 KTH 2010.08.10
+============================================================================= */
+     EXEC SQL
+     UPDATE  PKMRTMAS p
+        SET  (BASICAMT  ,INFOAMT   ,DUTYAMT, PROMAMT, FIXPAY, FAMIAMT ,MCARAMT ,ODAMT,ITAMT)
+          =
+             (SELECT CEIL(SUM(NVL(BASICAMT,0))*
+                          /* 2000-06-26 변경 : +1부분 해제, 퇴직일 다음날부터 말일까지의 급여분 환수 
+                          (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') + 1)  */
+                          (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') ) /
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                          ) * -1 ,
+                     CEIL(SUM(NVL(INFOAMT,0))  *
+                          /*  (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') + 1)  */
+                          (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') )/
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                          ) * -1,
+                     CEIL(SUM(NVL(DUTYAMT,0))  *
+                           /*  (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') + 1)  */
+                          (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') ) /
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ) * -1,
+                     CEIL(SUM(NVL(PROMAMT ,0)) *
+                          /*  (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') + 1)  */
+                         (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') )/
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ) * -1,
+                     CEIL(SUM(NVL(FIXPAY ,0)) *
+                          /*  (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') + 1)   */
+                          (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') )/
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ) * -1,
+                     CEIL((SUM(NVL(MATEAMT,0))+SUM(NVL(CHILDAMT,0)) +SUM(NVL(PARTAMT,0))) *
+                          /*  (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') + 1)    */
+                          (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') )/
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ) * -1,
+                     CEIL(SUM(NVL(MCARAMT ,0)) *
+                     /*  (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') + 1)    */
+                          (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') )/
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ) * -1,
+                     CEIL(SUM(NVL(ODAMT ,0))*
+                     /*  (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') + 1)     */
+                          (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') ) /
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ) * -1,
+                     CEIL(SUM(NVL(ITAMT ,0)) *
+                     /*  (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') + 1)     */
+                          (TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') - TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') )/
+                          TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')
+                         ) * -1
+                FROM  PKHPHIS R
+               WHERE  P.EMPNO = R.EMPNO
+                 AND  SUBSTR(PAYDATE,1,6) = SUBSTR(P.RETDATE,1,6)) /* 이상용 */
+      WHERE  CALYN='Y'
+        AND  RETDATE <> TO_CHAR(LAST_DAY(TO_DATE(SUBSTR(RETDATE,1,6),'YYYYMM')),'YYYYMMDD');
+     
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {    err_print(sqlca.sqlcode,"2.2 인사자료 갱신 ERROR 지급한 급여환수 ");
+          sprintf(log_buff, "2.2 인사자료 갱신 ERROR 지급한 급여환수 ");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+
+     EXEC SQL
+     UPDATE  PKMRTMAS p
+        SET (LICEAMT , ANUSELFAMT , BOKJISPAMT, ROLEAMT ) /*MEDAMT1, */
+         =  (SELECT  NVL(LICEAMT ,0), NVL(ANUSELFAMT,0), NVL(BOKJISUPAMT,0), NVL(ROLEAMT,0) /*NVL(MEDAMT,0), */
+               FROM  PKMPMAS R
+              WHERE  P.EMPNO=R.EMPNO)
+      WHERE  CALYN='N';
+     if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {    err_print(sqlca.sqlcode,"3. 인사자료 갱신 ERROR");
+          sprintf(log_buff, "3. 인사자료 갱신 ERROR");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+
+  /*  퇴사일이 14일 이전이면 복지연금지원금을 0으로 한다*/
+     EXEC SQL
+     UPDATE  PKMRTMAS
+        SET  BOKJISPAMT = 0
+      WHERE  SUBSTR(RETDATE,7,2) <= '14'
+        AND  CALYN = 'N';
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"3.0 복지연금 setting Error");
+          sprintf(log_buff, "3.0 복지연금 setting Error");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+     
+     
+  /* 사우회비 지급 비과세 급여로 반영 작업 2011.05.18 kth */
+     EXEC SQL
+     UPDATE PKMRTMAS T 
+        SET NOTAXPAY = (SELECT YSUMAMT 
+                          FROM PSSAUHIS S
+                         WHERE T.EMPNO = S.EMPNO  
+                           AND SYEAR = (SELECT MAX(SYEAR) FROM PSSAUHIS));
+        
+        
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"3.01 사우회비  setting Error");
+          sprintf(log_buff, "3.01 사우회비 setting Error");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }     
+     
+     
+     /* 사우회비 급여테이블 업데이트  2011.05.18 kth */
+     EXEC SQL
+     UPDATE PKMRTMAS T 
+        SET NOTAXPAY  =
+                       (SELECT sum(nvl(SAUAMT,0)) +T.NOTAXPAY  
+                           FROM PKHPHIS H  
+                          WHERE H.EMPNO =T.EMPNO 
+                            AND SUBSTR(PAYDATE,1,4) > (SELECT MAX(SYEAR) FROM PSSAUHIS));
+                
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"3.02 사우회비 급여  setting Error");
+          sprintf(log_buff, "3.01 사우회비 급여 setting Error");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }        
+                       
+ /* 사우회비 지급 비과세 급여로 반영 작업 2011.05.18 kth  끝 */     
+     
+
+/* =========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련       직책수당로직변경(15일단위 50000/100000)
+============================================================================= */
+  /*  퇴사일이 14일 이전이면 직책수당, 자격수당이 50000 이후 100000으로 한다   20120706 KTH 직책수당 폐지로 주석
+     EXEC SQL
+     UPDATE  PKMRTMAS
+        SET  ROLEAMT = 50000
+      WHERE  SUBSTR(RETDATE,7,2) <= '14'
+        AND  CALYN = 'N'
+        AND  ROLEAMT > 0;
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"3.1 직책수당 setting Error");
+          sprintf(log_buff, "3.1 직책수당 setting Error");
+          Write_batlog(seqno++, log_buff); dsa2000 Rexec 대체
+          exit(1);
+     }
+*/
+/* =========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련          직책수당로직변경(15일단위 50000/100000)
+============================================================================= 
+     EXEC SQL                 20120706 KTH 직책수당 폐지로 주석
+     UPDATE  PKMRTMAS
+        SET  ROLEAMT = 100000
+      WHERE  SUBSTR(RETDATE,7,2) > '14'
+        AND  CALYN = 'N'
+        AND  ROLEAMT > 0;
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"3.2 직책수당 setting Error");
+          sprintf(log_buff, "3.2 직책수당 setting Error");
+          Write_batlog(seqno++, log_buff); dsa2000 Rexec 대체
+          exit(1);
+     }
+     */
+/* =========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련         자격수당로직변경(15일단위 20000/10000)
+============================================================================= 
+     EXEC SQL        20120706 KTH 자격수당 폐지로 주석
+     UPDATE  PKMRTMAS
+        SET  LICEAMT = 10000
+      WHERE  SUBSTR(RETDATE,7,2) <= '14'
+        AND  CALYN = 'N'
+        AND  LICEAMT > 0;
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"3.3 자격수당 setting Error");
+          sprintf(log_buff, "3.3 자격수당 setting Error");
+          Write_batlog(seqno++, log_buff); dsa2000 Rexec 대체
+          exit(1);
+     }*/
+     
+/* =========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련        자격수당로직변경(15일단위 20000/10000)
+============================================================================= 
+     EXEC SQL                             20120706 KTH 자격수당 폐지로 주석
+     UPDATE  PKMRTMAS
+        SET  LICEAMT = 20000
+      WHERE  SUBSTR(RETDATE,7,2) > '14'
+        AND  CALYN = 'N'
+        AND  LICEAMT > 0;
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"3.4 자격수당 setting Error");
+          sprintf(log_buff, "3.4 자격수당 setting Error");
+          Write_batlog(seqno++, log_buff); dsa2000 Rexec 대체
+          exit(1);
+     }
+     */
+     
+     EXEC SQL
+     SELECT  MAX(RETDATE) INTO :workyymmdd
+       FROM  PKMRTMAS;
+     if  (sqlca.sqlcode != 0 )
+     {    err_print(sqlca.sqlcode,"4. 퇴직월 추출 Error");
+          sprintf(log_buff, "4. 퇴직월 추출 Error");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+     
+     SetCalendar(workyymmdd);
+
+     printf("\n 3. 지급금(수당) 갱신 중 ....");
+     sprintf(log_buff, "\n 3. 지급금(수당) 갱신 중 ....");
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+
+
+  /*  *********************************************
+    월차수당을 구한다    DSA2000  2005.01.12 2005년부터 월차수당 폐지.
+  *********************************************   */
+  /*memset(cmdline,'\0',256);
+  
+    sprintf(cmdline,"%s/bin/Kbin/pkq2071g %.6s %s %s %s", HOMEDIR,workyymmdd,"1",GSempno,UserId); dsa2000  2004.11.*/
+  /*sprintf(cmdline,"%s/bin/Kbin/pkq2071g %.6s %s %s %s %s", 
+                  HOMEDIR,workyymmdd,"1",GSempno,log_progid,log_rundate); 
+  system(cmdline);
+
+  EXEC SQL
+  UPDATE PKMRTMAS p
+  SET  MBONAMT = (SELECT MONTHAMT
+      FROM T_PKMRTMO R
+      WHERE P.EMPNO=R.EMPNO)
+  WHERE  CALYN='N';
+
+  if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+  {  err_print(sqlca.sqlcode,"월차 추출 Error");
+    sprintf(log_buff, "월차 추출 Error");
+          exit(1);
+  }
+  ====================================================================================================================*/
+  
+  
+  /*  식대교통비를 계산한다. 식대교통비는 퇴직월 1일 부터 퇴직일까지의
+     일수를 구하고 이에서 공휴일과일요일을 제외한 날수에 식대교통비
+     기준금액에 곱하여 구한다.*/
+     
+     /*2014.04.21.hjku. 퇴직자 개별적으로 계산하도록 하단으로 이동(일괄계산으로 인한 기존 정산자료가 변경되는 오류가 발생함)... 홍원영M 요청
+       초과근무수당을 계산한다  
+     sprintf(cmdline,"%s/bin/Kbin/pkg3070g %.6s 0000 Y000 Y %4s 0 %s %s",  
+                                  HOMEDIR, ovtmyymm, GSempno, log_progid, log_rundate);                                   
+     system(cmdline); */     
+     
+     /* 초과근무수당을 계산한다           
+     sprintf(cmdline,"%s/bin/Kbin/pkg3070g %.6s %4s %4s %c %4s 0 %s %s", 
+                            HOMEDIR,ovtmyymm,'0000','Y000','Y',GSempno,log_progid,log_rundate);                      
+     system(cmdline);     */
+     
+     
+     EXEC   SQL DECLARE  c1 CURSOR FOR
+     SELECT  EMPNO, RETDATE, BLDCODE
+       FROM  PKMRTMAS
+      WHERE  CALYN='N';
+     
+     EXEC SQL OPEN c1;
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"5. 퇴직일 Read Error");
+          sprintf(log_buff, "5. 퇴직일 Read Error");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+     
+     while(1)
+     {
+          EXEC  SQL FETCH c1 into
+          :empno, :retdate, :bldcode;
+          
+          if  (sqlca.sqlcode == 1403)
+          {    EXEC SQL close c1;
+               break;
+          }
+          /*2014.04.21.hjku. 퇴직자 개별적으로 계산하도록 수정... 홍원영M 요청*/
+          memset(cmdline,'\0',sizeof(cmdline));
+          sprintf(cmdline,"%s/bin/Kbin/pkg3070g %.6s %s %s Y 0 %4s %s %s",  
+                                  HOMEDIR, ovtmyymm, empno,empno,GSempno, log_progid, log_rundate);                                   
+          system(cmdline);    
+          
+          EXEC SQL
+          UPDATE  PKMRTMAS p
+             SET  OVTMAMT = (SELECT NVL(OVTMAMT,0)
+                               FROM PKHOTSUM
+                              WHERE EMPNO=:empno AND OVTMYYMM = :ovtmyymm)
+           WHERE  EMPNO = :empno;
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {    err_print(sqlca.sqlcode," 초과근무 setting Error");
+               sprintf(log_buff, " 초과근무 setting Error");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               exit(1);
+          }
+          
+          
+     /* =========================================================================
+      Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+       30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                           식대교통비계산로직추가
+     ============================================================================= */
+          EXEC SQL
+          UPDATE   PKMRTMAS P
+             SET  (ODAMT,ODTAXAMT) = (
+                                      SELECT  CEIL(NVL(ODAMT ,0) *
+                                              TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') /
+                                              TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')),
+                                              NVL(ODTAXAMT,0)
+                                        FROM  PKMPMAS R
+                                       WHERE  P.EMPNO=R.EMPNO)
+           WHERE  EMPNO IN (SELECT EMPNO FROM PKMPMAS WHERE ODAMT > 0)
+             AND  CALYN='N';
+         
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {    err_print(sqlca.sqlcode,"7. odamt setting Error");
+               sprintf(log_buff, "7. odamt setting Error");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               exit(1);
+          }
+         
+          /* 자가운전은 200,000 까지   */
+          EXEC SQL
+          UPDATE  PKMRTMAS  p
+             SET  ODTAXAMT = GREATEST( 0 , ODAMT - 200000 ) ;
+         
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {    err_print(sqlca.sqlcode,"7.1 odtaxamt setting Error");
+               sprintf(log_buff, "7.1 odtaxamt setting Error");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               exit(1);
+          }
+
+/* *********************************
+    mcarday = CalMcarday(retdate);
+
+    printf(" mcarday %d",mcarday);
+
+    if (mcarday > 25)
+      mcarday = 25;
+
+    EXEC SQL
+    UPDATE  PKMRTMAS
+    SET  FCARDAY = :mcarday
+    WHERE  EMPNO   = :empno;
+    if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+    {  err_print(sqlca.sqlcode,"6. 식교비 setting Error");
+      exit(1);
+    }
+
+    EXEC SQL
+    UPDATE   PKMRTMAS p
+    SET   MCARAMT =
+           (SELECT (LUNCHAMT+TRAFAMT+LUNCHADD+TRAFADD+
+              TICKETAMT)*:mcarday
+            FROM PKCPBLD
+            WHERE BLDCODE = :bldcode)
+    WHERE  EMPNO = :empno ;
+    if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+    {  err_print(sqlca.sqlcode,"6. 식교비 setting Error");
+      exit(1);
+    }
+
+    EXEC SQL
+    UPDATE   PKMRTMAS p
+    SET   MCARAMT =
+           (SELECT (NVL(LUNCHAMT,0)+NVL(LUNCHADD,0)+NVL(TICKETAMT,0))*:mcarday
+            FROM   PKCPBLD R
+            WHERE BLDCODE = :bldcode)
+    WHERE  EMPNO = :empno and ODAMT>0;
+    if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+    {  err_print(sqlca.sqlcode,"7. 식교비 setting Error");
+      exit(1);
+    }
+* ******************************** */
+        
+          EXEC SQL
+          UPDATE  PKMRTMAS p
+             SET  MCARAMT =
+                 (SELECT CEIL((LUNCHAMT+TRAFAMT+LUNCHADD+TRAFADD+TICKETAMT)*
+                         TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD') 
+                       / TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') * 25 )
+                    FROM PKCPBLD
+                   WHERE BLDCODE = :bldcode)
+           WHERE  EMPNO = :empno ;
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {    err_print(sqlca.sqlcode,"6. 식교비 setting Error");
+               sprintf(log_buff, "6. 식교비 setting Error");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               exit(1);
+          }
+          
+          EXEC SQL
+          UPDATE   PKMRTMAS p
+             SET   MCARAMT =
+                          (SELECT  CEIL((NVL(LUNCHAMT,0)+NVL(LUNCHADD,0)+NVL(TICKETAMT,0))*
+                                     TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD')
+                                   / TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') * 25 )
+                             FROM   PKCPBLD R
+                            WHERE  BLDCODE = :bldcode)
+           WHERE  EMPNO = :empno and ODAMT>0;
+              
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {    err_print(sqlca.sqlcode,"7. 식교비 setting Error");
+               sprintf(log_buff, "7. 식교비 setting Error");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               exit(1);
+          }
+          
+          EXEC SQL
+          UPDATE  PKMRTMAS p
+             SET  MCARAMT  =   CEIL(250000*
+                                TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD')
+                              / TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD')  ),
+                  ODAMT    =   CEIL(350000 *
+                                TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD')
+                              / TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') )  ,
+                  ODTAXAMT =   GREATEST( 0 , CEIL(350000 *
+                                TO_CHAR(TO_DATE(P.RETDATE,'YYYYMMDD'),'DD')
+                              / TO_CHAR(LAST_DAY(TO_DATE(P.RETDATE,'YYYYMMDD')),'DD') )                        
+                              - 200000 ) 
+          WHERE  EMPNO = :empno            
+            AND  PAYCL <='A99'; //infra    AND  PAYCL <='09';   
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {    err_print(sqlca.sqlcode,"6. 식교비 setting Error");
+               sprintf(log_buff, "6. 식교비 setting Error");
+               Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+               exit(1);
+          }
+
+     }  /* END OF */
+  
+  /*정보통신수당 신규추가. 2005.01.12  DSA2000 ==================================== kth 2010.08.12 주석처리
+     EXEC SQL
+     UPDATE   PKMRTMAS p
+        SET   ITAMT = ( SELECT NVL(ITAMT,0) FROM PKMPMAS WHERE EMPNO = P.EMPNO);  
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"7. 정보통신수당 setting Error");
+          sprintf(log_buff, "7. 정보통신수당 setting Error");
+          Write_batlog(seqno++, log_buff); 
+          exit(1);
+     }
+  ==============================================================================*/
+    
+    
+  /* -----------식교비 특이자는 0으로 -----------
+  임원식교비는 225000
+  EXEC SQL
+  UPDATE   PKMRTMAS p
+  SET   MCARAMT = 0
+  WHERE  EMPNO = :empno 
+  AND  EMPNO IN (SELECT EMPNO FROM PKCMCSPE);
+  
+  if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+  {  err_print(sqlca.sqlcode,"7. 식교비 특이자는 0으로 setting Error");
+    exit(1);
+  }
+  */
+     EXEC SQL
+     SELECT   MCARNOTAX
+       INTO  :mcarnotax
+       FROM  PKCPBAS ;
+
+/* =====================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      계약직계산삭제
+======================================================================== */
+/* =====================================================================
+MJS DELETE
+  EXEC SQL
+  UPDATE PKMRTMAS p
+  SET   MCARAMT = 0
+  WHERE   PAYCL IN ('00','A1','A2','A3')
+        AND     CALYN = 'N';
+======================================================================= */
+
+     EXEC SQL
+     UPDATE  PKMRTMAS p
+        SET  MCARAMT   = NVL(MCARAMT,0),
+             ODAMT     = NVL(ODAMT,0),
+             OVTMAMT   = NVL(OVTMAMT,0),
+             MBONAMT   = NVL(MBONAMT,0)
+             WHERE   CALYN = 'N';
+     
+     EXEC SQL
+     UPDATE  PKMRTMAS p
+        SET  MCARTAXAMT = MCARAMT - :mcarnotax
+      WHERE  MCARAMT >= :mcarnotax
+        AND  CALYN = 'N';
+     
+     /*식당소재지역  100%과세 */
+     EXEC SQL
+     UPDATE PKMRTMAS P
+        SET MCARTAXAMT = (SELECT  MCARAMT
+                            FROM  PKMRTMAS A, PKCPBLD B
+                           WHERE  A.BLDCODE = B.BLDCODE
+                             AND  A.EMPNO   = P.EMPNO
+                             AND  RESTYN    = 'Y' )
+                           WHERE  EMPNO IN (SELECT  A.EMPNO
+                                              FROM  PKMRTMAS A, PKCPBLD B
+                                             WHERE  A.BLDCODE = B.BLDCODE
+                                               AND  RESTYN ='Y' )
+                             AND  CALYN = 'N';
+     
+     EXEC SQL
+     UPDATE  PKMRTMAS P
+        SET  MCARTAXAMT = 0
+      WHERE  MCARAMT < :mcarnotax
+        AND  CALYN = 'N';
+
+
+/* =========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      상여금계산로직변경
+============================================================================= */
+/* 급여 항목추가 ****************************************************************
+  EXEC   SQL
+  UPDATE  PKMRTMAS
+  SET  paysum = basicamt   + infoamt   + dutyamt  + promamt   + famiamt +
+       liceamt    + mcaramt   + odamt    + ovtmamt   + sptmamt +
+       bokjispamt + aidamt1   + aidamt2  + aidamt3   + mbonamt +
+       bonusamt   + incentamt + trainamt + winteramt + sbonamt ;
+* 급여 항목추가 *************************************************************** */
+
+/* =========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      정규직/임원분리 항목 CLEAR
+============================================================================= */
+     EXEC  SQL
+     UPDATE  PKMRTMAS
+        SET  BASICAMT = 0, INFOAMT   = 0, DUTYAMT    = 0, PROMAMT    = 0
+      WHERE  CALYN='N' ;
+           /*AND   PAYCL BETWEEN '09' AND '99' ;  2002. 10. 29. 유효성 주석처리--> 임원,정규직 모두 연봉제이기때문에...*/
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode," clear Error");
+          sprintf(log_buff, "clear Error");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+
+     printf("\n 4. 상여금 갱신 중 ....");
+     sprintf(log_buff, "\n 4. 상여금 갱신 중 ....");
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+        
+  /*  상여금을 구한다
+      정기상여,능률제고,체력단련,분기연봉,명절연봉 */
+     memset(cmdline,'\0',sizeof(cmdline));
+
+  /*sprintf(cmdline,"%s/bin/Kbin/pkq2072g %.6s %s %s", 
+                  HOMEDIR,workyymmdd,GSempno,UserId);   dsa2000   2004.11.*/
+     sprintf(cmdline,"%s/bin/Kbin/pkq2072g %.6s %s %s %s", 
+                     HOMEDIR,workyymmdd,GSempno,log_progid,log_rundate);
+     system(cmdline);
+
+     /* debug ========================= *  printf("\n [%s][%s]",cmdline,UserId);        * debug ========================= */
+                
+     update_bonus();
+
+
+/* =========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      계산항목clear추가
+============================================================================= */
+     EXEC   SQL
+     UPDATE  PKMRTMAS
+     SET  PAYSUM = NVL(BASICAMT,0) + NVL(INFOAMT,0)   + NVL(DUTYAMT,0)  +
+                   NVL(PROMAMT,0)  + NVL(FAMIAMT,0)   + NVL(LICEAMT,0)  +
+                   NVL(MCARAMT,0)  + NVL(ODAMT,0)     + NVL(OVTMAMT,0)  +
+                   NVL(SPTMAMT,0)  + NVL(BOKJISPAMT,0)+ NVL(AIDAMT1,0)  +
+                   NVL(AIDAMT2,0)  + NVL(AIDAMT3,0)   + NVL(MBONAMT,0)  +
+                   NVL(BONUSAMT,0) + NVL(INCENTAMT,0) + NVL(TRAINAMT,0) +
+                   NVL(WINTERAMT,0)+ NVL(SBONAMT,0)   + NVL(TAXPAY,0)   +  /*WINTERAMT 영업인센티브로 사용 2006.04.*/
+                   NVL(NOTAXPAY,0) + NVL(FIXPAY,0)    + NVL(QUATERPAY,0)+
+                   NVL(HOLIPAY,0)  + NVL(ROLEAMT,0)   + NVL(ITAMT,0) ; /*DSA2000 2005.01 ITAMT 추가*/
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"7. 급여총액 setting Error");
+          sprintf(log_buff, "7. 급여총액 setting Error");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+     
+     printf("\n 5. 공제금  갱신 중 ....");
+     sprintf(log_buff, "\n 5. 공제금  갱신 중 ....");
+     Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+     
+       /* **********************************************************************
+       EXEC  SQL
+       UPDATE  PKMRTMAS
+       SET  emplamt = (paysum - famiamt - bokjispamt) * 0.003;
+       if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+       {  err_print(sqlca.sqlcode,"8. 고용 보험료 setting Error");
+         exit(1);
+       } */
+    
+     /* ==================================================================================================== 
+        건강보험료 계산 2012.07. Add 
+        (급여이력의 총과세 + 퇴직월급여 과세) * 건강보험요율.
+      ************************************************ */
+      EXEC SQL /* 건강보험료 */
+      Update  Pkmrtmas A
+         Set  Medamt1
+           = (Select floor( ( (H.Taxpaysum + Paysum - (Odamt-odtaxamt) - (Mcaramt-mcartaxamt) - Notaxpay) / 12
+                      * Medirate / 100) /10 ) * 10
+                From Pkcmdbas B,
+				            (Select C.Empno, Sum(C.Taxpaysum) Taxpaysum
+             	         From Pkhphis C, Pkmrtmas D
+                      Where C.Paydate Like Substr(D.Retdate,1,4)||'%'
+                        And C.Empno = D.Empno
+                      Group By C.Empno
+             	      ) H
+               Where A.Empno = H.Empno
+              );
+            
+      if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+      {  err_print(sqlca.sqlcode,"7. 건강 보험료1 setting Error");
+        exit(1);
+      }
+      
+      /* 2014.04.11.hjku. 오류로 수정...
+         건강보험료 = 건강보험료 + 장기요양보험료 
+      EXEC SQL 
+      Update  Pkmrtmas A
+         Set  Medamt1 
+           =  Medamt1 +
+             (Select floor( (A.Medamt1 * Longmtrate / 100) /10 ) * 10
+                From Pkcmdbas B
+              );*/
+            
+      EXEC SQL 
+      Update  Pkmrtmas A
+         Set  Medamt1 
+           =  (Select Medamt1 +
+                      floor( (A.Medamt1 * Longmtrate / 100) /10 ) * 10
+                From Pkcmdbas B
+              );            
+      if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+      {  err_print(sqlca.sqlcode,"7. 건강 보험료2 setting Error");
+        exit(1);
+      }      
+     /* ==================================================================================================== */
+      
+     /* ********************************************** *
+        고용보험료 계산
+      ************************************************ */
+     set_emplamt();
+
+     /* =====================================================================================
+       변경전 : 중도퇴사면  0,말일퇴사면 공제
+           *  국민연금 계산  ***************************************** *
+       EXEC  SQL
+       UPDATE  PKMRTMAS
+       SET  ANUSELFAMT = 0
+       WHERE  SUBSTR(RETDATE,7,2) <> :LastDay;
+       if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+       {  err_print(sqlca.sqlcode,"9. 국민연금 setting Error");
+         exit(1);
+       }     
+       변경후 : 급여마스터기준_중도건,말일이건 무조건 공제
+     ======================================================================================== */
+
+     /*  식권금액 계산  **************************************************** */
+     EXEC  SQL
+     UPDATE  PKMRTMAS p
+        SET  TICKETAMT = (SELECT   NVL(TCKGIVEAMT,0)
+                            FROM   PKMMCMAS R
+                           WHERE  P.EMPNO = R.EMPNO)
+     WHERE  EMPNO IN (SELECT EMPNO FROM PKMMCMAS)
+       AND  CALYN = 'N';
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"10. 식권금액 setting Error");
+          sprintf(log_buff, "10. 식권금액 setting Error");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+     
+     
+     EXEC  SQL
+     UPDATE  PKMRTMAS P
+        SET  TICKETAMT = 0
+      WHERE  TICKETAMT IS NULL;
+
+       /*  공제총액 계산  **************************************************** *
+     급여지급후 퇴사시를 고려하여 정산여부가 Y인 경우도 */
+     EXEC  SQL
+     UPDATE  PKMRTMAS p
+        SET  DEDTOT =   NVL(MEDAMT1,0) + NVL(EMPLAMT,0) + NVL(ANUSELFAMT,0) + NVL(TICKETAMT,0) + NVL(ETCAMT,0);
+        /*        WHERE   CALYN = 'N';  */
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"11. 공제총액 setting Error");
+          sprintf(log_buff, "11. 공제총액 setting Error");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+   
+          /*  실지급액 계산  **************************************************** *
+        급여지급후 퇴사시를 고려하여 정산여부가 Y인 경우도 */
+     EXEC  SQL
+     UPDATE  PKMRTMAS p
+        SET  REALPAY = NVL(PAYSUM,0) - NVL(DEDTOT,0);
+   /*        WHERE     CALYN = 'N'; */
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"12. 실지급액 setting Error");
+          sprintf(log_buff, "12. 실지급액 setting Error");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+   
+          /*  이미 당월급여를 계산한 사람은 0으로  ****************************
+     EXEC   SQL
+     UPDATE  PKMRTMAS
+     SET  PAYSUM     = 0, BASICAMT = 0, INFOAMT   = 0, DUTYAMT    = 0,
+       PROMAMT    = 0, FAMIAMT  = 0, LICEAMT   = 0, MCARAMT    = 0,
+       OVTMAMT    = 0, SPTMAMT  = 0, BOKJISPAMT= 0, AIDAMT1    = 0,
+       AIDAMT2    = 0, AIDAMT3  = 0, MBONAMT   = 0, BONUSAMT   = 0,
+       INCENTAMT  = 0, TRAINAMT = 0, WINTERAMT = 0, SBONAMT    = 0,
+       DEDTOT     = 0, MEDAMT1  = 0, EMPLAMT   = 0, ANUSELFAMT = 0,
+       TICKETAMT  = 0, REALPAY  = 0, ODAMT     = 0, ODTAXAMT   = 0,
+       MCARTAXAMT = 0
+     WHERE   CALYN='Y' ;
+     if ( sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {  err_print(sqlca.sqlcode," clear Error");
+       exit(1);
+     }
+           ******************************* CLOSE PART : 상여일할을 0으로 SET */
+}
+
+SetCalendar(workdate)
+char *workdate;
+{
+     int i;
+     
+     for (i=0 ; i< 33 ; ++i)
+          day[i] = WEEKDAY;
+     
+     memset(tempdate,'\0',sizeof(tempdate));
+     memset(DayOfWeek,'\0',sizeof(DayOfWeek));
+     memset(LastDay,'\0',sizeof(LastDay));
+     memset(ovtmyymm,'\0',sizeof(ovtmyymm));
+     sprintf(tempdate,"%.6s%02d",workdate,1);
+     
+     EXEC  SQL
+     SELECT  to_char(add_months(to_date(:tempdate,'YYYYMMDD'),-1),'YYYYMM')
+       INTO  :ovtmyymm
+       FROM  DUAL;
+     
+     EXEC   SQL
+     SELECT  to_char(last_day(to_date(:tempdate,'YYYYMMDD')),'DD')
+       INTO  :LastDay
+       FROM  DUAL;
+     
+     for ( i = 1 ; i <= atoi(LastDay) ; ++i)
+     {
+           sprintf(tempdate,"%.6s%02d",workdate,i);
+           EXEC   SQL
+           SELECT   to_char(to_date(:tempdate,'YYYYMMDD'),'DY')
+             INTO   :DayOfWeek
+             FROM   DUAL;
+           if  (strcmp(DayOfWeek,"SUN")==0)
+                day[i] = WEEKEND;
+           
+           EXEC   SQL
+           SELECT  HOLIDATE
+             INTO  :HoliDate
+             FROM  PKCHOLI
+            WHERE  HOLIDATE = :tempdate;
+           
+           if  (sqlca.sqlcode == 0)
+                day[i] = WEEKEND;
+     
+     }
+
+}
+
+/*  퇴직일까지 식교비 일수 계산  ***************************** */
+CalMcarday(workdate)
+char *workdate;
+{
+     char  tempday[3];
+     int  carday;
+     int  i;
+     
+     memset(tempday,'\0',sizeof(tempday));
+     sprintf(tempday,"%.2s",workdate+6);
+     
+     carday = atoi(tempday);
+     
+     for (i = 1; i <= atoi(tempday); ++i)
+     {
+          if  (day[i] == WEEKEND)
+               carday --;
+     }
+     
+     return carday;
+}
+
+
+/* ===============================================================================
+    변경사유 : 고용보험료 산정 관련 프로그램 변경/추가 요청
+    변경일자 : 1998.07.10
+    변경자   : 김승회
+
+    [변경내용] ===>
+  1. 기존방식은 프로그램내에서 고용보험료 산정에 계산되는 항목들을 관리.
+  2. 고용보험 계산항목테이블(PKCEMTBL)에 등록된 기준에 따라 고용보험를
+     계산.
+
+  * 참고사항 1998.08.24
+    퇴직금필드가 넘치는 관계로 모든 항목을 급여항목과 똑같이 추가할수가 없었음
+    차후 항목추가가 필요할 경우
+    필요없는 항목을 없애고 다시 생성해야함
+    주석 안의 항목은 이름이 바뀌었거나 없는항목을 표기
+
+1999.04.07 이미 지급된 고용보험료는 환수 할수 없으므로 급여지급이 안된사람만 계산한다. 정세영 생각
+ ================================================================================ */
+/* ================================================================================
+   Version    date(yy.mm.dd)     programmer    description        relevant doc.no
+   30.00      1999.02.24         유미나        Y2K(주민번호관련)  하나로인사재개발
+================================================================================= */
+set_emplamt()
+{
+     EXEC SQL
+     UPDATE PKMRTMAS B
+        SET EMPLAMT 
+        /* 2014.05.22 하은영 고용보험 계산시 비과세급여 총액은 차감해서 계산되도록 수정  
+         = (SELECT  FLOOR(PAYSUM * EMPLDRATE  /10  ) * 10   */ 
+         = (SELECT  FLOOR((PAYSUM - (Odamt-odtaxamt) - (Mcaramt-mcartaxamt) - Notaxpay) * EMPLDRATE  /10  ) * 10  
+              FROM  PKMRTMAS A, PKCEMTBL, PKCPBAS
+             WHERE  concat(decode( substr(juminid,8,1),'1', '19','2','19','3','20','4','20'),SUBSTR(JUMINID,1,4)) > EXFRYYMM
+               AND  A.EMPNO = B.EMPNO) ; 
+   /*  WHERE  CALYN ='N';  퇴직월급여계산대상자가 아니더라도
+   *       명절,분기연봉은 환수 또는 지급하므로 모두 계산하도록 한다.*/
+   
+     EXEC SQL
+     UPDATE PKMRTMAS
+        SET emplamt = NVL(emplamt,0);
+   
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {    err_print(sqlca.sqlcode,"8. 고용 보험료 setting Error");
+          sprintf(log_buff, "8. 고용 보험료 setting Error");
+          Write_batlog(seqno++, log_buff); /*dsa2000 Rexec 대체*/
+          exit(1);
+     }
+}
+
+/************************************************************************
+ function :  update_bonus
+ 임시테이블에서 계산한 자료를 퇴직정산 마스터의 상여금 항목에
+ 입력합니다.
+ *************************************************************************/
+/* =========================================================================
+ Version  date(yy.mm.dd)  programmer  description            relevant doc.no
+  30.00    1999.02.28      민정숙     연봉제관련             하나로재개발
+                                      상여금계산로직변경(추징,환급) 일할
+============================================================================= */
+void  update_bonus()
+{
+     /* 분기연봉 : 7 */
+     EXEC SQL
+     UPDATE  PKMRTMAS A
+        SET  QUATERPAY =  ( SELECT REALAMT
+                              FROM   PKMGBMAS_RT B
+                             WHERE  A.EMPNO = B.EMPNO
+                               AND    BONKIND ='7' )
+      WHERE  EMPNO IN ( SELECT  EMPNO FROM PKMGBMAS_RT
+                         WHERE  BONKIND ='7'
+                           AND  REALAMT <> 0);
+  
+    if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403) 
+    {
+         err_print(sqlca.sqlcode," 분기 연봉 설정");
+         /*sprintf(log_buff, " 분기 연봉 설정");
+               Write_batlog(seqno++, log_buff); dsa2000 Rexec 대체*/
+         exit(1);
+    }
+  
+           /* 명절연봉 : 8 */
+     EXEC SQL
+     UPDATE  PKMRTMAS A
+        SET  HOLIPAY =  ( SELECT  REALAMT
+                            FROM  PKMGBMAS_RT B
+                           WHERE  A.EMPNO = B.EMPNO
+                             AND  BONKIND ='8' )
+     WHERE  EMPNO IN ( SELECT  EMPNO FROM PKMGBMAS_RT
+                        WHERE  BONKIND ='8'
+                          AND  REALAMT <> 0);
+  
+    if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403) 
+    {
+         err_print(sqlca.sqlcode," 명절 연봉 설정");
+         /*sprintf(log_buff, " 명절 연봉 설정");
+               Write_batlog(seqno++, log_buff); dsa2000 Rexec 대체*/
+         exit(1);
+    }
+  
+     /* 정기상여 : 1 */
+     EXEC SQL
+     UPDATE  PKMRTMAS A
+        SET  BONUSAMT = ( SELECT  REALAMT
+                           FROM  PKMGBMAS_RT B
+                          WHERE  A.EMPNO = B.EMPNO
+                            AND  BONKIND ='1' )
+     WHERE  EMPNO IN ( SELECT  EMPNO FROM PKMGBMAS_RT
+                        WHERE  BONKIND ='1'
+                          AND  REALAMT <> 0);
+  
+    if ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403)) 
+    {
+         err_print(sqlca.sqlcode," 정기 상여 설정");
+         /*sprintf(log_buff, " 정기 상여 설정");
+               Write_batlog(seqno++, log_buff); dsa2000 Rexec 대체*/
+         exit(1);
+    }
+  
+     /* 능률상여 : 2 ***************
+        leerk  1999.03.19  해당자 없슴
+     EXEC SQL
+     UPDATE PKMRTMAS A
+     SET    INCENTAMT = ( SELECT REALAMT
+             FROM   R_PKMGBMAS B
+             WHERE  A.EMPNO = B.EMPNO
+             AND    BONKIND ='2' )
+     WHERE  EMPNO IN ( SELECT EMPNO FROM PKMGBMAS_RT
+           WHERE  BONKIND ='2'
+           AND    REALAMT <> 0);
+    if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403) {
+      err_print(sqlca.sqlcode," 능률 상여 설정");
+      exit(1);
+    }
+  
+       ************************************ */
+  
+     /* 체단상여 : 3 */
+     EXEC SQL
+     UPDATE  PKMRTMAS A
+        SET  TRAINAMT = ( SELECT  REALAMT
+                            FROM  PKMGBMAS_RT B
+                           WHERE  A.EMPNO = B.EMPNO
+                             AND  BONKIND ='3' )
+      WHERE  EMPNO IN ( SELECT  EMPNO FROM PKMGBMAS_RT
+                        WHERE  BONKIND ='3'
+                          AND  REALAMT <> 0);
+  
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403) 
+     {
+          err_print(sqlca.sqlcode," 체단 상여 설정");
+          /*sprintf(log_buff, " 체단 상여 설정");
+                Write_batlog(seqno++, log_buff); dsa2000 Rexec 대체*/
+          exit(1);
+     }
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);    
+          return(FAILURE);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

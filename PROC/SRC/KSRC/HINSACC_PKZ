@@ -1,0 +1,21 @@
+/* 임원급여 2015.10. 기준 */
+hinsacc pkz1040g
+hinsacc pkz10501
+hinsacc pkz10502
+hinsacc pkz1150g
+hinsacc pkz3010g
+hinsacc pkz4021g
+hinsacc pkz4023g
+hinsacc pkz4025g
+hinsacc pkz4040g
+hinsacc pkz4041g
+
+mv pkz1040g /hper/insa/HINSA/proc/bin/Kbin
+mv pkz10501 /hper/insa/HINSA/proc/bin/Kbin
+mv pkz10502 /hper/insa/HINSA/proc/bin/Kbin
+mv pkz3010g /hper/insa/HINSA/proc/bin/Kbin
+mv pkz4021g /hper/insa/HINSA/proc/bin/Kbin
+mv pkz4023g /hper/insa/HINSA/proc/bin/Kbin
+mv pkz4025g /hper/insa/HINSA/proc/bin/Kbin
+mv pkz4040g /hper/insa/HINSA/proc/bin/Kbin
+mv pkz4041g /hper/insa/HINSA/proc/bin/Kbin

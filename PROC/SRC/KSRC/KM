@@ -1,0 +1,31 @@
+hinsacc pkq6041g
+hinsacc pkc3010g
+hinsacc pkc4050g
+hinsacc pkc10801
+hinsacc pkc10802
+hinsacc pkq2070g
+hinsacc pkq2073g
+hinsacc pkq2075g
+hinsacc pkq2100g
+hinsacc pkg3070g
+hinsacc pkq4020g
+hinsacc pkq4020g_es
+hinsacc pkq5090g
+hinsacc pky1110g
+hinsacc pkw1030g
+
+cp pkq6041g /hper/insa/HINSA/proc/bin/Kbin
+cp pkc3010g /hper/insa/HINSA/proc/bin/Kbin
+cp pkc4050g /hper/insa/HINSA/proc/bin/Kbin
+cp pkc10801 /hper/insa/HINSA/proc/bin/Kbin
+cp pkc10802 /hper/insa/HINSA/proc/bin/Kbin
+cp pkq2070g /hper/insa/HINSA/proc/bin/Kbin
+cp pkq2073g /hper/insa/HINSA/proc/bin/Kbin
+cp pkq2075g /hper/insa/HINSA/proc/bin/Kbin
+cp pkq2100g /hper/insa/HINSA/proc/bin/Kbin
+cp pkg3070g /hper/insa/HINSA/proc/bin/Kbin
+cp pkq4020g /hper/insa/HINSA/proc/bin/Kbin
+cp pkq4020g_es /hper/insa/HINSA/proc/bin/Kbin
+cp pkq5090g /hper/insa/HINSA/proc/bin/Kbin
+cp pky1110g /hper/insa/HINSA/proc/bin/Kbin
+cp pkw1030g /hper/insa/HINSA/proc/bin/Kbin
