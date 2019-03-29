@@ -1,0 +1,893 @@
+{---------------------Program  Header -------------------------------------------
+PROGRAM-NAME    : PIE2270C(인력현황 추출-경영기획팀 자료) - 3tier
+SYSTEM-NAME     : 종합인사정보
+SUBSYSTEM-NAME  : 인사통계
+Programmer      : 서혜미
+Version         : 30.00
+Date            : 2002.06.05
+Update contents
+    버전     수정일        수정자   관련근거              수정내용
+    1.01     2002.08.08    서혜미   전2002-3380           전문계약직 관련.단기적으로 계약직+전문계약직 향후 바뀔수 있음.
+    1.09     2003.09.08    정규용   자체개선              Indy Rexecd 로 컴포넌트 교체
+    30.01    2003.10.10    김현제   개선작업              TMAX30 -> TMAX38 로 업그레이드, 컴포넌트 교체, 폼디자인 변경
+    30.02    2004.06.16    정규용   자체개선              직급체계변경으로 엑셀 추출시 직급변환
+    30.03    2004.06.29    이민용   자체개선               CI변경으로 폼캡션에서 회사명 뺌
+    30.04    2005.06.03    변춘미   임현수      총괄부서코드추가에 따라 쿼리수정_하드코딩
+                                                (차수 변동시 'D0000','BZ000' 하드코딩부분 삭제)
+--------------------------------------------------------------------------------
+}
+unit pie2270c1;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
+  StdCtrls, Buttons, ExtCtrls, ComCtrls, Db, Tmax_DataSetText, Gauges,
+  OnFocusButton, OnEditMdate, OnEditBaseCtrl, OnEditStdCtrl, OnEditBtnCtrl,
+  OnTmaxPersonEdit, OnScheme, OnShapeLabel, Tmax_session,
+  OnInsaCommon, kpaylib, TmaxFunc;
+
+type
+  TFpie2270c1 = class(TForm)
+    SF_Main: TOnSchemeForm;
+    PA_MainPanel: TPanel;
+    Shape1: TShape;
+    Label1: TLabel;
+    Panel3: TPanel;
+    ED_Workdate: TOnDateEdit;
+    ED_Lastworkdate: TOnDateEdit;
+    BB_Close: TOnFocusButton;
+    BB_Run: TOnFocusButton;
+    Qr_sysdate: TTMaxDataSet;
+    SaveDialog1: TSaveDialog;
+    TCDS: TTMaxDataSet;
+    Tcds_tem1: TTMaxDataSet;
+    TDml: TTMaxDataSet;
+    SB_Help: TStatusBar;
+    Shape4: TShape;
+    Label2: TLabel;
+    Shape5: TShape;
+    Label3: TLabel;
+    Shape6: TShape;
+    Label4: TLabel;
+    SL_LstEmpNo: TOnShapeLabel;
+    TMaxSession: TTMaxSession;
+    SL_EmpNo: TOnShapeLabel;
+    msgMemo: TMemo;
+    TDS_batch: TTMaxDataSet;
+    procedure FormPaint(Sender: TObject);
+    procedure BB_RunClick(Sender: TObject);
+    procedure BB_CloseClick(Sender: TObject);
+    procedure FormActivate(Sender: TObject);
+    procedure ReadPimvari;
+
+  private
+    { Private declarations }
+    Orgnum       : string;        //현조직차수
+    Lworkdate    : string;        //최종작업일 (월별 인력현황)
+    Lempno       : string;        //최종작업자 사번
+    Lkorname     : string;        //최종작업자 성명
+    up_writetime : string;
+    SysDate      : string;
+    function     Pro_C_Run:Boolean;       //현원생성 pro*c 생성
+    procedure    Work_update;     //최종작업자 update
+    procedure    Work_update_his; //최종작업자 update
+
+  public
+    { Public declarations }
+    PaintCount : integer;
+    Pempno     : string;
+    Pkorname   : string;
+    Password   : string;
+
+    Rundate,  ProgId, CmdStr   : String;  //서비스 개발...
+    Procedure  Display_Msg(p_str:string);
+  end;
+
+var
+  Fpie2270c1: TFpie2270c1;
+  SqlText     : string;
+  ParamVariant: string;
+  Sqlcds_tem1 : string;
+  Sqlcds_tem2 : string;
+  Sqlcds_tem3 : string;
+  Sqlcds_tem4 : string;
+  ErrorHelp   : array[0..255] of char;
+
+implementation
+
+{$R *.DFM}
+
+procedure TFpie2270c1.BB_CloseClick(Sender: TObject);
+begin
+    Close;
+end;
+
+procedure TFpie2270c1.FormActivate(Sender: TObject);
+begin
+  PaintCount := 0;
+  Pempno   := Hinsa_Param(CmdLine, 1);
+  Pkorname := Hinsa_Param(CmdLine, 2);
+  Password := Hinsa_Param(cmdLine, 3);
+end;
+
+procedure TFpie2270c1.FormPaint(Sender: TObject);
+//var
+//   msg : string;
+begin
+  Self.OnPaint := Nil;
+  Application.ProcessMessages;
+  SB_Help.Panels[1].Text := '인사시스템에 접속 중입니다...';
+
+  ///////////////////////////////////////////////////////////////////////
+  TMaxSession.EnvFileName := GetHomeDir+'\newhana.env';
+  TMaxSession.LabelName   := 'HANAROHPER';
+  TMaxSession.Connect  := False;
+  TMaxSession.Host     := Hinsa_Param(cmdline,10);
+  TMaxSession.Port     := '9999';
+
+  try
+    TMaxSession.Connect := True;
+  except
+    Application.MessageBox(PChar('APP서버 접속 실패'),'에러',mb_ok);
+    Application.Terminate;
+    Exit;
+  end;
+
+  //2013.11. Add 파라미터와 비교하여 암호 다르면 접속 막음.
+  FM_Tmax := TFM_Tmax.Create(Self);
+  FM_Tmax.T_Session := TMaxSession;
+  if FM_Tmax.PassWordChk(Hinsa_Param(cmdline,1), Hinsa_Param(cmdline,3)) = 0 then
+    Application.Terminate;
+  ///////////////////////////////////////////////////////////////////////
+
+  SB_Help.Panels[1].Text := '';
+
+  Application.ProcessMessages;
+
+//   L_Name.Caption    := Pkorname +  '(' + Pempno + ')';
+//   Sysdate           := Tfunc_GetTime;
+
+  Qr_sysdate.Open;
+  Sysdate := Copy(Qr_sysdate.FieldByName('sysdate').AsString,1,8);
+  Qr_sysdate.Close;
+  up_writetime      := sysdate;
+//   CurDate.Caption   := Copy(SysDate,1,4)+'/'+Copy(SysDate,5,2)+'/'+Copy(SysDate,7,2);
+  ED_Workdate.NoFormatDate := Copy(SysDate, 1, 8);
+  ReadPimvari;      //최종작업일자 read
+  ED_Lastworkdate.NoFormatDate  := Copy(Lworkdate,1,8);
+  SL_EmpNo.ValueCaption := Pempno+'-'+Pkorname;
+  SB_Help.Panels[1].Text := '작업조건을 확인후 실행하십시요.';
+
+  //Workdate.Setfocus;
+  PaintCount := 1;
+end;
+
+procedure TFpie2270c1.ReadPimvari;
+var
+  tem : string;
+begin
+  tem :=' SELECT VALUE1 FROM PIMVARI                 '+   {현조직차수}
+        ' WHERE GUBUN = ''00'' AND SGUBUN = ''0001'' ';
+  With TCDS do
+  begin
+    Close;
+    ClearFieldInfo;
+    AddField('VALUE1'             , ftString,  20);
+    ServiceName := 'PIE2270C_sel1';
+    Sql.Clear;
+    Sql.Text     := tem;
+    open;
+  end;
+  Orgnum := TCDS.FieldByName('value1').AsString;
+
+    tem :=' SELECT VALUE1 FROM PIMVARI                 '+   {월별 인력현황 최종작업일자}
+          ' WHERE GUBUN = ''E1'' AND SGUBUN = ''0001'' ';
+
+    With TCDS do
+    begin
+      Close;
+      ClearFieldInfo;
+      AddField('VALUE1'             , ftString,  20);
+
+      ServiceName := 'PIE2270C_sel1';
+      Sql.Clear;
+      Sql.Text     := tem;
+      open;
+    end;
+    Lworkdate := TCDS.FieldByName('value1').AsString;
+
+    tem :=' SELECT VALUE2||VALUE3 VALUE FROM PIMVARI     '+   {월별 인력현황 최종작업자}
+          ' WHERE GUBUN = ''E1'' AND SGUBUN = ''0001''   ';
+
+    With TCDS do
+    begin
+      Close;
+      ClearFieldInfo;
+      AddField('VALUE'             , ftString,  20);
+
+      ServiceName := 'PIE2270C_sel1';
+      Sql.Clear;
+      Sql.Text     := tem;
+      open;
+    end;
+     Lempno     := copy(TCDS.FieldByName('value').AsString,1,4);
+     Lkorname  := copy(TCDS.FieldByName('value').AsString,5,10);
+     SL_LstEmpNo.ValueCaption := Lempno+'-'+Lkorname;
+end;
+
+//현원생성
+function TFpie2270c1.Pro_C_Run:Boolean;
+var
+  rxcMsg : String;
+  tmp : String;
+begin
+
+  if MessageDlg('[주의]'+#13+#10+#13+#10+'현원을 생성합니다.OK 버튼을 누르시고 '+
+                #13+#10+''+#13+#10+'잠시기다려 주십시요!', mtWarning, [mbOK], 0) = mrOK then
+  begin
+    BB_Run.Enabled := False;
+    BB_Close.Enabled := False;
+    SB_Help.Panels[1].Text := '추출 진행중입니다....기다려주세요!!';
+
+    msgMemo.Lines.Add('******************************************');
+    msgMemo.Lines.Add('********현재 데이터 추출중입니다**********');
+    msgMemo.Lines.Add('******************************************');
+    
+    ////////////////////////////////////////////////////////////////////////////////
+    msgMemo.Clear;
+    msgMemo.Lines.Add('실행중...');
+
+    FM_Tmax           := TFM_Tmax.Create(Self);
+    FM_Tmax.T_Session := TMaxSession;
+    Rundate           := FM_Tmax.GetData('sysdate','','');
+
+    Rundate           := Copy(Rundate,1,14);
+    ProgId            := 'pie1012g';
+    // 경진의 메모(주의사항) :1) 꼭 bin디렉토리에서 실행하라(권한 문제 땜시 그렇다구 하네여..
+    //                        2) 서버에서 컴파일 후 src에 있는 실행파일을 bin으로 복사할때 꼭 mv 시켜라
+    //             logfile확인 :tmax/log/ulog/htmax_batch.out
+
+    CmdStr  := '/hper/insa/HINSA/proc/bin/Ibin/pie1012g'+' '+ Pempno + ' ' + '11' + ' '
+                        +  copy(Sysdate,1,6) + ' '+Orgnum + ' ' + 'E0' + ' ' //인원관리단위(E0)
+                        +  'Y' + ' ' + 'Y' + ' ' + 'N' + ' ' + 'N' + ' '       //임원,교육/파견,정직,휴직 포함여부
+                        +  Lworkdate + ' ' + Lworkdate                         //계획인원최종생성일, 현원최종생성일 (계획인원 필요없으므로 계획,현원 같게함)
+                        + ' '+ Pempno+' '+ProgId+' '+Rundate ;
+
+    with TDS_batch do
+      begin
+        Close;
+        ServiceName := 'HINSA_batch';
+        ClearFieldInfo;
+        ClearParamInfo;
+        AddParam('cmdstr', 300, CmdStr);
+        Execute;
+
+        Close;
+        ServiceName := 'SHR0SSEL';
+        ClearFieldInfo;
+        ClearParamInfo;
+        AddField('RESULT', ftString, 5000);
+        Sql.Text := Format('SELECT RESULT FROM PYBATLOG '+
+                           ' WHERE RUNDATE = ''%s''     '+
+                           '   AND PROGID  = ''%s''     '+
+                           ' ORDER BY to_number(SEQNO)  ',[Rundate, ProgId ]);
+        Open;
+
+        while not Eof do
+          begin
+            msgMemo.Lines.Add(FieldByName('RESULT').AsString);
+            Next;
+          end;
+      end;    //with TDS_batch do
+    /////////////////////////////////////////////////////////////////////////
+
+    if Pos('OK',msgMemo.Text) > 0 then
+    begin
+         SB_Help.Panels[1].text := '정상적으로 추출되었습니다.';
+         msgMemo.Lines.Add('********   데이터 추출 완료  **********');
+         BB_Run.Enabled := True;
+         BB_Close.Enabled := True;
+         Result := True;
+    end
+    else
+    begin
+         showmessage(msgMemo.Text +#13+'관리자에게 문의하세요');
+         SB_Help.Panels[1].text := msgMemo.Text;
+         Result :=  False;
+    end;
+  end;
+end;
+
+Procedure TFpie2270c1.Display_Msg(p_str:String);
+var
+   i,j     : LongInt;
+   Temp    : Array[0..1000] of Char;
+   HostStr : String;
+begin
+     i        := 0;
+     j        := 0;
+     HostStr  := '';
+     for i := 0 to Length(p_str) - 1 do
+     begin
+       if p_str[i] = #10 then
+         begin
+           msgMemo.Lines.Add( HostStr );
+           HostStr := '';
+         end
+       else
+         HostStr := HostStr + p_str[i];
+     end;
+     if HostStr <> '' then msgMemo.Lines.Add( HostStr );
+end;
+
+
+procedure TFpie2270c1.BB_RunClick(Sender: TObject);
+var
+//  Fexcel : textfile;
+//  S : String;
+  i : integer;
+  totcnt  : integer;
+//  tem : string;
+begin
+    if not Pro_C_Run then
+    begin
+       showmessage('에러!! 데이터 추출 실패- 관리자에게 문의하십시요!!');
+       System.Exit;
+    end
+    else
+    begin
+       msgMemo.Lines.Add('******** 엑셀 추출 작업 시작**********');
+       SB_Help.Panels[1].Text    := '부서별 직군별 인원현황을 추출하고 있습니다.';
+        //SendMessage(P_helpinfo.handle,WM_PAINT,0,0);
+
+    //1.부서별 직군별 인원현황
+        //SqlText := ('  SELECT DECODE(A.BONCODE,''D0000'',''BZ000'',A.BONCODE) DEPTCODE,B.DEPTNAME||'' ''||B.DEPTNA3 DEPTNAME,   '+#13#10+
+        SqlText := ('  SELECT A.BONCODE DEPTCODE,B.DEPTNAME||'' ''||B.DEPTNA3 DEPTNAME,   '+#13#10+
+                    '         COUNT(DECODE(JOBGUN,''00'',''1'','''')) A,         '+#13#10+
+                    '         COUNT(DECODE(JOBGUN,''11'',''1'','''')) B,         '+#13#10+
+                    '         COUNT(DECODE(JOBGUN,''22'',''1'','''')) C,         '+#13#10+
+                    '         COUNT(DECODE(JOBGUN,''33'',''1'','''')) D,         '+#13#10+
+                    '         COUNT(DECODE(JOBGUN,''44'',''1'','''')) E,         '+#13#10+
+                    '         COUNT(DECODE(JOBGUN,''50'',''1'','''')) F,         '+#13#10+
+                    '         COUNT(DECODE(JOBGUN,''90'',''1'','''')) +COUNT(DECODE(JOBGUN,''70'',''1'','''')) +COUNT(DECODE(JOBGUN,''80'',''1'','''')) G,    '+#13#10+ //전문계약직 추가 2002.08.08 shm
+                    '         COUNT(DECODE(JOBGUN,''H1'',''1'','''')) H,         '+#13#10+
+                    '         COUNT(DECODE(JOBGUN,''45'',''1'','''')) +COUNT(DECODE(JOBGUN,NULL,''1'',''''))   I     '+#13#10+ //기타
+                    '    FROM PIMPMAS A, PYCDEPT B                               '+#13#10+
+                    '  WHERE  A.ORGNUM   = B.ORGNUM                              '+#13#10+
+                    '    AND  A.BONCODE  = B.DEPTCODE                            '+#13#10+
+                    '    AND  PSTATEYN = ''Y''                                   '+#13#10+
+            format ('    AND A.ORGNUM = ''%s'' ',[Orgnum])                        +#13#10+
+                    //'  GROUP BY DECODE(A.BONCODE,''D0000'',''BZ000'',A.BONCODE),B.DEPTNAME,B.DEPTNA3    ');
+                    '  GROUP BY A.BONCODE,B.DEPTNAME,B.DEPTNA3     ');
+
+        With Tcds_tem1 do begin
+          Close;
+          ClearFieldInfo;
+          AddField('DEPTCODE'         , ftString,  6 );
+          AddField('DEPTNAME'         , ftString,  91);
+          AddField('A'                , ftString,  3 );
+          AddField('B'                , ftString,  3 );
+          AddField('C'                , ftFloat ,  3 );
+          AddField('D'                , ftString,  3 );
+          AddField('E'                , ftString,  3 );
+          AddField('F'                , ftString,  3 );
+          AddField('G'                , ftFloat ,  3 );
+          AddField('H'                , ftString,  3 );
+          AddField('I'                , ftString,  3 );
+
+          ServiceName := 'PIE2270C_sel2';
+          Sql.Clear;
+          Sql.Text     := SqlText;
+
+          open;
+        end;
+      SaveDialog1.FileName :='부서별 직군별 인원현황.xls';
+      if SaveDialog1.Execute then
+      begin
+          with TStringList.Create do
+          try
+
+            Add(pchar('부서코드'+#9+'부서명'+#9+'임원'+#9+'경영관리직군'+#9+'마케팅/영업직군'+#9+'R&D직군'+#9+'기술직군'+#9+'특정직군'+#9+'계약직군'+#9+'파견직군'+#9+'기타'));
+
+            Tcds_tem1.Last;
+            totcnt :=  Tcds_tem1.Recordcount;
+
+            Tcds_tem1.First;
+            //for i := 1 to Tcds_tem1.Recordcount do
+            while not Tcds_tem1.Eof do
+            begin
+              Add(Format('%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s',
+                    [ REPLACE(Tcds_tem1.Fields[0].AsString,'BZ000','D0000'),
+                      Tcds_tem1.Fields[1].AsString,
+                      Tcds_tem1.Fields[2].AsString,
+                      Tcds_tem1.Fields[3].AsString,
+                      Tcds_tem1.Fields[4].AsString,
+                      Tcds_tem1.Fields[5].AsString,
+                      Tcds_tem1.Fields[6].AsString,
+                      Tcds_tem1.Fields[7].AsString,
+                      Tcds_tem1.Fields[8].AsString,
+                      Tcds_tem1.Fields[9].AsString,
+                      Tcds_tem1.Fields[10].AsString ]));
+              Tcds_tem1.Next;
+            end; // end of for
+            SaveDialog1.FileName :='부서별 직군별 인원현황.xls';
+            SaveToFile(SaveDialog1.FileName);
+          finally
+          Free;
+          end; // end of try
+      end; //end of SaveDialog1.Execute
+
+        SB_Help.Panels[1].Text    := '부서별 직책별 인원현황을 추출하고 있습니다.';
+        //SendMessage(P_helpinfo.handle,WM_PAINT,0,0);
+
+    //2.부서별 직위별 인원현황
+{        SqlText := ( 'SELECT DECODE(A.BONCODE,''D0000'',''BZ000'',A.BONCODE) DEPTCODE,B.DEPTNAME||'' ''||B.DEPTNA3 DEPTNAME,                                        '+
+                            '       COUNT(DECODE(PAYRA,''03'',''1'','''')) A,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''05'',''1'','''')) B,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''06'',''1'','''')) C,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''07'',''1'','''')) D,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''09'',''1'','''')) E,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''16'',''1'','''')) + COUNT(DECODE(PAYRA,''24'',''1'','''')) F,        '+
+                            '       COUNT(DECODE(PAYRA,''17'',''1'','''')) G,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''25'',''1'','''')) + COUNT(DECODE(PAYRA,''45'',''1'','''')) H,        '+
+                            '       COUNT(DECODE(PAYRA,''26'',''1'','''')) I,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''28'',''1'','''')) J,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''48'',''1'','''')) K,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''49'',''1'','''')) L,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''4C'',''1'','''')) M,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''71'',''1'','''')) N,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''72'',''1'','''')) O,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''73'',''1'','''')) P,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''74'',''1'','''')) Q,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''75'',''1'','''')) R,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''76'',''1'','''')) S,                                                 '+
+                            '       COUNT(DECODE(PAYRA,''77'',''1'','''')) + COUNT(DECODE(PAYRA,''78'',''1'','''')) T,        '+
+                            '       COUNT(DECODE(PAYRA,''81'',''1'','''')) U,       '+
+                            '       COUNT(DECODE(PAYRA,''82'',''1'','''')) V,       '+
+                            '       COUNT(DECODE(PAYRA,''83'',''1'','''')) W,       '+
+                            '       COUNT(DECODE(PAYRA,''84'',''1'','''')) X,       '+
+                            '       COUNT(DECODE(PAYRA,''E3'',''1'','''')) Y,       '+
+                            '       COUNT(DECODE(PAYRA,''E2'',''1'','''')) + COUNT(DECODE(PAYRA,''C1'',''1'','''')) Z,       '+  //계약+전문계약직 추가 2002.08.08 SHM
+                            '       COUNT(DECODE(PAYRA,''H1'',''1'','''')) ZZ       '+
+                            '  FROM PIMPMAS A, PYCDEPT B                            '+
+                            'WHERE  A.ORGNUM   = B.ORGNUM                           '+
+                            '  AND  A.BONCODE  = B.DEPTCODE                         '+
+                            '  AND  PSTATEYN = ''Y''                                '+
+                    format ('    AND A.ORGNUM = ''%s'' ',[Orgnum])                  +
+                            'GROUP BY DECODE(A.BONCODE,''D0000'',''BZ000'',A.BONCODE),B.DEPTNAME,B.DEPTNA3   ');   }
+               //SqlText := ( 'SELECT DECODE(A.BONCODE,''D0000'',''BZ000'',A.BONCODE) DEPTCODE,B.DEPTNAME||'' ''||B.DEPTNA3 DEPTNAME, '+#13#10+
+               SqlText := ( 'SELECT A.BONCODE DEPTCODE,B.DEPTNAME||'' ''||B.DEPTNA3 DEPTNAME, '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A21'',''1'','''')) A,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A25'',''1'','''')) B,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A31'',''1'','''')) C,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A41'',''1'','''')) D,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A45'',''1'','''')) E,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A51'',''1'','''')) F,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A61'',''1'','''')) G,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A71'',''1'','''')) H,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A81'',''1'','''')) I,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A84'',''1'','''')) J,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A87'',''1'','''')) K,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''A91'',''1'','''')) L,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''C11'',''1'','''')) M,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''C15'',''1'','''')) N,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''D11'',''1'','''')) O,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''D41'',''1'','''')) P,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''D51'',''1'','''')) Q,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''D61'',''1'','''')) R,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''H10'',''1'','''')) S,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''H11'',''1'','''')) T,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''H51'',''1'','''')) U,                                                 '+#13#10+
+                            '       COUNT(DECODE(PAYRA,''K11'',''1'','''')) V,                                                 '+#13#10+
+                            '       '''' W,       '+#13#10+
+                            '       '''' X,       '+#13#10+
+                            '       '''' Y,       '+#13#10+
+                            '       '''' Z,       '+#13#10+  //계약+전문계약직 추가 2002.08.08 SHM
+                            '       '''' ZZ       '+#13#10+
+                            '  FROM PIMPMAS A, PYCDEPT B                            '+#13#10+
+                            'WHERE  A.ORGNUM   = B.ORGNUM                           '+#13#10+
+                            '  AND  A.BONCODE  = B.DEPTCODE                         '+#13#10+
+                            '  AND  ((PSTATE < 80 ) or (PSTATE = ''82''))           '+#13#10+
+                    format ('    AND A.ORGNUM = ''%s'' ',[Orgnum])                   +#13#10+
+                            //'GROUP BY DECODE(A.BONCODE,''D0000'',''BZ000'',A.BONCODE),B.DEPTNAME,B.DEPTNA3   ');
+                            'GROUP BY A.BONCODE,B.DEPTNAME,B.DEPTNA3   ');
+
+        With Tcds_tem1 do begin
+          Close;
+          ClearFieldInfo;
+          AddField('DEPTCODE', ftString,  6 );
+          AddField('DEPTNAME', ftString,  91);
+          AddField('A'       , ftString,  3 );
+          AddField('B'       , ftString,  3 );
+          AddField('C'       , ftString,  3 );
+          AddField('D'       , ftString,  3 );
+          AddField('E'       , ftString,  3 );
+          AddField('F'       , ftString,  3 );
+          AddField('G'       , ftString,  3 );
+          AddField('H'       , ftString,  3 );
+          AddField('I'       , ftString,  3 );
+          AddField('J'       , ftString,  3 );
+          AddField('K'       , ftString,  3 );
+          AddField('L'       , ftString,  3 );
+          AddField('M'       , ftString,  3 );
+          AddField('N'       , ftString,  3 );
+          AddField('O'       , ftString,  3 );
+          AddField('P'       , ftString,  3 );
+          AddField('Q'       , ftString,  3 );
+          AddField('R'       , ftString,  3 );
+          AddField('S'       , ftString,  3 );
+          AddField('T'       , ftString,  3 );
+          AddField('U'       , ftString,  3 );
+          AddField('V'       , ftString,  3 );
+          AddField('W'       , ftString,  3 );
+          AddField('X'       , ftString,  3 );
+          AddField('Y'       , ftString,  3 );
+          AddField('Z'       , ftString,  3 );
+          AddField('ZZ'      , ftString,  3 );
+
+          ServiceName := 'PIE2270C_sel3';
+          Sql.Clear;
+          Sql.Text     := SqlText;
+
+          open;
+        end;
+      SaveDialog1.FileName :='부서별 직책별 인원현황.xls';
+      if SaveDialog1.Execute then
+      begin
+          with TStringList.Create do
+          try         //1           2            3         4           5         6         7           8           9        10
+            Add(pchar('부서코드'+#9+'부서명'+#9+'사장'+#9+'부사장'+#9+'전무'+#9+'상무'+#9+'상무보'+#9+'부문장'+#9+'단장'+#9+'실장'+#9+
+                      '본부장'+#9+'그룹장'+#9+'원장'+#9+'담당'+#9+'팀장'+#9+'팀장직대'+#9+'팀원'+#9+'비상계획관'+#9+'수습'+#9+'인턴'+#9+'무기계약사원'+#9+'계약사원'+#9+
+                      '고문'+#9+'파견사원'));
+
+            Tcds_tem1.First;
+            //for i := 1 to Tcds_tem1.Recordcount do
+            while not Tcds_tem1.Eof do
+            begin
+              Add(Format('%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+
+                         '%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+
+                         '%s'+#9+'%s'+#9+'%s'+#9+'%s',
+                    [ REPLACE(Tcds_tem1.Fields[0].AsString,'BZ000','D0000'),
+                      Tcds_tem1.Fields[1].AsString,
+                      Tcds_tem1.Fields[2].AsString,
+                      Tcds_tem1.Fields[3].AsString,
+                      Tcds_tem1.Fields[4].AsString,
+                      Tcds_tem1.Fields[5].AsString,
+                      Tcds_tem1.Fields[6].AsString,
+                      Tcds_tem1.Fields[7].AsString,
+                      Tcds_tem1.Fields[8].AsString,
+                      Tcds_tem1.Fields[9].AsString,
+                      Tcds_tem1.Fields[10].AsString,
+                      Tcds_tem1.Fields[11].AsString,
+                      Tcds_tem1.Fields[12].AsString,
+                      Tcds_tem1.Fields[13].AsString,
+                      Tcds_tem1.Fields[14].AsString,
+                      Tcds_tem1.Fields[15].AsString,
+                      Tcds_tem1.Fields[16].AsString,
+                      Tcds_tem1.Fields[17].AsString,
+                      Tcds_tem1.Fields[18].AsString,
+                      Tcds_tem1.Fields[19].AsString,
+                      Tcds_tem1.Fields[20].AsString,
+                      Tcds_tem1.Fields[21].AsString,
+                      Tcds_tem1.Fields[22].AsString,
+                      Tcds_tem1.Fields[23].AsString ]));
+
+              Tcds_tem1.Next;
+            end; // end of for
+           SaveDialog1.FileName :='부서별 직책별 인원현황.xls';
+           SaveToFile(SaveDialog1.FileName);
+          finally
+          Free;
+          end; // end of try
+      end; //end of SaveDialog1.Execute
+
+        SB_Help.Panels[1].Text    := '근무부서별 인원현황을 추출하고 있습니다.';
+        //SendMessage(P_helpinfo.handle,WM_PAINT,0,0);
+
+    //3.근무부서별 인원현황
+        //SqlText := ('SELECT  A.ORGNUM,DECODE(A.DEPTCODE,''D0000'',''BZ000'',A.DEPTCODE) DEPTCODE,B.DEPTNAME ||'' ''||B.DEPTNA3 DEPTNAME,  '+#13#10+
+        SqlText := ('SELECT  A.ORGNUM,A.DEPTCODE DEPTCODE,B.DEPTNAME ||'' ''||B.DEPTNA3 DEPTNAME,  '+#13#10+
+                    '        B.FINCODE,PDIRSUM,                                           '+#13#10+
+//                  '        PPOS1,PPOS2,PPOS3,PPOS4,PPOS5,PPOS6,PPOS7,PPOS8,PPOS9,       '+
+                    //'        P10,P20,P22,P32,P40,P42,P44,''XX'' XX,''YY'' YY,PPOSSUM,     '+#13#10+
+                    '        P10,P20,P22,P32,P40,P42,P44,psconsum,''YY'' YY,PPOSSUM,     '+#13#10+
+                    '        PSPESUM,PEMPTOT,PTEMPSUM,PCONTSUM,PTOTAL   '+#13#10+
+//                    '        PSCONSUM PCONTSUM,PTOTAL                                     '+ //전문계약직 추가 2002.08.08 SHM
+                    ' FROM PISTOPO A,PYCDEPT B                                            '+#13#10+
+            format (' WHERE TOPOYM   = ''%s'' ',[COPY(ED_WorkDate.NoFormatDate , 1, 6)])   +#13#10+
+                    '   AND A.ORGNUM = B.ORGNUM                                           '+#13#10+
+                    '   AND A.TPGUBUN =''10''                                             '+#13#10+  //정규용 추가 TPGUBUN =10만 추출
+                    '   AND A.DEPTCODE = B.DEPTCODE                                       '+#13#10+
+                    //' ORDER BY DECODE(A.DEPTCODE,''D0000'',''BZ000'',A.DEPTCODE)          ');
+                    ' ORDER BY A.DEPTCODE          ');
+
+        With Tcds_tem1 do begin
+          Close;
+          ClearFieldInfo;
+          AddField('ORGNUM'          , ftString,  3 );//01.차수
+          AddField('DEPTCOMDE'       , ftString,  6 );//02.부서코드
+          AddField('DEPTNAME'        , ftString,  91);//03.부서명
+          AddField('FINCODE'         , ftString,  6 );//04.재무부서코드
+          AddField('PDIRSUM'         , ftString,  4 );//05.임원
+          AddField('P10'             , ftString,  4 );//06.부장
+          AddField('P20'             , ftString,  4 );//07.차장
+          AddField('P22'             , ftString,  4 );//08.과장
+          AddField('P32'             , ftString,  4 );//09.대리
+          AddField('P40'             , ftString,  4 );//10.사원(대졸)
+          AddField('P42'             , ftString,  4 );//11.사원(전졸)
+          AddField('P44'             , ftString,  4 );//12.사원(고졸)
+          AddField('psconsum'        , ftString,  4 );//13.2017.04.14.hjku.. 무기계약직 추가.. 김진호M 요청
+          AddField('YY'              , ftString,  4 );//14.자리수 채워주기위해
+          AddField('PPOSSUM'         , ftString,  4 );//15.정규직소계
+          AddField('PSPESUM'         , ftString,  4 );//16.특정
+          AddField('PEMPTOT'         , ftString,  4 );//17.정규직총계
+          AddField('PTEMPSUM'        , ftString,  4 );//18.일반직
+          AddField('PCONTSUM'        , ftString,  4 );//19.계약직
+          AddField('PTOTAL'          , ftString,  4 );//20.총계
+
+          ServiceName := 'PIE2270C_sel4';
+          Sql.Clear;
+          Sql.Text     := SqlText;
+
+          open;
+        end;
+      SaveDialog1.FileName := '근무부서별 인원현황.xls';
+      if SaveDialog1.Execute then
+      begin
+          with TStringList.Create do
+          try
+            //Fields[0] Fields[1]    Fields[2]       Fields[3]     Fields[4]  Fields[5]Fields[6]Fields[7]Fields[8]Fields[9]     Fields[14]    Fields[15] Fields[12] Fields[16]     Fields[17]   Fields[18] Fields[19]
+            Add(pchar('차수'+#9+'부서코드'+#9+'부서명'+#9+'재무부서코드'+#9+'임원'+#9+'L2'+#9+'L1'+#9+'G4'+#9+'G3'+#9+'G2'+#9+'정규직소계'+#9+'특정'+#9+'무계'+#9+ '정규직총계'+#9+'파견직'+#9+'계약직'+#9+'총계'));
+
+            totcnt :=  Tcds_tem1.Recordcount;
+
+          //  Tcds_tem1.First;
+          //  for i := 1 to Tcds_tem1.Recordcount do
+          //  begin
+            while not Tcds_tem1.Eof do
+            begin
+              Add(Format('%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s',
+                    [ Tcds_tem1.Fields[0].AsString,
+                      REPLACE(Tcds_tem1.Fields[1].AsString,'BZ000','D0000'),
+                      Tcds_tem1.Fields[2].AsString,
+                      Tcds_tem1.Fields[3].AsString,
+                      Tcds_tem1.Fields[4].AsString,
+                      Tcds_tem1.Fields[5].AsString,
+                      Tcds_tem1.Fields[6].AsString,
+                      Tcds_tem1.Fields[7].AsString,
+                      Tcds_tem1.Fields[8].AsString,
+                    //Tcds_tem1.Fields[9].AsString,
+                    //Tcds_tem1.Fields[10].AsString,
+                    //Tcds_tem1.Fields[11].AsString,
+                      IntToStr(StrToInt(Tcds_tem1.Fields[9].AsString) + StrToInt(Tcds_tem1.Fields[10].AsString) + StrToInt(Tcds_tem1.Fields[11].AsString)),
+
+                    //Tcds_tem1.Fields[13].AsString,
+                      Tcds_tem1.Fields[14].AsString,
+                      Tcds_tem1.Fields[15].AsString,
+                      Tcds_tem1.Fields[12].AsString,  //무기계약직
+                      Tcds_tem1.Fields[16].AsString,
+                      Tcds_tem1.Fields[17].AsString,
+                      Tcds_tem1.Fields[18].AsString,
+                      Tcds_tem1.Fields[19].AsString ]));
+
+               Tcds_tem1.Next;
+            end;
+            //end; // end of for
+            SaveDialog1.FileName := '근무부서별 인원현황.xls';
+            SaveToFile(SaveDialog1.FileName);
+          finally
+          Free;
+          end; // end of try
+      end; //end of SaveDialog1.Execute
+
+      SB_Help.Panels[1].Text    := '각팀장 명단을 추출하고 있습니다.';
+      //SendMessage(P_helpinfo.handle,WM_PAINT,0,0);
+
+    //4.각팀 팀장 및 담당 현황
+       SqlText := ('SELECT EMPNO,KORNAME,PAYCL,D.CODENAME,                                    '+#13#10+
+                   //'        PAYRA,C.CODENAME,DECODE(A.DEPTCODE,''D0000'',''BZ000'',A.DEPTCODE) DEPTCODE,B.DEPTNAME||'' ''||B.DEPTNA3           '+#13#10+
+                   '        PAYRA,C.CODENAME,A.DEPTCODE DEPTCODE,B.DEPTNAME||'' ''||B.DEPTNA3           '+#13#10+
+                   '  FROM PIMPMAS A, PYCDEPT B, PYCCODE C, PYCCODE D                          '+#13#10+
+                   ' WHERE A.ORGNUM = B.ORGNUM AND A.DEPTCODE = B.DEPTCODE                     '+#13#10+
+                   '   AND PAYRAYN = ''Y''                                                     '+#13#10+
+                   '   AND PSTATEYN = ''Y''                                                    '+#13#10+
+                   '   AND A.PAYRA = C.CODENO AND C.CODEID = ''I113''                          '+#13#10+
+                   '  AND A.PAYCL = D.CODENO AND D.CODEID = ''I112''                           '+#13#10+
+                   //'ORDER BY DECODE(A.DEPTCODE,''D0000'',''BZ000'',A.DEPTCODE),A.PAYCL, PAYRA                                         ');
+                   'ORDER BY A.DEPTCODE,A.PAYCL, PAYRA                                         ');
+
+        With Tcds_tem1 do begin
+          Close;
+          ClearFieldInfo;
+          AddField('EMPNO'          , ftString,  4 );
+          AddField('KORNAME'        , ftString,  12);
+          AddField('PAYCL'          , ftString,  3 );
+          AddField('PAYCLNM'        , ftString,  20);
+          AddField('PAYRA'          , ftString,  3 );
+          AddField('PAYRANM'        , ftString,  20);
+          AddField('DEPTCODE'       , ftString,  6 );
+          AddField('DEPTNAME'       , ftString,  91);
+
+          ServiceName := 'PIE2270C_sel5';
+          Sql.Clear;
+          Sql.Text     := SqlText;
+          
+          open;
+        end;
+
+        //SB_Help.Panels[1].Text    := '부서별 직위별 인원현황을 추출하고 있습니다.';
+        //SendMessage(P_helpinfo.handle,WM_PAINT,0,0);
+      SaveDialog1.FileName := '각팀 팀장 및 담당명단.xls';
+      if SaveDialog1.Execute then
+      begin
+          with TStringList.Create do
+          try
+
+            Add(pchar('사번'+#9+'성명'+#9+'직책'+#9+'직책명'+#9+'부서코드'+#9+'부서명' ));
+                                     //'BAND'+#9+'BAND명'+#9+
+
+            Tcds_tem1.First;
+           //for i := 1 to Tcds_tem1.Recordcount do
+            while not Tcds_tem1.Eof do
+            begin
+              Add(Format('%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9+'%s'+#9,//+'%s'+#9+'%s',
+                    [
+                      Tcds_tem1.Fields[0].AsString,
+                      Tcds_tem1.Fields[1].AsString,
+                      //Tcds_tem1.Fields[2].AsString,
+                      //Tcds_tem1.Fields[3].AsString,
+                      Tcds_tem1.Fields[4].AsString,
+                      Tcds_tem1.Fields[5].AsString,
+                      Tcds_tem1.Fields[6].AsString,
+                      Tcds_tem1.Fields[7].AsString ]));
+               Tcds_tem1.Next;
+            end; // end of while
+            SaveDialog1.FileName := '각팀 팀장 및 담당명단.xls';
+            SaveToFile(SaveDialog1.FileName);
+          finally
+          Free;
+          end; // end of try
+      end; //end of SaveDialog1.Execute
+
+      Work_update;       //최종작업자 update
+      Work_update_his;   //작업자 history
+
+    SB_Help.Panels[1].Text    := '추출이 완료되었습니다!';
+    msgMemo.Lines.Add('******** 엑셀 추출 작업 완료**********');
+    //SendMessage(P_helpinfo.handle,WM_PAINT,0,0);
+  end;
+end;
+
+procedure TFpie2270c1.Work_update;
+//var
+//  tempUpdate : TTXClientDataSet;
+begin
+  //TempUpdate := TTXClientDataSet.Create(Application);
+ {월별 인력현황 최종작업일자}
+  SqlText  := ('UPDATE PIMVARI SET                                                      '+
+               '        VALUE1 = '''+ED_Workdate.NoFormatDate +''',writetime = '''+up_writetime+''', '+
+               '        writeemp = '''+pempno+''',                                       '+
+               '        VALUE2 = '''+PEMPNO+''', VALUE3 = '''+PKORNAME+'''               '+
+               ' WHERE GUBUN = ''E1'' AND SGUBUN = ''0001''                              ');
+  with TDml do
+  begin
+       close;
+       sql.clear;
+       sql.text := SqlText;
+       servicename := 'PIE2270C_dml';
+       Execute;
+  end;
+end;
+
+procedure TFpie2270c1.Work_update_his;
+var
+//  tempUpdate : TTXClientDataSet;
+  tem        : String;
+  Temp_no    : Integer;
+begin
+
+    tem :=' SELECT  NVL(MAX(NO),0) NO  FROM PYMPHIS     '+
+          '  WHERE  PROGID = ''PIE2270C''            ';
+
+    With TCDS do
+    begin
+      Close;
+      ClearFieldInfo;
+      AddField('NO'             , ftString,  20);
+
+      Sql.Clear;
+      Sql.Text := tem;
+      open;
+    end;
+    Temp_No    := TCDS.FieldByName('NO').AsInteger + 1;
+
+//  TempUpdate := TTXClientDataSet.Create(Application);
+ {월별 인력현황 작업history}
+    SqlText  := ('INSERT INTO PYMPHIS                                                    '+
+               '   (    NO, EMPNO, KORNAME, PROGID, EXTDATE, EXTCONTENTS          )    '+
+               'VALUES                                                                 '+
+               '   (                                                                   '+
+        format('       ''%d'',',[Temp_NO]        )                                      +
+               '       '''+PEMPNO+''','''+PKORNAME+''',''PIE2270C'',                   '+
+               '       '''+Sysdate+''',                                                '+
+               '       ''부서별/직군별,부서별/직책별,근무부서별,각팀장명단을 Excel로 추출한다.'')    ');
+    with TDml do
+    begin
+      close;
+      Sql.Clear;
+      Sql.Text := SqlText;
+      servicename := 'PIE2270C_dml';
+      Execute;
+    end;
+end;
+
+{
+procedure TFpie2270c1.TCDSBeforeCall(DataSet: TDataSet;
+  var Buffer: PChar);
+begin
+      with TCDS do
+      begin
+        PrepareQuery;
+        ReflectFields := IntToStr(Length(SqlText)+1);
+        InitService( 1, tpSTRING, FALSE , 30 );
+        SetHeader( ServiceName,'0','0001','',RecordCount,shBUFFSIZE);
+        SetFieldValues( 0, [SqlText]);
+      end;
+end;
+
+procedure TFpie2270c1.cds_tem1BeforeCall(DataSet: TDataSet;
+  var Buffer: PChar);
+begin
+      with cds_tem1 do
+      begin
+        PrepareQuery;
+        ReflectFields := IntToStr(Length(Sqlcds_tem1)+1);
+        InitService( 1, tpSTRING, FALSE , 30 );
+        SetHeader( ServiceName,'0','0500','',RecordCount,shBUFFSIZE);
+        SetFieldValues( 0, [Sqlcds_tem1]);
+      end;
+end;
+
+procedure TFpie2270c1.cds_tem2BeforeCall(DataSet: TDataSet;
+  var Buffer: PChar);
+begin
+  with cds_tem2 do
+  begin
+    PrepareQuery;
+    ReflectFields := IntToStr(Length(Sqlcds_tem2)+1);
+    InitService( 1, tpSTRING, FALSE , 30 );
+    SetHeader( ServiceName,'0','0500','',RecordCount,shBUFFSIZE);
+    SetFieldValues( 0, [Sqlcds_tem2]);
+  end;
+end;
+
+procedure TFpie2270c1.cds_tem3BeforeCall(DataSet: TDataSet;
+  var Buffer: PChar);
+begin
+  with cds_tem3 do
+  begin
+    PrepareQuery;
+    ReflectFields := IntToStr(Length(Sqlcds_tem3)+1);
+    InitService( 1, tpSTRING, FALSE , 30 );
+    SetHeader( ServiceName,'0','0500','',RecordCount,shBUFFSIZE);
+    SetFieldValues( 0, [Sqlcds_tem3]);
+  end;
+end;
+
+procedure TFpie2270c1.cds_tem4BeforeCall(DataSet: TDataSet;
+  var Buffer: PChar);
+begin
+  with cds_tem4 do
+  begin
+    PrepareQuery;
+    ReflectFields := IntToStr(Length(Sqlcds_tem4)+1);
+    InitService( 1, tpSTRING, FALSE , 30 );
+    SetHeader( ServiceName,'0','0500','',RecordCount,shBUFFSIZE);
+    SetFieldValues( 0, [Sqlcds_tem4]);
+  end;
+end;
+}
+
+end.
+
