@@ -1,0 +1,447 @@
+/* ======================= Program Header ======================================
+ PROGRAM-NAME   : pzo2011g
+ SYSTEM-NAME    : 종합인사관리.
+ SUBSYSTEM-NAME : 외주인력 기간만료자 메일전송 및 처리
+ Programmer     : 구해자
+ Version        : 1.00
+ Date           : 2015.09.15
+ 
+Update Contents
+   Version    date(yy.mm.dd)     programmer      description   
+   1.00       2015.09.15         hjku            최초개발본    
+============================================================================= */
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <math.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+#define  FAIL        -2
+
+EXEC SQL INCLUDE sqlca;
+ 
+EXEC SQL BEGIN DECLARE SECTION; 
+
+     char  vEmpno[4+1]; 
+     char  vKorname[20+1];  
+     char  vEmail[60+1];
+     
+     char  vManagerid[4+1];
+     char  vManagername[20+1];
+     char  vManageremail[60+1];
+     char  vEnddate[8+1];
+
+     char  sql_stmt[5000+1];
+     
+     char  SendProgID[11];
+     char  SendEmpno[50+1]; 
+     char  RcveEmpno[50+1]; 
+     char  MailBody[1500+1];
+     char  MailSubject[100+1];
+     char  ReceiveYN[2];   
+     
+     int vSend_cnt; 
+     int vOut_cnt; 
+     char  sqlstr[2048];
+ EXEC SQL END  DECLARE SECTION; 
+
+
+FILE *fp = stdout;
+
+char  log_progid[16]  = "pzo2011g";
+char  log_writeman[5] = "CRON";
+char  log_buff[100]   = "";
+int   seqno   = 0;
+int   rcount  = 0;
+
+
+void main(argc,argv)
+int argc;
+char *argv[];
+{       
+     char FL_file[255];
+             
+     /*로그 디렉토리 생성 및 로그작업 */
+     STRINIT(FL_file);
+     strcpy(FL_file,log_progid);
+     
+     hinsa_get_filename(1, FL_file);
+     
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     /*========================================================*/     
+     hinsa_log_print(0,"외주인력 관리 시작...0");
+     hinsa_db_connect();  /*DB Connect 실시..*/
+          
+     EXEC SQL DECLARE log_db DATABASE;  
+    
+     hinsa_log_db_connect();
+
+     /*재실행 방지*/
+     EXEC SQL 
+             SELECT COUNT(*) 
+               INTO :vSend_cnt
+               FROM PYBATLOG
+              WHERE RUNDATE LIKE to_char(sysdate,'YYYYMMDD')||'%'
+                AND PROGID  =    :log_progid                          
+                AND RESULT  LIKE '%OK%';   
+                
+     if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+         sprintf(log_buff, "ERROR ====== [기전송여부체크] ORA-%05d - \n",sqlca.sqlcode);
+         Write_batlog(seqno++, log_buff);             
+         error_quit("ERROR ====== [기전송여부체크 실패] =====\n");
+     };    
+	                
+	   if( vSend_cnt > 0 ) {
+           sprintf(log_buff, "====== [금일자로 전송된 자료가 존재합니다.]\n");
+           Write_batlog(seqno++, log_buff);      
+           hinsa_log_print(0,log_buff);                  
+           return ;     
+	   }
+	     
+	   /* 외주인력 투입종료 일주일전 메일 발송(외주인력) */
+     if (Send_mail_Outsourcing() == SUCCESS)
+     {
+         sprintf(log_buff, "외주인력 투입종료 일주일전 메일 발송 완료(외주인력) \n");
+         Write_batlog(seqno++, log_buff);               
+         hinsa_log_print(0,log_buff);                           
+     }   
+
+	   /* 외주인력 투입종료 일주일전 메일 발송(담당매니저) */
+     if (Send_Mail_Manager() == SUCCESS)
+     {
+         sprintf(log_buff, "외주인력 투입종료 일주일전 메일 발송 완료(담당매니저) \n");
+         Write_batlog(seqno++, log_buff);                                  
+         hinsa_log_print(0,log_buff);                           
+     }        
+
+     /*투입종료자 처리*/
+     if (process_expiration() == SUCCESS)
+     {
+         sprintf(log_buff, "투입종료자 처리 완료 \n");
+         Write_batlog(seqno++, log_buff);   
+         hinsa_log_print(0,log_buff);                                    
+     }
+     
+     if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+     {
+          sprintf(log_buff, "ERROR ====== [작업 실패] =====\n");
+          Write_batlog(seqno++, log_buff);   
+          error_quit("ERROR ====== [작업 실패] =====\n");
+     }
+     else  
+	   {
+          sprintf(log_buff, "OK ====== [외주인력 관리 cron 작업 성공] =====\n");
+          Write_batlog(seqno++, log_buff); 
+          hinsa_exit(0,"OK ====== [외주인력 관리 cron 작업 성공] =====\n");
+     }
+     EXEC SQL COMMIT WORK RELEASE; 
+}
+
+clear_Mail_Message()
+{
+     memset(SendProgID, '\0', sizeof(SendProgID));
+     memset(SendEmpno,  '\0', sizeof(SendEmpno));
+     memset(RcveEmpno,  '\0', sizeof(RcveEmpno));          
+     memset(MailSubject,'\0', sizeof(MailSubject));
+     memset(MailBody,   '\0', sizeof(MailBody));
+     memset(ReceiveYN,  '\0', sizeof(ReceiveYN));   	
+
+     sprintf(SendProgID,"%s",    log_progid);   
+     sprintf(SendEmpno, "%s",    "no-reply@skbroadband.com");      
+}
+
+/* 외주인력에 메일 전송 */
+Send_mail_Outsourcing()
+{    
+     memset(sql_stmt,  '\0',sizeof(sql_stmt));
+     
+     /* 기간만료 한달전 외주인력 대상자 조회 */
+     /* 2017.07.18 hjku.. 일주일전 메일 발송으로 변경 .. 윤진석M 요청
+        "   AND TO_CHAR(SYSDATE,'YYYYMMDD') = to_char(add_months(to_date(A.ENDDATE,'YYYYMMDD'),-1),'YYYYMMDD')     "
+     */
+     sprintf(sql_stmt,"SELECT A.EMPNO, A.KORNAME, A.EMAIL, A.MANAGERID, B.KORNAME MANAGERNAME, B.SKEMAIL MANAGEREMAIL, ENDDATE   "
+                      "  FROM PZMOUTMAS A, PIMPMAS B                                                                             "
+                      " WHERE A.MANAGERID = B.EMPNO                                                                              "
+                      "   AND TO_CHAR(SYSDATE+7,'YYYYMMDD') = a.ENDDATE                                                          "
+                      "   AND TRIM(A.EMAIL) IS NOT NULL                                                                          "
+                      "   AND NVL(A.STATEYN,'N')='Y'                                                                             ");                      
+
+     EXEC SQL PREPARE S FROM :sql_stmt;                    
+     	
+
+     EXEC SQL DECLARE cursor1 CURSOR FOR S;
+        
+     EXEC SQL OPEN cursor1;
+   
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != 1405))
+     {
+          sprintf(log_buff, "Cursor cursor1 Open Error .....");
+          Write_batlog(seqno++, log_buff);
+          EXEC SQL CLOSE cursor1;
+
+          error_quit("작업실패...");
+     }
+   
+     rcount = 0;
+
+     while(1)
+     {
+          memset(vEmpno,       '\0',sizeof(vEmpno));
+          memset(vKorname,     '\0',sizeof(vKorname));
+          memset(vEmail,       '\0',sizeof(vEmail));
+          memset(vManagerid,   '\0',sizeof(vManagerid));
+          memset(vManagername, '\0',sizeof(vManagername));
+          memset(vManageremail,'\0',sizeof(vManageremail));                    
+          memset(vEnddate,     '\0',sizeof(vEnddate));                   
+        
+          EXEC SQL FETCH  cursor1 INTO  :vEmpno, :vKorname, :vEmail, :vManagerid, :vManagername, :vManageremail,:vEnddate;
+        
+          hinsa_trim(vEmpno);
+          hinsa_trim(vKorname);      
+          hinsa_trim(vEmail);
+          hinsa_trim(vManagerid);      
+          hinsa_trim(vManagername);
+          hinsa_trim(vManageremail);                          
+          hinsa_trim(vEnddate);                         
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE cursor1;
+
+               sprintf(log_buff, "처리된 작업대상자 : [%d] 명 \n",rcount);
+               Write_batlog(seqno++, log_buff);               
+               return SUCCESS;
+          }
+/*printf("[DEBUG:vEmpno=[%s],vKorname=[%s],vEmail=[%s],vManagerid=[%s],vManagername=[%s],vEnddate=[%s]\n",   
+               vEmpno,   vKorname,   vEmail,   vManagerid,   vManagername,   vEnddate);*/        
+          
+          if (sqlca.sqlcode != 0)
+          {
+             print_errmsg(sqlca.sqlcode,"Cursor cursor1 Data Fetch Error 1...");
+             EXEC SQL CLOSE cursor1;
+
+             error_quit("작업실패...");
+          }   
+
+          clear_Mail_Message();     
+          
+          sprintf(RcveEmpno, "%s", vEmail);  
+          
+          sprintf(MailSubject, "[외주인력 기간 만료 도래 안내]");         
+          sprintf(MailBody,  "%s(%s)님의 투입종료일이 %s로 도래하였습니다.        \n"
+                             "%s(%s) 담당매니저님을 통해 기간연장해 주시기 바랍니다.\n"
+                             "※ 담당 매니저님 부재시 대무 매니저님께 연락하시기 바랍니다.\n"
+                             "(기간 만료시 SKB 관련 시스템 사용 제한)"
+                             ,vKorname,vEmpno,vEnddate,vManagername,vManagerid);    
+          sprintf(ReceiveYN, "%s","N");   
+          
+           EXEC SQL 
+                 insert into PZHMAIL                         
+                 values (to_char(sysdate,'YYYYMMDDHH24MISS'),
+                         :SendProgID         ,
+                         :SendEmpno          ,
+                         :RcveEmpno          ,
+                         ''                  ,
+                         :MailSubject        ,
+                         ''                  ,
+                         :MailBody           ,
+                         ''                  ,
+                         :ReceiveYN          ,
+                         'N'                 ,
+                         ''                  );  
+          
+          if  (sqlca.sqlcode != 0)
+          {
+               sprintf(log_buff, "ERROR ====== [외주인력 MAIL SEND 실패] ORA-%05d - \n",sqlca.sqlcode);
+               Write_batlog(seqno++, log_buff);             
+               error_quit("ERROR ====== [외주인력 MAIL SEND 실패] =====\n");
+               continue;
+          }
+
+          rcount++;  
+     }
+
+     return(SUCCESS);
+}
+
+
+/* 담당매니저에 메일 전송 */
+Send_Mail_Manager()
+{
+     memset(sql_stmt,  '\0',sizeof(sql_stmt));
+     
+     /* 기간만료 한달전 외주인력 대상자 조회 */
+     /* 2017.07.18 hjku.. 일주일전 메일 발송으로 변경 .. 윤진석M 요청
+        "       WHERE TO_CHAR(SYSDATE,'YYYYMMDD') = TO_CHAR(ADD_MONTHS(TO_DATE(A.ENDDATE,'YYYYMMDD'),-1),'YYYYMMDD')    "
+     */     
+     sprintf(sql_stmt,"SELECT A.EMPNO, B.KORNAME, A.CNT, A.MANAGERID, C.KORNAME MANAGERNAME, A.ENDDATE                                "
+                      "FROM (SELECT A.MANAGERID, ENDDATE,MIN(EMPNO) EMPNO,COUNT(*)-1 CNT                                              "
+                      "        FROM PZMOUTMAS A                                                                                       "
+                      "       WHERE TO_CHAR(SYSDATE+7,'YYYYMMDD') = a.ENDDATE                                                         "
+                      "         AND NVL(A.STATEYN,'N')='Y'                                                                            "
+                      "       GROUP BY MANAGERID,ENDDATE) A,                                                                          "
+                      "      PZMOUTMAS B,                                                                                             "
+                      "      PIMPMAS C                                                                                                "
+                      "WHERE A.EMPNO     = B.EMPNO                                                                                    "
+                      "  AND B.MANAGERID = C.EMPNO                                                                                    "
+                      "  and c.pstate < '80'                                                                                          ");                      
+
+     EXEC SQL PREPARE S FROM :sql_stmt;                    
+     	
+
+     EXEC SQL DECLARE cursor2 CURSOR FOR S;
+        
+     EXEC SQL OPEN cursor2;
+   
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != 1405))
+     {
+          sprintf(log_buff, "Cursor cursor2 Open Error .....");
+          Write_batlog(seqno++, log_buff);
+          EXEC SQL CLOSE cursor2;
+
+          error_quit("작업실패...");
+     }
+   
+     rcount = 0;
+
+     while(1)
+     {          
+     	    vOut_cnt        = 0;
+          memset(vEmpno,       '\0',sizeof(vEmpno));
+          memset(vKorname,     '\0',sizeof(vKorname));
+          memset(vManagerid,   '\0',sizeof(vManagerid));
+          memset(vManagername, '\0',sizeof(vManagername));
+          memset(vEnddate,     '\0',sizeof(vEnddate));   
+     
+          EXEC SQL FETCH  cursor2 INTO  :vEmpno, :vKorname, :vOut_cnt, :vManagerid, :vManagername,:vEnddate;
+        
+          hinsa_trim(vEmpno);
+          hinsa_trim(vKorname);      
+          hinsa_trim(vManagerid);      
+          hinsa_trim(vManagername);
+          hinsa_trim(vEnddate);       
+
+/*printf("[DEBUG:vEmpno=[%s],vKorname=[%s],vOut_cnt=[%d],vManagerid=[%s],vManagername=[%s],vEnddate=[%s]\n",   
+               vEmpno,   vKorname,   vOut_cnt,   vManagerid,   vManagername,   vEnddate);*/        
+               
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE cursor2;
+
+               sprintf(log_buff, "처리된 작업대상자 : [%d] 명 \n",rcount);
+               Write_batlog(seqno++, log_buff);               
+               return SUCCESS;
+          }
+          
+          if (sqlca.sqlcode != 0)
+          {
+             print_errmsg(sqlca.sqlcode,"Cursor cursor2 Data Fetch Error 1...");
+             EXEC SQL CLOSE cursor2;
+
+             error_quit("작업실패...");
+          }   
+
+          clear_Mail_Message();
+          	
+          sprintf(RcveEmpno, "%s",vManagerid);  
+          
+          sprintf(MailSubject, "[외주인력 기간 만료 도래 안내]");         
+          
+          if(vOut_cnt == 0) {
+               sprintf(MailBody,  "%s(%s)님의 투입종료일이 %s로 도래하였습니다.\n"
+                                  "담당 매니저님은 아래 항목에서 기간 연장 해주시기 바랍니다.\n"
+																	": MyHR -> 인사 -> 외주인력 -> 외주인력 기간연장"
+                                 ,vKorname,vEmpno,vEnddate);    
+          } 
+          else 
+          {
+               sprintf(MailBody,  "%s(%s)님 외 %d명의 투입종료일이 %s로 도래하였습니다.\n"
+                                  "담당 매니저님은 아래 항목에서 기간 연장 해주시기 바랍니다.\n"
+																	": MyHR -> 인사 -> 외주인력 -> 외주인력 기간연장"
+                                 ,vKorname,vEmpno,vOut_cnt,vEnddate);    
+          }  
+
+          sprintf(ReceiveYN, "%s","N"); 
+
+           EXEC SQL 
+                 insert into PZHMAIL                         
+                 values (to_char(sysdate,'YYYYMMDDHH24MISS'),
+                         :SendProgID         ,
+                         :SendEmpno          ,
+                         :RcveEmpno          ,
+                         ''                  ,
+                         :MailSubject        ,
+                         ''                  ,
+                         :MailBody           ,
+                         ''                  ,
+                         :ReceiveYN          ,
+                         'N'                 ,
+                         ''                  );  
+          
+          if  (sqlca.sqlcode != 0)
+          {
+               sprintf(log_buff, "ERROR ====== [Manager MAIL SEND 실패] ORA-%05d - \n",sqlca.sqlcode);
+               Write_batlog(seqno++, log_buff);             
+               error_quit("ERROR ====== [Manager MAIL SEND 실패] =====\n");
+               continue;
+          }
+          
+          rcount++;  
+     }
+          
+     return(SUCCESS);	
+}
+
+int process_expiration()
+{     
+     /* 외주인력 투입종료 대상자 처리 */     
+     hinsa_log_print(0, "외주인력 투입종료 대상자 작업 시작...");
+
+     EXEC SQL 
+          UPDATE PZMOUTMAS  
+             SET STATEYN   = 'N',
+                 WRITEMAN  = '0000',
+                 WRITETIME = TO_CHAR(SYSDATE,'YYYYMMDD')
+           WHERE NVL(ENDDATE,'99999999') < TO_CHAR(SYSDATE,'YYYYMMDD')
+             AND NVL(STATEYN,'N')='Y'; 
+   
+     if  ((SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA))
+     {
+          sprintf(log_buff, "외주인력 투입종료 대상자 작업 에러 : %s", SQLERRM);
+          Write_batlog(seqno++, log_buff);   
+          return (FAILURE);
+     }     
+     
+     sprintf(log_buff, "외주인력 투입종료 대상자 수 : %d", SQL_PROCESS_COUNT);
+     Write_batlog(seqno++, log_buff);              
+
+     return SUCCESS;
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS'), :log_progid, :seqno, :log_writeman, :message);
+     	
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                       
+                        
+     EXEC SQL AT log_db COMMIT WORK ; 
+}

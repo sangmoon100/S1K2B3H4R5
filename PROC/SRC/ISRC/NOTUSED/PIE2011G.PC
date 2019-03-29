@@ -1,0 +1,1024 @@
+/****************************************************************************
+ *     PROGRAM-NAME   : (pie2011g)인사발령사항경신                          *
+ *     SYSTEM-NAME    : 종합인사정보                                        *
+ *     SUBSYSTEM-NAME : 인사                                                *
+ *     Programmer     : 윤형식                                              *
+ *     Version        : 1.00                                                *
+ *     Date : 2001.03.20                                                    *
+ *     Update Contents                                                      *
+         Version date(yy.mm.dd) programmer  relevant doc.no    description
+     1.03    2001.03.20     윤형식      전2001-02-13       전월발령 통계반영
+                                                           select(pimpmas), update(pihtong, pihston)
+     1.04    2004.02.05     이민용      자체 개선          오라클 8버전 upgrade관련
+ *) HR 인프라 고도화 Project(직위-> 직책, 직급 -> BAND(비공개))
+ ****************************************************************************/
+#include <string.h> 
+#include <stdio.h>  
+#include <stdlib.h> 
+#include <ctype.h>  
+#include <time.h>   
+#include <sqlca.h>  
+#include <sqlda.h>
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+/* K.J  추가 */
+#define  FAIL        -2
+
+/*----------------------------------------------*
+ * Current data save & Condition save Variable  *
+ *----------------------------------------------*/
+EXEC SQL BEGIN DECLARE SECTION;
+     char   jobempno[5]; /* 작업자사번 */
+     char   tongym[7];   /* 작업년월 */
+     char   orgnum[4];   /* 조직차수 */
+     char   deptcode[7]; /* 부서코드 */
+     char   jobgun[3];   /* 직  군 */
+     char   jobline[3];  /* 직  렬 */
+     char   paycl[4];    /* BAND */
+     char   fieldcode[4];    /* 부  문 */
+     char   boncode[7];  /* 본부코드 */
+     double minwon, finwon, inwon;     /* 재직인원 */
+     double mpainwon, fpainwon, painwon;   /* 파견인원 */
+     double medinwon, fedinwon, edinwon;   /* 교육인원 */
+     double mhuinwon, fhuinwon, huinwon;   /* 휴직인원 */
+     double mrtinwon, frtinwon, rtinwon;   /* 퇴사인원 */
+     double magesum, fagesum, agesum;      /* 연  령 */
+     double mpaygrsum, fpaygrsum, paygrsum;    /* 호  봉 */
+     double mdumonsum, fdumonsum, dumonsum;    /* 근속월수 */
+     double mclmonsum, fclmonsum, clmonsum;    /* 재급월수 */
+     double mdrinwon, fdrinwon, drinwon;   /* 박사인원 */
+     double msrinwon, fsrinwon, srinwon;   /* 석사인원 */
+     double mbainwon, fbainwon, bainwon;   /* 학사인원 */
+     double mcoinwon, fcoinwon, coinwon;   /* 전문대인원 */
+     double mhiinwon, fhiinwon, hiinwon;   /* 고졸인원 */
+     double mmiinwon, fmiinwon, miinwon;   /* 중졸인원 */
+     char   gubun1[3], gubun2[6], gubun3[6], gubun4[6];  /* 구분1,2,3,4 */
+     char   writetime[16];   /* 작업일시 */
+     
+     char   pstate[3], sex[2], lschdeg[3], retyymm[7];
+     double anno_count;
+     char   empno[5], korname[13], retsayu1[3], retsayu2[3];
+     double paygr, usaage;
+     double comduyy, comdumm, comdudd;
+     double payclyy, payclmm, paycldd;
+     
+     char   lickind[4], licgr[2];
+     char   codeid[5], codeno[11], codemainon[2];
+     char   schgr[3], schcode[5], majorcode[5];
+     char   tcompany[3];
+            
+     char   ancode[4], andetcode[3];
+     
+     int    tdel_count;    /* 통계자료삭제건수      */
+     int    stdel_count;   /* 세부통계자료삭제건수  */
+     char   tongdate[9];     /* 통계작업일자          */
+     double exist_count;
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+char   epoyn[2];      /* 교육파견현원포함여부 */
+char   jpoyn[2];      /* 정직현원포함여부 */
+char   hpoyn[2];      /* 휴직현원포함여부 */
+       
+char   gubun[14];     /* 작업구분 */
+int    num;       /* 일련번호 */
+char   tmp_buf[101];
+double cmp_comdumm, cmp_payclmm;
+
+char   start_date[16], end_date[16];
+int    tcre_count, stcre_count, error_count;
+
+/*=== ch.k.j 2005.10. Rexec대체 서비스를 위한 =============*/
+char   log_rundate[16]     = ""; 
+char   log_progid[16]      = "";
+char   log_writeman[5]     = "";
+char   log_buff[100]       = "";
+int    seqno = 0; 
+
+/******************************************
+ *  MAIN PROCESSING START !!!!!!      *
+ ******************************************/
+main(argc,argv)
+int argc;
+char *argv[];
+{
+     char edf_count[8];
+     
+     char *FL_date;
+     char FL_dir[255];
+     char FL_Line[255];
+     char FL_file[255];
+     
+     STRINIT(FL_file);
+     strcpy(FL_file,"pie2011g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     hinsa_log_print(0,"인사발령사항경신 프로그램 시작...");
+     
+     hinsa_db_connect();
+     /*=========== K.J 추가=========== */ 
+     EXEC SQL DECLARE log_db DATABASE;    
+     /*=============================== */ 
+     /*hinsa_log_db_connect();      */
+     init_variable();
+     
+     /*
+     ** Param:pie2011g 9999 200103 Y N N
+     */
+     strcpy(jobempno,     argv[1]);  /* 작업자사번    0685    */
+     strcpy(tongym,       argv[2]);  /* 작업년월      200103  */
+     strcpy(epoyn,        argv[3]);  /* 교육파견현원  Y       */
+     strcpy(jpoyn,        argv[4]);  /* 정직현원      N       */
+     strcpy(hpoyn,        argv[5]);  /* 휴직현원      N       */
+     
+     /*=== K.J Rexec대체 서비스를 위한 =============*/
+     strcpy(log_writeman, argv[6]);
+     strcpy(log_progid,   argv[7]);
+     strcpy(log_rundate,  argv[8]);    
+     /*===========================================*/
+     FL_date = hinsa_sys_date(0);
+     STRINIT(start_date);
+     strcpy(start_date, FL_date);
+     
+     sprintf(gubun, "PIE2011G_%.4s", jobempno);
+     hinsa_log_print(0, gubun);
+     
+     exist_count = 0;
+     EXEC SQL
+     SELECT  1   /* 기존자료가 있냐 ? */
+       INTO  :exist_count
+       FROM  pihpmas
+      WHERE  workyymm = :tongym;
+     if  (exist_count < 1)
+     {
+          sprintf(tmp_buf, "%4.4s년 %s월 인사이력 자료가 존재하지 않습니다. Error!", tongym, tongym+4);
+          hinsa_log_print(0, tmp_buf);
+          return;
+     }
+     
+     data_process();
+     
+     sprintf(tmp_buf, "<*> 작  업  년  월 : %.4s년 %.2s월", tongym, tongym+4);
+     hinsa_log_print(0, tmp_buf);
+     
+     sprintf(tmp_buf, "<*> 통 계 생 성 건 수 : %7d 건", tcre_count);
+     hinsa_log_print(0, tmp_buf);
+     
+     sprintf(tmp_buf, "<*> 세부통계 생성건수 : %7d 건", stcre_count);
+     hinsa_log_print(0, tmp_buf);
+     
+     sprintf(tmp_buf, "<*> 통 계 삭 제 건 수 : %7d 건", tdel_count);
+     hinsa_log_print(0, tmp_buf);
+     
+     sprintf(tmp_buf, "<*> 세부통계 삭제건수 : %7d 건", stdel_count);
+     hinsa_log_print(0, tmp_buf);
+     
+     sprintf(tmp_buf, "<*> 오   류   건   수 : %7d 건", error_count);
+     hinsa_log_print(0, tmp_buf);
+     
+     FL_date = hinsa_sys_date(0);
+     STRINIT(end_date);
+     strcpy(end_date, FL_date);
+     
+     sprintf(tmp_buf, "<*> 작업시간 : %.4s/%.2s/%.2s %.2s.%.2s.%.2s - %.4s/%.2s/%.2s %.2s.%.2s.%.2s",
+                      start_date,   start_date+4,  start_date+6,
+                      start_date+8, start_date+10, start_date+12,
+                      end_date,     end_date+4,    end_date+6,
+                      end_date+8,   end_date+10,   end_date+12);
+     hinsa_log_print(0, tmp_buf);
+     
+     /*========k.j 추가 2005.12.05 ===============*/ 
+     sprintf(log_buff, "OK ====== [ 작업성공 ] =====");   
+     Write_batlog(seqno++, log_buff);  
+     /*===========================================*/
+     /* update_pimvari();   통계작업년월 및 생성일을 경신 */
+     
+     hinsa_exit(0,"OK 작업이 완료되었습니다.");
+}
+
+/*----------------------------------------------*
+ * Current data & Condition Variable Initialize *
+ *----------------------------------------------*/
+init_variable()
+{
+     memset(jobempno,    0x00,   sizeof(jobempno));
+     memset(tongym,      0x00,   sizeof(tongym));
+     memset(tongdate,    0x00,   sizeof(tongdate));
+    
+     memset(orgnum,      0x00,   sizeof(orgnum));
+     memset(deptcode,    0x00,   sizeof(deptcode));
+     memset(jobgun,      0x00,   sizeof(jobgun));
+     memset(jobline,     0x00,   sizeof(jobline));
+     memset(paycl,       0x00,   sizeof(paycl));
+     memset(fieldcode,   0x00,   sizeof(fieldcode));
+     memset(boncode,     0x00,   sizeof(boncode));
+    
+     memset(pstate,      0x00,   sizeof(pstate));
+     memset(sex,         0x00,   sizeof(sex));
+     memset(lschdeg,     0x00,   sizeof(lschdeg));
+     memset(retyymm,     0x00,   sizeof(retyymm));
+    
+     anno_count = 0;
+    
+     memset(empno,       0x00,   sizeof(empno));
+     memset(korname,     0x00,   sizeof(korname));
+     memset(retsayu1,    0x00,   sizeof(retsayu1));
+     memset(retsayu2,    0x00,   sizeof(retsayu2));
+    
+     paygr = usaage = 0;
+     comduyy = comdumm = comdudd = 0;
+     payclyy = payclmm = paycldd = 0;
+    
+     memset(ancode,      0x00,   sizeof(ancode));
+     memset(andetcode,   0x00,   sizeof(andetcode));
+    
+     memset(epoyn,       0x00,   sizeof(epoyn));
+     memset(jpoyn,       0x00,   sizeof(jpoyn));
+     memset(hpoyn,       0x00,   sizeof(hpoyn));
+    
+     memset(gubun,       0x00,   sizeof(gubun));
+    
+     num = 0;
+    
+     memset(tmp_buf,     0x00,   sizeof(tmp_buf));
+    
+     memset(start_date,  0x00,   sizeof(start_date));
+     memset(end_date,    0x00,   sizeof(end_date));
+    
+     tcre_count = stcre_count = error_count = 0;
+     tdel_count = stdel_count = 0;
+    
+     init_subvariable();
+}
+
+/*----------------------------------------------*
+ * Current data & Condition Variable Initialize *
+ *----------------------------------------------*/
+init_subvariable()
+{
+     minwon      = finwon      = inwon    = 0;
+     mpainwon    = fpainwon    = painwon  = 0;
+     medinwon    = fedinwon    = edinwon  = 0;
+     mhuinwon    = fhuinwon    = huinwon  = 0;
+     mrtinwon    = frtinwon    = rtinwon  = 0;
+     magesum     = fagesum     = agesum   = 0;
+     mpaygrsum   = fpaygrsum   = paygrsum = 0;
+     mdumonsum   = fdumonsum   = dumonsum = 0;
+     mclmonsum   = fclmonsum   = clmonsum = 0;
+     mdrinwon    = fdrinwon    = drinwon  = 0;
+     msrinwon    = fsrinwon    = srinwon  = 0;
+     mbainwon    = fbainwon    = bainwon  = 0;
+     mcoinwon    = fcoinwon    = coinwon  = 0;
+     mhiinwon    = fhiinwon    = hiinwon  = 0;
+     mmiinwon    = fmiinwon    = miinwon  = 0;
+     cmp_comdumm = cmp_payclmm = 0;
+     memset(gubun1,      0x00,   sizeof(gubun1));
+     memset(gubun2,      0x00,   sizeof(gubun2));
+     memset(gubun3,      0x00,   sizeof(gubun3));
+     memset(gubun4,      0x00,   sizeof(gubun4));
+     memset(writetime,   0x00,   sizeof(writetime));
+     exist_count = 0;
+     
+     memset(lickind,     0x00,   sizeof(lickind));
+     memset(licgr,       0x00,   sizeof(licgr));
+     memset(codeid,      0x00,   sizeof(codeid));
+     memset(codeno,      0x00,   sizeof(codeno));
+     memset(codemainon,  0x00,   sizeof(codemainon));
+     memset(schgr,       0x00,   sizeof(schgr));
+     memset(schcode,     0x00,   sizeof(schcode));
+     memset(majorcode,   0x00,   sizeof(majorcode));
+     memset(tcompany,    0x00,   sizeof(tcompany));
+}
+
+/****************************************
+ *      Data process  routine       *
+ ****************************************/
+data_process()
+{
+     EXEC SQL LOCK TABLE  pihpmas, pihtong, pihston
+                in EXCLUSIVE  MODE  NOWAIT;
+     
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"다른 작업자가 DB수정 작업중입니다.");
+     
+     tongdata_delete();  /* 인사통계, 세부통계 기존자료 삭제 */
+     tong_create();      /* 인사통계 생성 */
+     annotong_create();  /* 인사발령통계 생성 */
+}
+
+tongdata_delete()
+{
+     EXEC SQL 
+     SELECT  count(tongym)   /* 기존자료가 존재하는가 */
+       INTO  :tdel_count
+       FROM  pihtong
+      WHERE  tongym = :tongym;
+    
+     if  (tdel_count != 0)
+     {           /* 기존자료가 있으면 지우자 */
+          EXEC SQL 
+          DELETE  FROM   pihtong
+           WHERE  tongym = :tongym;
+          if  (sqlca.sqlcode != 0)     /* Error is Error */
+               hinsa_exit(0,"PIHTONG Delete Error !");
+     }
+    
+     EXEC SQL 
+     SELECT  count(tongym)   /* 기존자료가 존재하는가 */
+       INTO  :stdel_count
+       FROM  pihston
+      WHERE  tongym = :tongym;
+     if  (stdel_count != 0)
+     {           /* 기존자료가 있으면 지우자 */
+          EXEC SQL 
+          DELETE  FROM   pihston
+            WHERE  tongym = :tongym;
+          if  (sqlca.sqlcode != 0)     /* Error is Error */
+               hinsa_exit(0,"PIHSTON Delete Error !");
+     }
+}
+
+tong_create()
+{
+     EXEC SQL DECLARE c1 cursor for
+               SELECT  empno, korname, orgnum, deptcode,
+                       upper(jobgun), upper(paycl),
+                       pstate, upper(sex), upper(lschdeg),
+                       nvl(substr(retdate, 1, 6), '999999'),
+                       usaage, paygr,
+                       comduyy, comdumm, comdudd,
+                       payclyy, payclmm, paycldd,
+                       upper(nvl(substr(retsayu1, 1, 2), '  ')),
+                       upper(nvl(substr(retsayu2, 1, 2), '  '))
+                 FROM  pihpmas
+                WHERE  workyymm = :tongym
+                  AND  substr(empdate, 1, 6) <= :tongym
+                  AND  (nvl(pstateyn, ' ') not in ('N', 'n'))	
+                  AND  (pstate < '80'
+                        OR /* 입사포기자는 제외 */
+                       (pstate > '80' AND nvl(substr(retdate, 1, 6), '999999') >= :tongym))
+                ORDER BY  empno;
+
+     EXEC SQL  open c1;
+
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"Cursor Open c1");
+
+     for ( ; ; )
+     {
+          EXEC SQL FETCH c1 INTO
+                   :empno, :korname, :orgnum, :deptcode, :jobgun, :paycl,
+                   :pstate, :sex, :lschdeg, :retyymm, :usaage, :paygr,
+                   :comduyy, :comdumm, :comdudd,
+                   :payclyy, :payclmm, :paycldd,
+                   :retsayu1, :retsayu2;
+
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c1;
+               return;
+          }
+          else if  (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+          {
+               EXEC SQL close c1;
+               hinsa_exit(0,"Data Fetch c1");
+          }
+          init_subvariable();
+          hinsa_trim(korname);   
+          hinsa_trim(deptcode);
+          read_pycdept(0);               /* 부문, 본부코드를 찾자 */
+          calc_tongdata();               /* 통계자료를 계산 */
+          pihtong_write();               /* 통계자료를 저장 */
+          calc_dettongdata();            /* 세부통계자료를 계산/저장 */
+    }
+}
+
+calc_tongdata()
+{
+     cmp_comdumm = (comduyy * 12) + comdumm;
+     if  (comdudd >= 15)
+          cmp_comdumm++;
+
+     cmp_payclmm = (payclyy * 12) + payclmm;
+     if  (paycldd >= 15)
+          cmp_payclmm++;
+     
+     if ((strncmp(pstate, "2", 1) == 0) && (strcmp(pstate, "22") >= 0)) /* 사내파견제외 */
+     {
+          painwon++;
+          if  (strcmp(sex, "F") == 0)                                   /* 여  자 */
+               fpainwon++;
+          else
+               mpainwon++;
+          if  (strcmp(epoyn, "Y") == 0)                                 /* 파견현원포함 */
+               calc_tonginwon();
+     }
+     else if  (strncmp(pstate, "3", 1) == 0)                            /* 교  육 */
+     {
+          edinwon++;
+          if  (strcmp(sex, "F") == 0)                                   /* 여  자 */
+               fedinwon++;
+          else 
+               medinwon++;
+          if  (strcmp(epoyn, "Y") == 0)                                 /* 교육현원포함 */
+               calc_tonginwon();
+     }
+     else if  (strncmp(pstate, "6", 1) == 0)                            /* 정  직 */
+     {
+          huinwon++;
+          if  (strcmp(sex, "F") == 0)                                   /* 여  자 */
+               fhuinwon++;
+          else
+               mhuinwon++;
+          if  (strcmp(jpoyn, "Y") == 0)                                 /* 정직현원포함 */
+               calc_tonginwon();
+     }
+     else if  (strncmp(pstate, "7", 1) == 0)                            /* 휴  직 */
+     {
+          huinwon++;
+          if  (strcmp(sex, "F") == 0)                                   /* 여  자 */
+               fhuinwon++;
+          else
+               mhuinwon++;
+          if  (strcmp(hpoyn, "Y") == 0)                                 /* 휴직현원포함 */
+               calc_tonginwon();
+     }
+     else if ((strcmp(pstate, "80") >= 0) &&                            /* 퇴  직 */
+              (strcmp(retyymm, tongym) <= 0))
+     {       /* 작업년월 이후 퇴직자는 재직자로 보자.. */
+          rtinwon++;
+          if  (strcmp(sex, "F") == 0)                                   /* 여  자 */
+               frtinwon++;
+          else
+               mrtinwon++;
+     }
+     else        /* 재직자 */
+          calc_tonginwon();
+}
+
+calc_tonginwon()
+{
+     inwon++;                                                          /* 재직인원수 */
+     agesum   = agesum   + usaage;                                     /* 연  령 */
+     paygrsum = paygrsum + paygr;                                      /* 호  봉 */
+     dumonsum = dumonsum + cmp_comdumm;                                /* 근속월수 */
+     clmonsum = clmonsum + cmp_payclmm;                                /* 재급월수 */
+     if  (strcmp(sex, "F") == 0)                                       /* 여  자 */
+     {
+          finwon++;
+          fagesum = fagesum + usaage;
+          fpaygrsum = fpaygrsum + paygr;
+          fdumonsum = fdumonsum + cmp_comdumm;
+          fclmonsum = fclmonsum + cmp_payclmm;
+     }
+     else                                                              /* 남  자 */
+     {                                                                 
+          minwon++;                                                    
+          magesum = magesum + usaage;                                  
+          mpaygrsum = mpaygrsum + paygr;                               
+          mdumonsum = mdumonsum + cmp_comdumm;                         
+          mclmonsum = mclmonsum + cmp_payclmm;                         
+     }                                                                 
+                                                                       
+     if  (strcmp(lschdeg, "79") == 0)                                  /* 박  사 */
+     {                                                                 
+          drinwon++;                                                   
+          if  (strcmp(sex, "F") == 0)                                  /* 여  자 */
+               fdrinwon++;                                             
+          else                                                         
+               mdrinwon++;                                             
+     }                                                                 
+     else if  (strcmp(lschdeg, "69") == 0)                             /* 석  사 */
+     {                                                                 
+          srinwon++;                                                   
+          if  (strcmp(sex, "F") == 0)                                  /* 여  자 */
+               fsrinwon++;                        
+          else                                   
+               msrinwon++;                        
+     }                                          
+     else if  (strcmp(lschdeg, "59") == 0)                             /* 학  사 */
+     {                                                                 
+          bainwon++;                                                   
+          if  (strcmp(sex, "F") == 0)                                  /* 여  자 */
+               fbainwon++;                                             
+          else                                                         
+               mbainwon++;                                             
+     }                                                                 
+     else if  (strcmp(lschdeg, "49") == 0)                             /* 전문대 */
+     {                                                                 
+          coinwon++;                                                   
+          if  (strcmp(sex, "F") == 0)                                  /* 여  자 */
+               fcoinwon++;                                             
+          else                                                         
+               mcoinwon++;                                             
+     }                                                                 
+     else if  (strcmp(lschdeg, "39") == 0)                             /* 고  졸 */
+     {                                                                 
+          hiinwon++;                                                   
+          if  (strcmp(sex, "F") == 0)                                  /* 여  자 */
+               fhiinwon++;                        
+          else                                   
+               mhiinwon++;                        
+     }                                          
+     else                                                              /*중졸이하*/
+     {                                                                 
+          miinwon++;                                                   
+          if  (strcmp(sex, "F") == 0)                                  /* 여  자 */
+               fmiinwon++;
+          else
+              mmiinwon++;
+     }
+}
+
+pihtong_write()
+{
+     char *FL_date;
+       
+     exist_count = 0;
+     
+     FL_date = hinsa_sys_date(0);
+     STRINIT(writetime);
+     strcpy(writetime, FL_date);
+     
+     EXEC SQL 
+     SELECT  count(tongym)   /* 기존자료가 있냐 ? */
+       INTO  :exist_count
+       FROM  pihtong
+      WHERE  tongym   = :tongym
+        AND  orgnum   = :orgnum
+        AND  deptcode = :deptcode
+        AND  jobgun   = :jobgun 
+        AND  paycl    = :paycl;
+     
+     if  (exist_count != 0)
+     {       /* 있으면 값을 더하자 */
+          EXEC SQL 
+          UPDATE  pihtong 
+             set  minwon     = (minwon     + :minwon    ),      /* 재직인원 */
+                  finwon     = (finwon     + :finwon    ),      
+                  inwon      = (inwon      + :inwon     ),      
+                  mpainwon   = (mpainwon   + :mpainwon  ),      /* 파견인원 */
+                  fpainwon   = (fpainwon   + :fpainwon  ),      
+                  painwon    = (painwon    + :painwon   ),      
+                  medinwon   = (medinwon   + :medinwon  ),      /* 교육인원 */
+                  fedinwon   = (fedinwon   + :fedinwon  ),      
+                  edinwon    = (edinwon    + :edinwon   ),      
+                  mhuinwon   = (mhuinwon   + :mhuinwon  ),      /* 휴직인원 */
+                  fhuinwon   = (fhuinwon   + :fhuinwon  ),      
+                  huinwon    = (huinwon    + :huinwon   ),      
+                  mrtinwon   = (mrtinwon   + :mrtinwon  ),      /* 퇴직인원 */
+                  frtinwon   = (frtinwon   + :frtinwon  ),      
+                  rtinwon    = (rtinwon    + :rtinwon   ),      
+                  magesum    = (magesum    + :magesum   ),      /* 연  령 */
+                  fagesum    = (fagesum    + :fagesum   ),      
+                  agesum     = (agesum     + :agesum    ),      
+                  mpaygrsum  = (mpaygrsum  + :mpaygrsum ),      /* 호  봉 */
+                  fpaygrsum  = (fpaygrsum  + :fpaygrsum ),      
+                  paygrsum   = (paygrsum   + :paygrsum  ),      
+                  mdumonsum  = (mdumonsum  + :mdumonsum ),      /* 근속월수 */
+                  fdumonsum  = (fdumonsum  + :fdumonsum ),      
+                  dumonsum   = (dumonsum   + :dumonsum  ),      
+                  mclmonsum  = (mclmonsum  + :mclmonsum ),      /* 재급월수 */
+                  fclmonsum  = (fclmonsum  + :fclmonsum ),      
+                  clmonsum   = (clmonsum   + :clmonsum  ),      
+                  mdrinwon   = (mdrinwon   + :mdrinwon  ),      /* 박  사 */
+                  fdrinwon   = (fdrinwon   + :fdrinwon  ),      
+                  drinwon    = (drinwon    + :drinwon   ),      
+                  msrinwon   = (msrinwon   + :msrinwon  ),      /* 석  사 */
+                  fsrinwon   = (fsrinwon   + :fsrinwon  ),      
+                  srinwon    = (srinwon    + :srinwon   ),      
+                  mbainwon   = (mbainwon   + :mbainwon  ),      /* 학  사 */
+                  fbainwon   = (fbainwon   + :fbainwon  ),      
+                  bainwon    = (bainwon    + :bainwon   ),      
+                  mcoinwon   = (mcoinwon   + :mcoinwon  ),      /* 전문대 */
+                  fcoinwon   = (fcoinwon   + :fcoinwon  ),      
+                  coinwon    = (coinwon    + :coinwon   ),      
+                  mhiinwon   = (mhiinwon   + :mhiinwon  ),      /* 고  졸 */
+                  fhiinwon   = (fhiinwon   + :fhiinwon  ),      
+                  hiinwon    = (hiinwon    + :hiinwon   ),      
+                  mmiinwon   = (mmiinwon   + :mmiinwon  ),      /* 중  졸 */
+                  fmiinwon   = (fmiinwon   + :fmiinwon  ),
+                  miinwon    = (miinwon    + :miinwon   ),
+                  writetime  = :writetime, writeemp = :jobempno
+           WHERE  tongym     = :tongym
+             AND  orgnum     = :orgnum AND deptcode = :deptcode
+             AND  jobgun = :jobgun AND paycl = :paycl;
+          
+          if  (sqlca.sqlcode != 0)     /* Error is Error */
+               hinsa_exit(0,"PIHTONG Update Error !");
+     }
+     else
+     {
+          EXEC SQL 
+          INSERT  INTO  pihtong
+                       (tongym    , orgnum    , deptcode , jobgun  , jobline  ,
+                        paycl     , fieldcode , boncode  ,
+                        minwon    , finwon    , inwon    ,
+                        mpainwon  , fpainwon  , painwon  ,
+                        medinwon  , fedinwon  , edinwon  ,
+                        mhuinwon  , fhuinwon  , huinwon  ,
+                        mrtinwon  , frtinwon  , rtinwon  ,
+                        magesum   , fagesum   , agesum   ,
+                        mpaygrsum , fpaygrsum , paygrsum ,
+                        mdumonsum , fdumonsum , dumonsum ,
+                        mclmonsum , fclmonsum , clmonsum ,
+                        mdrinwon  , fdrinwon  , drinwon  ,
+                        msrinwon  , fsrinwon  , srinwon  ,
+                        mbainwon  , fbainwon  , bainwon  ,
+                        mcoinwon  , fcoinwon  , coinwon  ,
+                        mhiinwon  , fhiinwon  , hiinwon  ,
+                        mmiinwon  , fmiinwon  , miinwon  ,
+                        writetime , writeemp  )
+                VALUES
+                       (:tongym   , :orgnum   , :deptcode, :jobgun , :jobline ,
+                        :paycl    , :fieldcode, :boncode ,
+                        :minwon   , :finwon   , :inwon   ,
+                        :mpainwon , :fpainwon , :painwon ,
+                        :medinwon , :fedinwon , :edinwon ,
+                        :mhuinwon , :fhuinwon , :huinwon ,
+                        :mrtinwon , :frtinwon , :rtinwon ,
+                        :magesum  , :fagesum  , :agesum  ,
+                        :mpaygrsum, :fpaygrsum, :paygrsum,
+                        :mdumonsum, :fdumonsum, :dumonsum,
+                        :mclmonsum, :fclmonsum, :clmonsum,
+                        :mdrinwon , :fdrinwon , :drinwon ,
+                        :msrinwon , :fsrinwon , :srinwon ,
+                        :mbainwon , :fbainwon , :bainwon ,
+                        :mcoinwon , :fcoinwon , :coinwon ,
+                        :mhiinwon , :fhiinwon , :hiinwon ,
+                        :mmiinwon , :fmiinwon , :miinwon ,
+                        :writetime, :jobempno );
+     
+          if  (sqlca.sqlcode != 0)     /* Error is Error */
+               hinsa_exit(0,"PIHTONG Insert Error !");
+     }
+     tcre_count++;
+}
+
+calc_dettongdata()
+{
+     char buf_gubun[6];
+     
+     if  (((strncmp(pstate, "2", 1) == 0) &&
+          (strcmp(pstate, "22") >= 0)) ||              /* 사내파견제외 */
+          (strncmp(pstate, "3", 1) == 0))              /* 교    육 */
+     {                                                 
+          if  (strcmp(epoyn, "Y") != 0)                /* 파견교육현원포함 */
+               return;                                
+     }                                                
+     else if  (strncmp(pstate, "6", 1) == 0)           /* 정  직 */
+     {                                                
+          if  (strcmp(jpoyn, "Y") != 0)                /* 정직현원포함 */
+               return;                                
+     }                                                
+     else if  (strncmp(pstate, "7", 1) == 0)           /* 휴  직 */
+     {                                                
+          if  (strcmp(hpoyn, "Y") != 0)                /* 휴직현원포함 */
+               return;                                
+     }                                                
+     else if  ((strcmp(pstate, "80") >= 0) &&          /* 퇴  직 */
+               (strcmp(retyymm, tongym) <= 0))
+     {       /* 작업년월 이후 퇴직자는 재직자로 보자.. */
+          inwon  = rtinwon;
+          minwon = mrtinwon;    
+          finwon = frtinwon;
+          pihston_write("45", retsayu1, retsayu2, "00000");
+          return;
+     }
+     
+     sprintf(buf_gubun, "%05.0f", cmp_comdumm);        /* 근속월수 */
+     pihston_write("10", buf_gubun, "00000", "00000");
+     sprintf(buf_gubun, "%05.0f", cmp_payclmm);        /* 재급월수 */
+     pihston_write("15", buf_gubun, "00000", "00000");
+     sprintf(buf_gubun, "%05.0f", usaage);             /* 연  령 */
+     pihston_write("25", buf_gubun, "00000", "00000");
+     
+     licetong_write();                                 /* 자격증 통계생성 */
+     schotong_write();                                 /* 대학교/전공 통계생성 */
+     company_write();                                  /* 용역회사통계생성 */
+}
+
+licetong_write()
+{
+     int lice_count;
+     char buf_gubun2[6], buf_gubun3[6];
+     lice_count = 0;
+     EXEC SQL DECLARE k1 cursor for
+               SELECT  NVL(SUBSTR(lickind, 1, 3), '   '), 
+                       NVL(SUBSTR(licgr, 1, 1), ' ')
+                 FROM  pimlice
+                WHERE  empno = :empno
+                  AND  SUBSTR(NVL(licgetdate,'0'),1,6) <= :tongym
+                ORDER  BY  licrank;
+     
+     EXEC SQL open k1;
+     
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"Cursor Open k1");
+     
+     for ( ; ; )
+     {
+          EXEC SQL FETCH k1 INTO
+                   :lickind, :licgr;
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close k1;
+               return;
+          }
+          else if  (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+          {
+               EXEC SQL close k1;
+               hinsa_exit(0,"Data Fetch k1");
+          }
+          lice_count++;
+          if  (lice_count == 1)         /* 우선순위가 제일작은 자료가 대표 */
+               strcpy(buf_gubun2, "Y");
+          else
+               strcpy(buf_gubun2, "N");
+          strcpy(codeid, "I231");  strcpy(codeno, lickind);
+          read_pyccode();
+          sprintf(buf_gubun3, "%.3s%.1s", lickind, licgr);
+          pihston_write("30", buf_gubun2, buf_gubun3, codemainon);
+     }
+}
+
+schotong_write()
+{
+     char old_schgr[3], tmp_schgr[6];
+     memset(old_schgr, 0x00, sizeof(old_schgr));
+     memset(tmp_schgr, 0x00, sizeof(tmp_schgr));
+     
+     EXEC SQL DECLARE  k2 cursor for
+               SELECT  nvl(substr(schgr, 1, 2), '  '),
+                       nvl(substr(schcode, 1, 4), '    '),
+                       nvl(substr(majorcode, 1, 4), '    ')
+                 FROM  pimscho
+                WHERE  empno = :empno
+                  AND  schgr in ('59', '69', '79')
+                  AND  NVL(SCHFRYM,'0') <= :tongym
+                ORDER  BY schgr, schrank;
+     
+     EXEC SQL open k2;
+     
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"Cursor Open k2");
+     
+     for ( ; ; )
+     {
+         EXEC SQL FETCH k2 INTO
+                  :schgr, :schcode, :majorcode;
+     
+         if  (sqlca.sqlcode == 1403)
+         {
+              EXEC SQL close k2;
+              return;
+         }
+         else if  (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+         {
+              EXEC SQL close k2;
+              hinsa_exit(0,"Data Fetch k2");
+         }
+         /* 동일학력구분은 한자료만 처리 */
+         if  (strcmp(old_schgr, schgr) != 0)
+         {
+              sprintf(tmp_schgr, "%.2s000", schgr);
+              strcpy(codeid, "I223");  strcpy(codeno, schcode);
+              read_pyccode();
+              pihston_write("50", codemainon, schcode, tmp_schgr);
+     
+              strcpy(codeid, "I225");  strcpy(codeno, majorcode);
+              read_pyccode();
+              pihston_write("55", codemainon, majorcode, tmp_schgr);
+         }
+         strcpy(old_schgr, schgr);
+     }
+}
+
+company_write()
+{
+     char  tmp_schgr[6];
+     memset(tmp_schgr, 0x00, sizeof(tmp_schgr));
+     EXEC SQL 
+     SELECT  nvl(tcompany,'ZZ')
+       INTO  :tcompany
+       FROM  pihpmas
+      WHERE  workyymm = :tongym
+        AND  empno = :empno;
+     
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"용역회사 추출 에러");
+     
+     hinsa_trim(tcompany);
+     
+     if  ((sqlca.sqlcode == 1403) || (strcmp(tcompany,"ZZ") == 0))
+          return;
+     
+     strcpy(tmp_schgr,"00000");
+     strcpy(codeid, "I902");  strcpy(codeno, tcompany);
+     read_pyccode();
+     pihston_write("60", codemainon, tcompany, tmp_schgr);
+}
+
+
+annotong_create()
+{
+     EXEC SQL DECLARE h1 cursor for
+               SELECT  nvl(substr(ancode, 1, 3), '   '),
+                       nvl(substr(andetcode, 1, 2), '  '),
+                       orgnum, deptcode,
+                       upper(paycl), upper(jobgun), count(ancode)
+                 FROM  pihanno
+                WHERE  substr(anfrdate, 1, 6)           = :tongym
+                  AND  anupdyn in ('Y', 'y') AND orgnum = :orgnum
+                GROUP  BY  ancode, andetcode, orgnum, deptcode,
+                       upper(paycl), upper(jobgun);
+     
+     EXEC SQL open h1;
+     
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"Cursor Open h1");
+     
+     for ( ; ; )
+     {
+          EXEC SQL FETCH h1 INTO
+                   :ancode, :andetcode, :orgnum, :deptcode,
+                   :paycl, :jobgun, :anno_count;
+     
+         if  (sqlca.sqlcode == 1403)
+         {
+              EXEC SQL close h1;
+              return;
+         }
+         else if  (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+         {
+              EXEC SQL close h1;
+              hinsa_exit(0,"Data Fetch h1");
+         }
+         init_subvariable();
+         hinsa_trim(deptcode);
+         read_pycdept(1);    /* 부문, 본부코드를 찾자 */
+         minwon = finwon = 0;
+         inwon = anno_count;
+         pihston_write("40", ancode, andetcode, "00000");
+     }
+}
+
+pihston_write(t_gubun1, t_gubun2, t_gubun3, t_gubun4)
+char t_gubun1[3], t_gubun2[6], t_gubun3[6], t_gubun4[6];
+{
+     char *FL_date;
+     exist_count = 0;
+     
+     FL_date = hinsa_sys_date(0);
+     STRINIT(writetime);
+     strcpy(writetime, FL_date);
+ 
+     memset(gubun1,    0x00,   sizeof(gubun1));
+     memset(gubun2,    0x00,   sizeof(gubun2));
+     memset(gubun3,    0x00,   sizeof(gubun3));
+     memset(gubun4,    0x00,   sizeof(gubun4));
+ 
+     strcpy(gubun1, t_gubun1);  
+     strcpy(gubun2, t_gubun2);
+     strcpy(gubun3, t_gubun3);  
+     strcpy(gubun4, t_gubun4);
+ 
+     hinsa_trim(gubun1);    
+     hinsa_trim(gubun2);
+     hinsa_trim(gubun3);    
+     hinsa_trim(gubun4);
+ 
+     EXEC SQL 
+     SELECT  count(tongym)   /* 기존자료가 있냐 ? */
+       INTO  :exist_count
+       FROM  pihston
+      WHERE  tongym   = :tongym
+        AND  orgnum   = :orgnum 
+        AND  deptcode = :deptcode
+        AND  jobgun   = :jobgun 
+        AND  paycl    = :paycl
+        AND  gubun1   = :gubun1
+        AND  nvl(substr(gubun2, 1, 5), '     ') = nvl(substr(:gubun2, 1, 5), '     ')
+        AND  nvl(substr(gubun3, 1, 5), '     ') = nvl(substr(:gubun3, 1, 5), '     ')
+        AND  nvl(substr(gubun4, 1, 5), '     ') = nvl(substr(:gubun4, 1, 5), '     ');
+ 
+     if  (exist_count != 0)
+     {       /* 있으면 값을 더하자 */
+          EXEC SQL 
+          UPDATE  pihston
+             set  minwon    = (minwon  + :minwon),       /* 재직인원 */
+                  finwon    = (finwon  + :finwon),
+                  inwon     = (inwon   + :inwon),
+                  writetime = :writetime, 
+                  writeemp  = :jobempno
+           WHERE  tongym    = :tongym
+             AND  orgnum    = :orgnum 
+             AND  deptcode  = :deptcode
+             AND  jobgun    = :jobgun 
+             AND  paycl     = :paycl
+             AND  gubun1 = :gubun1
+             AND  nvl(substr(gubun2, 1, 5), '     ') = nvl(substr(:gubun2, 1, 5), '     ')
+             AND  nvl(substr(gubun3, 1, 5), '     ') = nvl(substr(:gubun3, 1, 5), '     ')
+             AND  nvl(substr(gubun4, 1, 5), '     ') = nvl(substr(:gubun4, 1, 5), '     ');
+          if  (sqlca.sqlcode != 0)     /* Error is Error */
+               hinsa_exit(0,"PIHSTON Update Error !");
+     }
+     else
+     {
+          EXEC SQL 
+          INSERT  INTO  pihston
+                VALUES (:tongym   , :orgnum  , :deptcode, 
+                        :jobgun   , :jobline , :paycl   ,
+                        :gubun1   , :gubun2  , :gubun3  , :gubun4 ,
+                        :fieldcode, :boncode ,
+                        :minwon   , :finwon  , :inwon   ,
+                        :writetime, :jobempno);
+          if  (sqlca.sqlcode != 0)     /* Error is Error */
+               hinsa_exit(0,"PIHSTON Insert Error !");
+     }
+     stcre_count++;
+}
+
+read_pycdept(i)
+int i;
+{
+     EXEC SQL 
+     SELECT  nvl(fieldcode, 'ZZZ'), nvl(boncode, 'ZZZZZZ')
+       INTO  :fieldcode, :boncode
+       FROM  pycdept
+      WHERE  orgnum = :orgnum AND deptcode = :deptcode
+        AND  existon = '1';  /* 실제조직 */
+     
+     if  (sqlca.sqlcode != 0)
+     {
+          if  (i == 0)
+               sprintf(tmp_buf, "사번[%s]성명[%s]차수[%s]부서[%s] ==> 부서코드 미존재 OR 오류 !",
+                                empno, korname, orgnum, deptcode);
+          else
+               sprintf(tmp_buf, "차수[%s]부서[%s] ==> 부서코드 미존재 OR 오류 !",
+                                orgnum, deptcode);
+          hinsa_log_print(0,tmp_buf);
+          strcpy(fieldcode, "ZZZ");
+          strcpy(boncode, deptcode);
+     }
+     hinsa_trim(fieldcode);  hinsa_trim(boncode);
+}
+
+read_pyccode()
+{
+     hinsa_trim(codeno);
+     EXEC SQL 
+     SELECT  codemainon
+       INTO  :codemainon
+       FROM  pyccode
+      WHERE  codeid = :codeid 
+        AND  codeno = :codeno;
+     
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(tmp_buf, "사번[%s]성명[%s]코드ID[%s]코드[%s] ==> 코드 미존재 OR 오류 !",
+                           empno, korname, codeid, codeno);
+          hinsa_log_print(0,tmp_buf);
+          strcpy(codemainon, "1");    /* 오류자료는 일단 비주요 */
+     }
+}
+
+/*=== K.J 2005.10. Rexec대체 서비스를 위한 ====================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO  PYBATLOG
+          VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message);
+
+     if  ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAIL);
+     }                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}
+/*--------------------------------------*
+ *  Log message routine     *
+ *--------------------------------------*/
+/* 1.04    2004.02.05     이민용      자체 개선          오라클 8버전 upgrade관련
+hinsa_log_print(0,msg)
+char *msg;
+{
+     error_count++;
+     log_msg(1, gubun, num++, msg);
+     return;
+}
+*/
+/**********<< PROGRAM END >>********************************/

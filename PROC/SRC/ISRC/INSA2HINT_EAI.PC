@@ -1,0 +1,417 @@
+/*======================== Program Header ==========================================================
+     PROGRAM-NAME      : 브로드넷 인사정보변경데이터 전송 insa2hint_eai.pc
+     PROGRM-Decription : 인사테이블을 읽어서 Hint Interface  2회 cron 실행
+                         EAI에서 hint_empinfo 테이블을 읽어감....
+                         work1 : 새벽 05시 45분
+                         work2 : 오전 11시 30분
+     Programmer        : 강륜종
+     Version           : 1.00
+     Date              : 2008.02.01
+       
+    Update Contents
+     Version  date(yy.mm.dd)  programmer    description  Comments
+       1.00   2008.02.01      강륜종        최초작성     
+       1.10   2008.08.14      jissi         HR 인프라 고도화 Project(직위-> 직책, 직급 -> BAND(비공개)) 
+       1.20   2014.03.05.     강륜종dsa2000 도급인력 신규 생성으로 인하여 프로그램 수정.
+       1.20   2015.01.15.     hjku 도급인력 전송 누락 부분 추가
+==================================================================================================*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define   YYMMDD      8
+
+EXEC SQL INCLUDE sqlca.h;
+
+EXEC SQL BEGIN DECLARE SECTION;
+
+     /* 인터페이스 콘트롤 테이블 변수들 */
+     typedef struct HINSA_ctrl_inter {
+             varchar  v_dt_create  [YYMMDD   + 1];  /* 생성일자 */
+             int      v_no_crt_srl;                 /* 생성 일련번호 */
+             int      v_cnt_line;                   /* 라인 건수 */
+     } ts_ctrl_inter;
+ 
+
+     char  vWorkDate[8+1];
+ 
+EXEC SQL END DECLARE SECTION;
+
+static ts_ctrl_inter     FG_inter_ctrl;
+static ts_ctrl_inter     *FGP_inter_ctrl;
+
+static int  FG_loopcnt;
+char FL_Line[255];
+char worktime[6] = "";
+
+void main(argc,argv)
+int argc;
+char *argv[];
+{
+     char *FL_date;
+
+     char FL_file[255];
+
+       
+     if  (argc != 2) {  /* /hper/insa/HINSA/proc/bin/ERPbin/insa2hint_eai work1 */
+          printf("[Usage] : insa2hint_eai 1.cron \n");
+          exit(1);
+     }
+     
+     /* 64bit 실행 가능하기 위해 각 변수 앞에 & 를 붙혀줌 */  
+     STRINIT(&FL_file);
+     STRINIT(&FL_Line);
+     strcpy(FL_file,"insa2hint_eai");
+   
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+     }
+     
+     /* 64bit 실행 가능하기 위해 각 변수 앞에 & 를 붙혀줌 */
+     memset(&FG_inter_ctrl, 0x00, sizeof(ts_ctrl_inter));
+   
+     FGP_inter_ctrl = &FG_inter_ctrl;
+     FGP_inter_ctrl->v_cnt_line = 0;
+   
+     /* 생성일자.. */ 
+     FL_date = hinsa_sys_date(1);     
+     
+     strcpy(worktime, argv[1]);
+     
+     STR2VCTRIM(FGP_inter_ctrl->v_dt_create, FL_date, YYMMDD);  
+     
+     hinsa_log_print(0,"HINT 인사정보 인터페이스(insa2hint_eai) 프로그램 시작...");
+   
+     hinsa_db_connect();  
+   
+     printf("FL_date : %s\n", FGP_inter_ctrl->v_dt_create.arr);
+     printf("worktime : %s\n", worktime);       
+
+     /* 현재시간 체크 */
+     EXEC SQL     
+     SELECT case when  :worktime ='work1' then TO_CHAR(SYSDATE -1,'YYYYMMDD')  
+            else                               TO_CHAR(SYSDATE,'YYYYMMDD')   end
+       INTO :vWorkDate
+       FROM DUAL;  
+     printf("vWorkDate : %s\n", vWorkDate);
+       
+     /*===========================================================================================
+      인사정보 와  HINT 조직도/주소록 동기화     
+      2018.12.27. 아래 로직을 pic1065g.pc로 옮겨감(종합인사 고도화시 pic1065g.pc에서 예약발령이 이루어지므로 예약발령 전 백업하기 위하여)
+     if  ( strcmp(worktime, "work1") == 0 )
+     {  
+          EXEC SQL  
+          Delete From PIMPMAS_HINT 
+           Where Workdate = :FGP_inter_ctrl->v_dt_create;
+          if  (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403)
+          {
+               STRINIT(&FL_Line);
+               sprintf(FL_Line, "pimpmas_hint Delete Error!! : %s", SQLERRM);
+               hinsa_log_print(0, FL_Line);
+          }                 
+
+          EXEC SQL  
+          INSERT INTO PIMPMAS_HINT
+          SELECT :FGP_inter_ctrl->v_dt_create, A.* 
+            FROM PIMPMAS A;
+          if  ((SQLCODE != SQL_OK))
+          {
+               STRINIT(&FL_Line);
+               sprintf(FL_Line, "pimpmas_hint Insert Error!!~1 : %s", SQLERRM);
+               hinsa_log_print(0, FL_Line);
+          }  
+          
+          EXEC SQL  
+          INSERT INTO PIMPMAS_HINT
+		             (WORKDATE, EMPNO, KORNAME, ORGNUM, DEPTCODE, JUMINID, RETCONT, Offitel, EMPDATE, RETDATE, SKEMAIL, PAYRA)  
+          SELECT :FGP_inter_ctrl->v_dt_create, 
+				          EMPNO, KNAME, ORGNUM, DEPTCODE, JUMINID, HANDP, OTEL, EMPDATE, RETDATE, SKEMAIL, PAYRA
+            FROM PZSUBMAS
+           Where Empno in (select distinct empno from poskmail where empno like 'U%');
+          if  ((SQLCODE != SQL_OK))
+          {
+               STRINIT(&FL_Line);
+               sprintf(FL_Line, "pimpmas_hint Insert Error!!~2 : %s", SQLERRM);
+               hinsa_log_print(0, FL_Line);
+          }
+     }  ===========================================================================================*/
+ 
+     if (process_pimpmas()== FAILURE) {
+          STRINIT(&FL_Line);
+          sprintf(FL_Line, "인사마스터 자료 처리 오류");
+          hinsa_log_print(0, FL_Line);     
+     }
+ 
+     if(process_pzsubmas()== FAILURE) {
+          STRINIT(&FL_Line);
+          sprintf(FL_Line, "도급인력 자료 처리 오류");
+          hinsa_log_print(0, FL_Line);     
+     }     
+          
+     hinsa_exit(0,"HINT 인터페이스(insa2hint_eai) 프로그램 정상 처리...");  
+}  
+
+/*인사마스터 자료*/ 
+int process_pimpmas()
+{
+    /*신규입사자 : work1으로 구동시 신규입사자 반복하여 반영됨*/
+    printf("인사마스터 신규입사자... \n");    
+    EXEC SQL
+    Insert Into Hint_Empinfo    
+    Select To_Char(Sysdate,'YYYYMMDD'),            
+           Empno, 
+           Korname, 
+           Juminid, 
+           Case When (X.Tribegb='2' And Y.Tribegb='2') Or (Tjobduty='09') Then M.Jobdept Else M.Deptcode End Deptcode,  --//2019.01.09  트라이브조직 구성원 또는 비서는 근무부서를 기준으로 함--//2018.11.30 H23차부터 트라이브조직만 근무부서로 전송. dsa2000  --deptcode, 
+           Case When (X.Tribegb='2' And Y.Tribegb='2') Or (Tjobduty='09') Then M.Jobpayra Else M.Payra End Payra,       --//2019.01.09  트라이브조직 구성원 또는 비서는 근무부서를 기준으로 함--//2018.11.30 Payra
+           Lanfrdate, 
+           'A',
+           '',
+           'N',             
+           To_Char(Sysdate,'YYYYMMDDHH24MISS'),
+           '0000',
+           Skemail
+      From Pimpmas M,
+          (Select Deptcode, Substr(Tribegb,1,1) Tribegb From Pycdept Where Orgnum = Func_Orgnum) X, --//2018.11.30
+          (Select Deptcode, Substr(Tribegb,1,1) Tribegb From Pycdept Where Orgnum = Func_Orgnum) Y  --//2018.11.30
+     Where M.Pstate < '80'
+       And Empno Not In (Select Empno From Hint_Empinfo Where Workdate <= :vWorkDate And Flag='A')
+       And Juminid Is Not Null
+       And X.Deptcode = M.Deptcode
+       And Y.Deptcode = M.Jobdept;
+    /*select to_char(sysdate,'YYYYMMDD'),            
+           empno, 
+           korname, 
+           juminid, 
+           deptcode, 
+           //' ' paycl, 
+           payra, 
+           lanfrdate, 
+           'A',
+           '',
+           'N',             
+           to_char(sysdate,'YYYYMMDDHH24MISS'),
+           '0000',
+           skemail
+      from pimpmas
+     where pstate  < '80'
+       and empno not in (select empno from hint_empinfo 
+                            where workdate <= :vWorkDate and flag='A')--2015.02.09.변경
+       and juminid is not null;*/
+                          
+    if  ((SQLCODE != SQL_OK))
+    {
+         STRINIT(&FL_Line);
+         sprintf(FL_Line, "Oracle 에러/insert into hint_empinfo pimpmas 신규입사자 !! : %s", SQLERRM);
+         hinsa_log_print(0, FL_Line);
+         return (FAILURE);
+    }                
+               
+    /*퇴사자*/
+    printf("인사마스터 퇴사자... \n");
+    EXEC SQL
+    insert into hint_empinfo    
+    select to_char(sysdate,'YYYYMMDD'),          
+           empno, 
+           korname, 
+           juminid, 
+           Case When (X.Tribegb='2' And Y.Tribegb='2') Or (Tjobduty='09') Then M.Jobdept Else M.Deptcode End Deptcode,  --//2019.01.09  트라이브조직 구성원 또는 비서는 근무부서를 기준으로 함--//2018.11.30 H23차부터 트라이브조직만 근무부서로 전송. dsa2000  --deptcode, 
+           Case When (X.Tribegb='2' And Y.Tribegb='2') Or (Tjobduty='09') Then M.Jobpayra Else M.Payra End Payra,       --//2019.01.09  트라이브조직 구성원 또는 비서는 근무부서를 기준으로 함--//2018.11.30 Payra
+           Lanfrdate, 
+           'D',
+           '',
+           'N',             
+           to_char(sysdate,'YYYYMMDDHH24MISS'),
+           '0000',
+           skemail
+      From Pimpmas M,
+          (Select Deptcode, Substr(Tribegb,1,1) Tribegb From Pycdept Where Orgnum = Func_Orgnum) X, --//2018.11.30
+          (Select Deptcode, Substr(Tribegb,1,1) Tribegb From Pycdept Where Orgnum = Func_Orgnum) Y  --//2018.11.30
+     where ( (      nvl(retdate,'99999999') < to_char(sysdate,'YYYYMMDD')   /*2015.04.01.hjku..퇴직일 이후에 전송되도록 수정..nvl(retdate,'99999999') <= to_char(sysdate,'YYYYMMDD') */
+                and nvl(retdate,'99999999') >= '20070503' )                  /*FIRST HINT INTERFACE DATE*/
+            or((pstate = '80') and (lanfrdate >= '20070503')))
+       and (empno,korname) not in (select empno,korname from hint_empinfo where flag ='D' ) /*개명자가 퇴사할때 D로 넘어가도록*/
+       And X.Deptcode = M.Deptcode
+       And Y.Deptcode = M.Jobdept; 
+      /*from pimpmas
+     where ( (      nvl(retdate,'99999999') < to_char(sysdate,'YYYYMMDD')   2015.04.01.hjku..퇴직일 이후에 전송되도록 수정..nvl(retdate,'99999999') <= to_char(sysdate,'YYYYMMDD') 
+                and nvl(retdate,'99999999') >= '20070503' )                 
+            or((pstate = '80') and (lanfrdate >= '20070503')))
+       and (empno,korname) not in (select empno,korname from hint_empinfo where flag ='D' ); */
+       
+    if  ((SQLCODE != SQL_OK))
+    {
+         STRINIT(&FL_Line);
+         sprintf(FL_Line, "Oracle 에러/insert into hint_empinfo pimpmas 퇴사자!! : %s", SQLERRM);
+         hinsa_log_print(0, FL_Line);
+         return (FAILURE);         
+    }
+    
+    
+    /*변경자*/         
+    printf("인사마스터 변경자... \n");
+    EXEC SQL
+    insert into hint_empinfo    
+    Select to_char(sysdate,'YYYYMMDD'),           
+           M.empno, 
+           M.korname, 
+           M.juminid, 
+           Case When (X.Tribegb='2' And Y.Tribegb='2') Or (M.Tjobduty='09') Then M.Jobdept Else M.Deptcode End Deptcode,  --//2019.01.09  트라이브조직 구성원 또는 비서는 근무부서를 기준으로 함--//2018.11.30 H23차부터 트라이브조직만 근무부서로 전송. dsa2000  --deptcode, 
+           Case When (X.Tribegb='2' And Y.Tribegb='2') Or (M.Tjobduty='09') Then M.Jobpayra Else M.Payra End Payra,       --//2019.01.09  트라이브조직 구성원 또는 비서는 근무부서를 기준으로 함--//2018.11.30 Payra
+           M.Lanfrdate, 
+           'C',
+           '',
+           'N',             
+           to_char(sysdate,'YYYYMMDDHH24MISS'),
+           '0000',
+           M.skemail
+      From Pimpmas M, Pimpmas_hint B,
+          (Select Deptcode, Substr(Tribegb,1,1) Tribegb From Pycdept Where Orgnum = Func_Orgnum) X, --//2018.11.30
+          (Select Deptcode, Substr(Tribegb,1,1) Tribegb From Pycdept Where Orgnum = Func_Orgnum) Y  --//2018.11.30
+     Where b.workdate =  :vWorkDate /*2015.01.13. hjku..to_char(sysdate-1,'YYYYMMDD') in work1*/
+       And M.empno    =  b.empno
+       And M.juminid is not null       
+       And exists(select 1 from hint_empinfo where WORKDATE < TO_CHAR(SYSDATE,'YYYYMMDD') and M.empno = empno and flag='A')--/*2015.02.09. 신규가 발생하기 전에 변경이 발생하는  오류로 인해 추가..*/       
+       And not exists(select 1 from hint_empinfo where flag='D' and M.empno = empno )                                      --/*2015.02.10. 삭제가 발생한 대상자가 다시 전송되는 오류로 인해 추가..*/
+       And M.empno not in (select empno from hint_empinfo where workdate = to_char(sysdate,'YYYYMMDD') and flag in ('A','D'))
+       And (trim(M.korname)   <> trim(b.korname) or   /*M.paycl            <> b.paycl         or */
+            M.juminid         <> b.juminid       or
+            M.orgnum          <> b.orgnum        or
+            M.deptcode        <> b.deptcode      or
+            M.JobDept         <> b.JobDept       or  /*2018.11. Add 근무부서변경시에도 전송되도록*/
+            M.payra           <> b.payra         or 
+            M.jobpayra        <> b.jobpayra      or  /*2018.11. Add 근무부서 직책변경시에도 전송되도록*/
+            M.lancode         <> b.lancode       or
+            nvl(M.skemail,' ')<> nvl(B.skemail,' ') )
+       And X.Deptcode = M.Deptcode
+       And Y.Deptcode = M.Jobdept;
+    
+    if  ((SQLCODE != SQL_OK))
+    {
+         STRINIT(&FL_Line);
+         sprintf(FL_Line, "Oracle 에러/insert into hint_empinfo pimpmas 변경자!! : %s", SQLERRM);
+         hinsa_log_print(0, FL_Line);
+         return (FAILURE);
+    } 
+    return (SUCCESS);
+}
+
+/*도급인력 자료*/
+int process_pzsubmas()
+{
+    /*신규입사자*/
+    printf("도급인력 신규입사자... \n");    
+    EXEC SQL
+    insert into hint_empinfo    
+    select to_char(sysdate,'YYYYMMDD'),            
+           empno, 
+           KNAME, 
+           juminid, 
+           deptcode, 
+           payra, 
+           to_char(sysdate,'YYYYMMDD') lanfrdate, /*2015.01.13.hjku..PZN2000A과 맞춤 */
+           'A',
+           '',
+           'N',             
+           to_char(sysdate,'YYYYMMDDHH24MISS'),
+           '0000',
+           skemail
+      from pzsubmas
+     where nvl(retdate,'99999999')  > to_char(sysdate,'YYYYMMDD')
+       and empno not in (select empno from hint_empinfo
+                          where workdate <= :vWorkDate and flag='A'--/*2015.02.09. 신규가 발생하기 전에 변경이 발생하는  오류로 인해 추가..where workdate <= :vWorkDate*/
+                        ) 
+       and juminid is not null;/*2012.01.04 추가*/
+                          
+    if  ((SQLCODE != SQL_OK))
+    {
+         STRINIT(&FL_Line);
+         sprintf(FL_Line, "Oracle 에러/insert into hint_empinfo pzsubmas 신규입사자 !! : %s", SQLERRM);
+         hinsa_log_print(0, FL_Line);
+         return (FAILURE);         
+    }                
+               
+    /*퇴사자*/
+    printf("도급인력 퇴사자... \n");
+    EXEC SQL
+    insert into hint_empinfo        
+    select to_char(sysdate,'YYYYMMDD'),          
+           empno, 
+           KNAME, 
+           juminid, 
+           deptcode,  
+           payra, 
+           to_char(sysdate,'YYYYMMDD')  lanfrdate, 
+           'D',
+           '',
+           'N',             
+           to_char(sysdate,'YYYYMMDDHH24MISS'),
+           '0000',
+           skemail
+      from pzsubmas
+     where nvl(retdate,'99999999') < to_char(sysdate,'YYYYMMDD') /*2015.04.01.hjku..퇴직일 이후에 전송되도록 수정..nvl(retdate,'99999999') <= to_char(sysdate,'YYYYMMDD') */
+       and (empno,KNAME) not in (select empno,korname from hint_empinfo where flag ='D'); /*개명자가 퇴사할때 D로 넘어가도록*/
+       
+    if  ((SQLCODE != SQL_OK))
+    {
+         STRINIT(&FL_Line);
+         sprintf(FL_Line, "Oracle 에러/insert into hint_empinfo pzsubmas 퇴사자!! : %s", SQLERRM);
+         hinsa_log_print(0, FL_Line);
+         return (FAILURE);         
+    }
+    
+    
+    /*변경자*/         
+    printf("도급인력 변경자... \n");
+    EXEC SQL
+    insert into hint_empinfo    
+    select to_char(sysdate,'YYYYMMDD'),
+           a.empno, 
+           a.KNAME, 
+           a.juminid, 
+           a.deptcode, /* ' ' paycl, */
+           a.payra, 
+           to_char(sysdate,'YYYYMMDD')  lanfrdate, 
+           'C',
+           '',
+           'N',             
+           to_char(sysdate,'YYYYMMDDHH24MISS'),
+           '0000',
+           A.skemail
+      from pzsubmas a, pimpmas_hint b
+     where b.workdate          =  :vWorkDate /*2015.01.13. hjku..to_char(sysdate-1,'YYYYMMDD')*/
+       and a.empno             =  b.empno
+       and a.juminid           is not null       
+       and exists(select 1 from hint_empinfo where WORKDATE < TO_CHAR(SYSDATE,'YYYYMMDD') and a.empno = empno and flag='A')--/*2015.02.09. 신규가 발생하기 전에 변경이 발생하는  오류로 인해 추가..*/       
+       and not exists(select 1 from hint_empinfo where flag='D' and a.empno = empno )--/*2015.02.10. 삭제가 발생한 대상자가 다시 전송되는 오류로 인해 추가..*/
+       and (trim(a.KNAME)      <> trim(b.korname) or
+            a.payra            <> b.payra         or 
+            a.juminid          <> b.juminid       or 
+            a.orgnum           <> b.orgnum        or
+            a.deptcode         <> b.deptcode      or 
+            nvl(A.skemail,' ') <> nvl(B.skemail,' ') )
+       and a.empno not in (select empno from hint_empinfo
+                            where workdate = to_char(sysdate,  'YYYYMMDD')
+                              and flag in ('A','D'));
+
+    
+    if  ((SQLCODE != SQL_OK))
+    {
+         STRINIT(&FL_Line);
+         sprintf(FL_Line, "Oracle 에러/insert into hint_empinfo pzsubmas 변경자!! : %s", SQLERRM);
+         hinsa_log_print(0, FL_Line);
+         return (FAILURE);         
+    } 
+    return (SUCCESS);
+}

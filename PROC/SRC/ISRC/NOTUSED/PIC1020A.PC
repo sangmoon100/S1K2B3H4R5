@@ -1,0 +1,412 @@
+/*******************************************************************************
+PROGRAM-NAME    : PIC1020A(발령테이블 생성) : ## hint발령 경신
+SYSTEM-NAME     : 종합인사정보
+SUBSYSTEM-NAME  : 인사발령
+Programmer      : 이민용
+Version         : 1.00
+Date            : 2004.11.03
+
+Update Contents
+ Version date(yy.mm.dd) programmer  relevant doc.no    description
+  1.00   2004.07.07     이민용      자체개선           힌트에서 생성한 pihanno_hint 테이블을 이용하여
+                                                       pihanno테이블에 insert, pihanba 테이블에 insert
+*******************************************************************************/
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define   YYMMDD      8
+#define   YYMMDDHH    16
+
+#define  SUCCESS         0
+#define	 FAIL		-1
+
+/*----------------------------------------------*
+ * Current data save & Condition save Variable  *
+ *----------------------------------------------*/
+EXEC   SQL BEGIN DECLARE SECTION;
+  char    empno[5];       
+  char    korname[13];         
+  char    annono[9];   
+  char    v_annono[9];     
+  char    anseqno[5];     
+  char    anfrdate[9];    
+  char    antodate[9];    
+  char    ancode[4];      
+  char    andetcode[3];   
+  char    orgnum[4];      
+  char    deptcode[7];    
+  char    jobgun[3];      
+  char    paycl[4];              
+  char    payra[4];       
+  char    jobline[3];     
+  char    mark1[41];         
+  char    addeptcode[7];  
+  char    adpayra[4];           
+  char    borgnum[4];     
+  char    bdeptcode[7];   
+  char    bpaycl[4];        
+  char    bpayra[4];      
+  char    anupdyn[2];       
+  char    writetime[16];   
+  char    writeemp[5];  
+  char    anlastno[5];  
+  char    value1[4];   
+ 
+EXEC   SQL END DECLARE SECTION;
+EXEC   SQL INCLUDE SQLCA;
+
+char jobempno[5];	/* 작업자사번 */
+int insert_count, insert_count1;
+char FL_Line[255];
+
+
+/******************************************
+ * 	MAIN PROCESSING START !!!!!!      *
+ ******************************************/
+main(argc,argv)
+int argc; 
+char *argv[];
+{ 
+
+        char *FL_date;
+        char FL_dir[255];
+        char FL_file[255];
+        
+        STRINIT(FL_file);
+        strcpy(FL_file,"pic1020a");
+        
+        hinsa_get_filename(1, FL_file);
+        if (hinsa_log_open(FL_file) == FAILURE)
+        {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+        }
+        
+        hinsa_log_print(0,"HINT발령 프로그램 시작...");
+        
+        hinsa_db_connect();
+	init_variable();
+
+
+        strcpy(jobempno, argv[1]);
+	
+	STRINIT(FL_Line);
+        sprintf(FL_Line, "pic1020a_%.4s", jobempno);
+        hinsa_log_print(0, FL_Line);
+
+	data_process();
+	sprintf(FL_Line, "<*> pihanno생성건수 : %7d 건", insert_count);
+        hinsa_log_print(0, FL_Line);
+        
+        pihanba_process();
+        sprintf(FL_Line, "<*> pihanba생성건수 : %7d 건", insert_count1);
+        hinsa_log_print(0, FL_Line);
+
+	hinsa_exit(0,"작업이 완료되었습니다.");
+}
+
+/*----------------------------------------------*
+ * Current data & Condition Variable Initialize *
+ *----------------------------------------------*/
+init_variable()
+{ 
+	memset(empno,		0x00,	sizeof(empno));              
+	memset(korname,		0x00,	sizeof(korname));            
+	memset(annono,		0x00,	sizeof(annono));             
+	memset(anseqno,		0x00,	sizeof(anseqno));            
+	memset(anfrdate,	0x00,	sizeof(anfrdate));            
+	memset(antodate,	0x00,	sizeof(antodate));            
+	memset(ancode,		0x00,	sizeof(ancode));            
+	memset(andetcode,	0x00,	sizeof(andetcode));            
+	memset(orgnum,		0x00,	sizeof(orgnum));            
+	memset(deptcode,	0x00,	sizeof(deptcode));            
+	memset(jobgun,		0x00,	sizeof(jobgun));            
+	memset(paycl,		0x00,	sizeof(paycl));            
+	memset(payra,		0x00,	sizeof(payra));            
+	memset(jobline,		0x00,	sizeof(jobline));            
+	memset(mark1,		0x00,	sizeof(mark1));            
+	memset(addeptcode,	0x00,	sizeof(addeptcode));            
+	memset(adpayra,		0x00,	sizeof(adpayra));                        
+	memset(borgnum,		0x00,	sizeof(borgnum));            
+	memset(bdeptcode,	0x00,	sizeof(bdeptcode));            
+	memset(bpaycl,		0x00,	sizeof(bpaycl));            
+	memset(bpayra,		0x00,	sizeof(bpayra));            
+	memset(anupdyn,		0x00,	sizeof(anupdyn));            
+	memset(writetime,	0x00,	sizeof(writetime));            
+	memset(writeemp,	0x00,	sizeof(writeemp)); 
+	memset(anlastno,	0x00,	sizeof(anlastno));  	    
+  memset(value1,  	 0x00,	sizeof(value1));  	 	         	
+}       
+        
+/****************************************
+ *  	Data process  routine 		*
+ ****************************************/
+        
+data_process()
+{       
+        char *FL_date;
+        int  i=1;
+   
+	hinsa_log_print(0,"pihanno_hint테이블에 신규 데이터를 한건씩 Fecth한다...");
+	
+        EXEC SQL LOCK TABLE  pimpmas, pihanno_hint, pihanno, pyccode
+                 IN   EXCLUSIVE  MODE  NOWAIT;
+        
+        if (sqlca.sqlcode != 0)
+		hinsa_exit(0,"다른 작업자가 DB수정 작업중입니다.");
+		
+        FL_date = hinsa_sys_date(0);
+        STRINIT(writetime);
+        strcpy(writetime, FL_date);	
+
+   /*-----------------------------------
+    2005.09.30. ch.k.j추가(현재차수조회)
+   -----------------------------------*/
+  EXEC SQL  select value1
+             into :value1
+              from pimvari
+             where gubun = '00'
+               and sgubun = '0001';
+           
+  printf("value1 =>[%s] \n", value1);
+   /*----------------------------------- pihanno_hint 테이블모든 인원 검색 */
+  
+	EXEC SQL DECLARE c1 cursor for                      
+                 select a.empno, a.korname, a.annono, 
+                        a.anfrdate, a.antodate, c.codeno ANCODE, d.codeno ANDETCODE, :value1, 
+	                decode(a.deptcode,'',b.deptcode,a.deptcode), b.jobgun, b.paycl, e.codeno , b.jobline, a.mark1, 
+	                a.addeptcode, decode(a.addeptcode,'','',e.CODENO)ADPAYRA,
+	                f.orgnum BORGNUM, f.deptcode BDEPTCODE, f.paycl BPAYCL, f.payra BPAYRA 
+                  from pihanno_hint a, pimpmas b, pyccode c, pyccode d, pyccode e, 
+                       ( 
+                  	 select a.empno, a.orgnum, a.deptcode, a.paycl, a.payra from pihanno a 
+                         where (a.empno,a.anfrdate, a.annono, a.anseqno) in 
+                               ( 
+                               select a.empno,a.anfrdate, a.annono, max(a.anseqno) 
+                               from pihanno a 
+                               where (a.empno,a.anfrdate, a.annono) in 
+                                     (select a.empno, a.anfrdate, max(a.annono) 
+                                       from pihanno a 
+                                      where (a.empno, a.anfrdate) in ( select a.empno, max(a.anfrdate) from pihanno a, pihanno_hint b 
+                                                            where a.empno = b.empno 
+                  										    and a.anfrdate < b.anfrdate 
+                                                            group by a.empno) 
+                                      group by a.empno, a.anfrdate 
+                                     ) 
+                               group by a.empno, a.anfrdate, a.annono 
+                              ) 
+                       ) f 
+                  where a.empno=b.empno 
+                    and c.codeid(+)='I300'         -- 발령코드
+                    and a.annoname = c.codename(+) 
+                    and d.codeid(+)='I310'         -- 발령세부코드
+                    and a.andetname = d.codename(+) 
+                    and e.codeid(+)='I113'         --근무지 직위
+                    and a.anpayraname = e.codename(+) 
+                    and e.useyn='Y' 
+                    and a.anupyn ='N' 
+                    and a.empno=f.empno
+                    order by a.annono;
+        
+        EXEC SQL  open c1;
+        
+        if (sqlca.sqlcode != 0)
+             	hinsa_exit(0,"Cursor Open c2");
+        
+        STRINIT(v_annono);
+        for( ; ; )
+        {
+               
+             	EXEC SQL FETCH c1 INTO
+                   	 :empno,		        
+                         :korname,		
+                         :annono,		        		
+                         :anfrdate,	        
+                         :antodate,	        
+                         :ancode,		        
+                         :andetcode,	        
+                         :orgnum,		        
+                         :deptcode,	        
+                         :jobgun,		        
+                         :paycl,		        
+                         :payra,		        
+                         :jobline,		
+                         :mark1,		        
+                         :addeptcode,	        
+                         :adpayra,			        
+                         :borgnum,		
+                         :bdeptcode,	        
+                         :bpaycl,		        
+                         :bpayra;
+        
+             	if (sqlca.sqlcode == 1403)
+             	{
+                	EXEC SQL close c1;
+                	return;
+             	}
+             	else if (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+             	{
+                	EXEC SQL close c1;
+			hinsa_exit(0,"Data Fetch c1");
+             	}
+              
+             	/*발령번호가 같을때 시퀀스 번호주기 */
+             	if (strcmp(v_annono,annono) == 0)
+             	 {
+             	   strcpy(v_annono, annono);
+             	   i++; 
+                   sprintf(anseqno,"%04d",i); 
+                 }
+             	else if (strcmp(v_annono,annono) != 0)
+             	  {
+             	    strcpy(v_annono, annono);
+             	    sprintf(anseqno,"%04d",1); 
+             	    i=1;
+             	  }
+             	   
+		insert_count++; 
+				
+		insert_pihanno();	
+	}
+}
+
+
+
+insert_pihanno()
+{	
+        hinsa_trim(empno);	        
+        hinsa_trim(korname);	
+        hinsa_trim(annono);	        
+        hinsa_trim(anfrdate);	
+        hinsa_trim(antodate);	
+        hinsa_trim(ancode);	        
+        hinsa_trim(andetcode);	
+        hinsa_trim(orgnum);	        
+        hinsa_trim(deptcode);	
+        hinsa_trim(jobgun);	        
+        hinsa_trim(paycl);	        
+        hinsa_trim(payra);	        
+        hinsa_trim(jobline);	
+        hinsa_trim(mark1);	        
+        hinsa_trim(addeptcode);     
+        hinsa_trim(adpayra);	
+        hinsa_trim(borgnum);	
+        hinsa_trim(bdeptcode);	
+        hinsa_trim(bpaycl);	        
+        hinsa_trim(bpayra);        
+	
+        EXEC SQL INSERT INTO  pihanno
+                 ( empno,  korname,  annono,  anseqno,  anfrdate,  antodate,  ancode,  andetcode,  orgnum,  deptcode,  jobgun,   paycl,  payra,  jobline,  mark1,  addeptcode,  adpayra,  borgnum,  bdeptcode,  bpaycl,  bpayra, anupdyn, writetime,  writeemp) 
+                 Values   
+                 (:empno, :korname, :annono, :anseqno, :anfrdate, :antodate, :ancode, :andetcode, :orgnum, :deptcode, :jobgun,  :paycl, :payra, :jobline, :mark1, :addeptcode, :adpayra, :borgnum, :bdeptcode, :bpaycl, :bpayra, 'N',    :writetime, :jobempno ); 
+
+        if (sqlca.sqlcode != 0)
+	{
+                EXEC SQL close c1;
+             	sprintf(FL_Line, "insert pihanno Error [%s]", empno);
+             	hinsa_exit(0,FL_Line);
+	}
+}
+
+pihanba_process()
+{
+        int i=0;
+        
+	hinsa_log_print(0,"pihanno_hint테이블에 신규 데이터를 한건씩 Fecth한다...");
+	
+        EXEC SQL LOCK TABLE  pihanno_hint
+                 IN   EXCLUSIVE  MODE  NOWAIT;
+
+        if (sqlca.sqlcode != 0)
+		hinsa_exit(0,"다른 작업자가 DB수정 작업중입니다.");
+
+	EXEC SQL DECLARE c2 cursor for                      /* pihanno_hint 테이블모든 인원 검색 */
+                 select annono, count(*) anlastno from pihanno_hint
+                  where anupyn ='N'
+                  group by annono;
+
+        EXEC SQL  open c2;
+
+        if (sqlca.sqlcode != 0)
+             	hinsa_exit(0,"Cursor Open c2");
+
+        for( ; ; )
+        {
+             	EXEC SQL FETCH c2 INTO
+                   	 :annono, :anlastno;
+
+             	if (sqlca.sqlcode == 1403)
+             	{
+                	EXEC SQL close c2;
+                	return;
+             	}
+             	else if (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+             	{
+                	EXEC SQL close c2;
+			hinsa_exit(0,"Data Fetch c2");
+             	}
+	
+		insert_count1++;
+		
+		i=atoi(anlastno);
+		sprintf(anlastno,"%04d",i);
+		
+		insert_pihanba();	
+	}
+}
+
+insert_pihanba()
+{  
+/* 개발하고 맞춤
+    EXEC SQL INSERT INTO  pihanba
+             ( annono,  anupdateyn,  anlastno,  writetime,  writeemp) Values   
+             (:annono,     'Y',     :anlastno, :writetime, :jobempno );
+    
+    
+    if (amod == 1)
+    {
+      hinsa_log_print(0, "pihanba 테이블 최종번호(anlastno) Update ");
+   
+      EXEC SQL UPDATE pihanba
+                  SET anlastno =(select a.anlastno + count(b.empno) 
+                                 from pihanba a,  pihanno_hint b
+                                 where a.annono=b.annono
+                                   and a.annono= :annono
+                                 group by a.anlastno) 
+    } 
+ 
+    EXEC SQL INSERT INTO  pihanba
+             ( annono,  anupdateyn,  anlastno,  writetime,  writeemp) Values   
+             (:annono,     'Y',     :anlastno, :writetime, :jobempno );
+    */
+    if (sqlca.sqlcode != 0)
+	{
+                EXEC SQL close c2;
+             	sprintf(FL_Line, "insert_pihanba Error [%s] ", empno);
+             	hinsa_exit(0,FL_Line);
+	}
+	
+    EXEC SQL UPDATE pihanno_hint
+	     set anupyn ='Y';	
+	     
+    if (sqlca.sqlcode != 0)
+	{
+                EXEC SQL close c2;
+             	sprintf(FL_Line, "insert_pihanba Error [%s] ", empno);
+             	hinsa_exit(0,FL_Line);
+	}	     
+}	
+
+/**********<< PROGRAM END >>********************************/
+ 

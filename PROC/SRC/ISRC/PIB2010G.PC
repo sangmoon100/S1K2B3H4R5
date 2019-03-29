@@ -1,0 +1,815 @@
+/******************************************************************************
+    * 조직도생성 (pib2010g)  Select * From pihorga Where orgym=To_Char(Sysdate,'YYYYMM');*
+    * Date   : 96/10/28                                                          *
+    * Author : Kim.D.C                                                           * 
+    *  UPDATE                                                                    *
+    *  1.01   2000.10.20  강기우  코드변경. --조직개편.                          *
+    *  1.02   2001.11.15  서혜미  겸직,겸직해제 여러번 발령시 발령일로 비교.     *
+    *  1.03   2004.02.10  이민용  자체 개선   오라클 8버전 upgrade관련           *
+    *  1.04   2004.09.10  이민용  자체 개선   크론에 매월 1일날 작업하도록 등록  *
+    *  *) HR 인프라 고도화 Project(직위-> 직책, 직급 -> BAND(비공개))            *
+ ******************************************************************************/
+#include <string.h> 
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define  FAIL      -2
+
+/*----------------------------------------------*
+ * Current data save & Condition save Variable  *
+ *----------------------------------------------*/
+EXEC SQL BEGIN DECLARE SECTION;
+     char   orgym[7];      /* 기준년월 */
+     char   gubun[2];      /* 자료구분 0 - 조직(관리자 <= 보임자), 1 - 사원*/
+     char   orgnum[4];     /* 조직차수 */
+     char   deptcode[7];   /* 부서코드 */
+     char   empno[5];      /* 사  번 */
+     char   korname[13];   /* 성  명 */
+     char   deptlevel[3];  /* 부서등급 */
+     char   deptname[61];  /* 부서명 */
+     char   deptabbr[31];  /* 부서요약명 */
+     char   extcode[7];    /* 상위부서코드 */
+     char   boncode[7];    /* 본부코드 */
+     char   paycl[4];      /* BAND */
+     char   payclnm[21];   /* BAND명 */
+     char   payra[4];      /* 직  책 */
+     char   payranm[21];   /* 직책명 */
+     char   payrayn[2];    /* 보임여부 */
+     char   adpayrayn[2];  /* 겸직여부 */
+     char   pstate[3];     /* 인사상태 */
+     char   lineyn[2];     /* LINE출력여부 */
+     char   writetime[16]; /* 최종작업일시 */
+     char   jobempno[5];   /* 작업자사번 */
+     char   inorgym[7];    /* 작업년월 */
+     char   inorgnum[4];   /* 현조직차수 */
+     char   value1[21];
+     char   anfrdate[8];
+     
+     double check_count;   /* 자료건수 COUNT */
+     char   cur_date[9];   /* 현재일자 */
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+double create_count0, create_count1;
+char   tmp_msg[100];
+
+/******************************************
+ *   MAIN PROCESSING START !!!!!!      *
+ ******************************************/
+char    log_rundate[15]     = ""; 
+char    log_progid[16]      = "";
+char    log_writeman[5]     = "";
+char    log_buff[100]       = "";
+int     seqno               = 0;  
+ 
+main(argc,argv)
+int argc; 
+char *argv[];
+{ 
+     char c_count0[8], c_count1[8];
+   
+     char *FL_date;
+     char FL_dir[255];
+     char FL_Line[255];
+     char FL_file[255];
+     
+     STRINIT(FL_file);
+     strcpy(FL_file,"pib2010g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     hinsa_log_print(0,"조직도 생성 프로그램 시작...");
+     
+     hinsa_db_connect();
+   
+     init_variable();
+   
+     /*sprintf(command, "/hper/insa/HINSA/proc/bin/Ibin/pib2010g 'D006' '201812' 'H23' '20181227000000' );*/
+
+     strcpy(jobempno,     argv[1]);  /* 작업자사번*/
+     strcpy(inorgym,      argv[2]);  /* 작업년월  */
+     strcpy(inorgnum,     argv[3]);  /* 현조직차수*/
+     strcpy(log_rundate,  argv[4]);  /* 작업일시  */
+     strcpy(log_writeman, argv[1]);
+     strcpy(log_progid,   argv[0]);
+     
+     printf("jobempno     => [%s]\n", jobempno    );
+     printf("inorgym      => [%s]\n", inorgym     );
+     printf("inorgnum     => [%s]\n", inorgnum    );
+     printf("argv4        => [%s]\n", argv[4]    );
+     printf("log_rundate  => [%s]\n", log_rundate );
+     printf("log_writeman => [%s]\n", log_writeman);
+     printf("log_progid   => [%s]\n", log_progid  );
+     
+     EXEC SQL DECLARE log_db DATABASE; 
+     hinsa_log_db_connect();           
+   
+     data_process();    /* 작업을 처리한다 */
+   
+     update_pimvari();  /* 작업년월을 경신 */
+     
+     sprintf(tmp_msg, "OK 작업완료 ==> 조직[%6.0f], 인사[%6.0f]",create_count0, create_count1);      
+           
+     Write_batlog(seqno++, tmp_msg);
+     
+     hinsa_exit(0,tmp_msg);
+}
+
+/*----------------------------------------------*
+ * Current data & Condition Variable Initialize *
+ *----------------------------------------------*/
+init_variable()
+{ 
+     memset(orgym,     0x00,  sizeof(orgym)); 
+     memset(gubun,     0x00,  sizeof(gubun)); 
+     memset(orgnum,    0x00,  sizeof(orgnum));
+     memset(deptcode,  0x00,  sizeof(deptcode));
+     memset(empno,     0x00,  sizeof(empno));
+     memset(korname,   0x00,  sizeof(korname));
+     memset(deptlevel, 0x00,  sizeof(deptlevel));
+     memset(deptname,  0x00,  sizeof(deptname));
+     memset(deptabbr,  0x00,  sizeof(deptabbr));
+     memset(extcode,   0x00,  sizeof(extcode));
+     memset(boncode,   0x00,  sizeof(boncode));
+     memset(paycl,     0x00,  sizeof(paycl));
+     memset(payclnm,   0x00,  sizeof(payclnm));
+     memset(payra,     0x00,  sizeof(payra));
+     memset(payranm,   0x00,  sizeof(payranm));
+     memset(payrayn,   0x00,  sizeof(payrayn));
+     memset(adpayrayn, 0x00,  sizeof(adpayrayn));
+     memset(pstate,    0x00,  sizeof(pstate));
+     memset(lineyn,    0x00,  sizeof(lineyn));
+     
+     memset(writetime, 0x00,  sizeof(writetime));
+     memset(jobempno,  0x00,  sizeof(jobempno));
+     memset(inorgym,   0x00,  sizeof(inorgym));
+     memset(inorgnum,  0x00,  sizeof(inorgnum));
+     memset(value1,    0x00,  sizeof(value1));
+     memset(anfrdate,  0x00,  sizeof(anfrdate));
+     check_count = 0;
+     create_count0 = create_count1 = 0;
+     memset(tmp_msg,   0x00,  sizeof(tmp_msg));
+   
+     memset(cur_date,  0x00,  sizeof(cur_date));
+}
+
+/****************************************
+ *    Data process  routine     *
+ ****************************************/
+data_process()
+{
+     char *FL_date;
+     
+     EXEC SQL LOCK TABLE  pihorga
+                      IN  EXCLUSIVE  MODE  NOWAIT;
+   
+     if  (sqlca.sqlcode != 0)     hinsa_exit(0,"다른 작업자가 DB수정 작업중입니다.");
+   
+     FL_date = hinsa_sys_date(1);
+     STRINIT(cur_date);
+     strcpy(cur_date, FL_date);
+     
+     delete_pihorga();     /* 기존재자료 DELETE */
+                           
+     insert_pihorga0();    /* 조직자료 INSERT */
+                           
+     update_lineyn();      /* LINE출력여부를 수정 */
+                           
+     insert_pihorga1();    /* 인사자료 INSERT */
+                           
+     update_payclnm();     /* BAND명을 수정 */
+                           
+     update_payranm();     /* 직위명을 수정 */
+                           
+     update_dept();        /* 부서등급, 부서명, 요약명등을 수정 */
+                           
+     update_payrayn();     /* 조직의 보임자를 수정 */
+                           
+     process_adpayrayn();  /* 겸직자를 처리 */
+     
+     process_deptdiffer(); /* 2018.12.27. Add 소속부서와 근무부서의 성격이 다르면 Y로 업데이트 : MyHR 요청 dsa2000*/
+}
+
+delete_pihorga()
+{
+     check_count = 0;
+     EXEC SQL 
+     SELECT count(orgym)  INTO  :check_count
+       FROM  pihorga
+      WHERE  orgym = :inorgym;
+
+     if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Select Error(Delete) !");
+   
+     if  (check_count == 0)       return; /* 지울자료가 없으니까 */
+   
+     EXEC SQL 
+     DELETE FROM  pihorga  WHERE  orgym = :inorgym;
+     
+     if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Delete Error !");
+}
+
+insert_pihorga0()
+{
+     char *FL_date;
+   
+     hinsa_trim(deptname);
+     
+     FL_date = hinsa_sys_date(0);
+     STRINIT(writetime);
+     strcpy(writetime, FL_date);
+     
+     EXEC SQL 
+     INSERT  INTO  pihorga
+                 ( orgym, 
+                   gubun, 
+                   orgnum, 
+                   deptcode, 
+                   deptlevel,
+                   deptname, 
+                   deptabbr, 
+                   extcode, 
+                   boncode,
+                   payrayn, 
+                   adpayrayn, 
+                   lineyn,
+                   writetime, 
+                   writeemp,
+                   deptdiffer)  /*2018.12.26 소속부서와 근무부서의 부서성격이 다르면 Y : MyHR통계 위해 생성*/
+           SELECT  :inorgym,
+                   '0',
+                   orgnum, 
+                   deptcode, 
+                   deptlevel,
+                   deptname, 
+                   deptna3, 
+                   extcode, 
+                   boncode, /* deptabbr -> deptna3 shm 2002.01.31*/
+                   'N', 
+                   'N', 
+                   'Y',
+                   :writetime, 
+                   :jobempno,
+                   'N'
+             FROM  pycdept
+            WHERE  (orgnum = :inorgnum)
+              AND  (existon = '1')  
+              AND  (chanmode != '3');
+
+     if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Insert Error(0) !");
+
+     create_count0 = 0;  /* 조직 저장건수를 계산 */
+     EXEC SQL 
+     SELECT count(orgym)  INTO  :create_count0
+       FROM pihorga
+      WHERE orgym = :inorgym 
+        AND gubun = '0';
+        
+     if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Count Error(0) !"); 
+}
+
+update_lineyn()    /* LINE출력여부를 수정 */
+{
+     EXEC SQL DECLARE c1 cursor for
+               SELECT  value1
+                 FROM   pimvari
+                WHERE  gubun = 'B2' AND sgubun > '0000';
+
+     EXEC SQL  open c1;
+
+     if  (sqlca.sqlcode != 0)
+            hinsa_exit(0,"Cursor Open c1"); 
+     for( ; ; )
+     {
+          EXEC SQL FETCH c1 INTO
+                  :value1;
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c1;
+               return; 
+          }
+          else if  (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+          {
+               printf("=====[%d]\n",sqlca.sqlcode);                   
+               EXEC SQL close c1;
+               hinsa_exit(0,"Data Fetch c1");
+          }
+          hinsa_trim(value1);
+
+          EXEC SQL 
+          UPDATE pihorga
+             SET lineyn   = 'N'
+           WHERE orgym    = :inorgym
+             AND gubun    = '0'  
+             AND orgnum   = :inorgnum
+             AND deptcode = :value1;
+
+          printf("=inorgym =>[%s]\n",inorgym);                   
+          printf("=inorgnum=>[%s]\n",inorgnum);                   
+          printf("=value1  =>[%s]\n",value1);
+          
+          if  (sqlca.sqlcode != 0)
+          {
+               EXEC SQL close c1;
+               hinsa_exit(0,"Update Pihorga Error(Line) !");
+          }
+     }
+}
+
+insert_pihorga1()  /* 인사자료를 Insert */
+{
+     char *FL_date; 
+        
+     FL_date = hinsa_sys_date(0);
+     STRINIT(writetime);
+     strcpy(writetime, FL_date);
+
+     hinsa_trim(korname);
+     hinsa_trim(payra);
+
+     EXEC SQL 
+     INSERT INTO  pihorga
+                ( orgym, 
+                  gubun, 
+                  orgnum, 
+                  deptcode, 
+                  empno, 
+                  korname,
+                  paycl, 
+                  payra, 
+                  payrayn, 
+                  adpayrayn, 
+                  pstate,
+                  writetime, 
+                  writeemp)
+     /*2018.12.17  겸직/겸무/파견 부서코드도 조직도 생성토록 수정 dsa2000*/
+     /*SELECT :inorgym, '1', orgnum, deptcode, empno, korname, paycl, payra, payrayn, 'N', pstate,:writetime, :jobempno FROM pimpmas WHERE (pstate < '80'); */
+           Select :inorgym,
+                  '1' Gubun,  --인사마스터 소속기준
+                  Orgnum, 
+                  Deptcode,
+                  Empno, 
+                  Korname,
+                  Paycl, 
+                  Payra, 
+                  Payrayn, 
+                  'N', 
+                  Pstate,
+                  :writetime, 
+                  :jobempno
+             From Pimpmas
+            Where Pstate < '80'
+           Union
+           Select :inorgym,
+                  '1' Gubun,  --인사마스터 근무기준
+                  Orgnum, 
+                  Jobdept, 
+                  Empno, 
+                  Korname,
+                  Paycl, 
+                  Case when Payra in ('D51','H11','K11') then Payra Else JobPayra End, 
+                  Decode(Deptcode,Jobdept,Payrayn,Jobpayrayn) Payrayn,
+                  'N',
+                  Pstate,
+                  :writetime, 
+                  :jobempno
+             From Pimpmas
+            Where Pstate < '80'
+           Union
+           Select :inorgym,
+                  '2' Gubun,  --발령 겸직겸무
+                  Orgnum, 
+                  Addeptcode, 
+                  Empno, 
+                  Korname,
+                  Paycl, 
+                  Adpayra, 
+                  Case When (Adpayra<>'C12' And Adpayra<='C20') Then 'Y' Else 'N' End Payrayn,
+                  'N',
+                  '10' Pstate,
+                  :writetime, 
+                  :jobempno                        
+             From Pihanno M
+            Where Anupdyn  = 'Y'                    
+              And Orgnum = (Select Value1 From Pimvari Where Gubun ='00' And Sgubun = '0001')         
+              And Anfrdate   >= '20181101'  
+              And Nvl(Antodate, '99999999') >= To_Char(Sysdate, 'YYYYMMDD')               
+              And Ancode In ('233', '234')
+              And Nvl(Addeptcode,' ') > '     '
+              And Not Exists(Select 1 From Pihanno B Where M.Empno = B.Empno 
+                                                       And B.Anupdyn = 'Y'
+                                                       And B.Orgnum = (Select Value1 From Pimvari Where Gubun ='00' And Sgubun = '0001')         
+                                                       And B.Anfrdate >= '20181101'      
+                                                       And M.Anfrdate < B.Anfrdate 
+                                                       And B.Ancode =Decode(M.Ancode,'233','238','234', '235','')  
+                                                       And Nvl(M.Addeptcode,' ')= Nvl(B.Addeptcode,' ')
+                                                       And Nvl(M.Adpayra,' ')   = Nvl(B.Adpayra,' '));
+     /*2018.12.17 end.....................................*/
+     
+     if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Insert Error(11) !");
+     /**********************************************************************/
+     
+     create_count1 = 0;  /* 인사저장건수를 계산 */
+
+     EXEC SQL 
+     SELECT count(orgym)  INTO  :create_count1
+       FROM pihorga
+      WHERE orgym = :inorgym AND gubun in ('1','2'); /*AND gubun = '1';*/
+      
+     if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Count Error(1) !"); 
+}
+
+update_payclnm()  /* BAND명을 수정 */
+{
+     hinsa_trim(payclnm);
+     EXEC SQL 
+     UPDATE pihorga h 
+        set payclnm = (SELECT codename FROM pyccode c
+                        WHERE c.codeid = 'I112' 
+                          AND c.codeno = h.paycl)
+      WHERE h.orgym = :inorgym AND h.gubun in ('1','2'); /*AND h.gubun = '1';*/
+      
+     if  (sqlca.sqlcode != 0)      hinsa_exit(0,"Pihorga Update Error(payclnm) !"); 
+}
+
+update_payranm()  /* 직책명을 수정 */
+{
+     hinsa_trim(payranm);
+     EXEC SQL 
+     UPDATE pihorga h 
+        set payranm = (SELECT codename FROM pyccode c
+                        WHERE c.codeid = 'I113' 
+                          AND c.codeno = h.payra)
+      WHERE h.orgym = :inorgym AND h.gubun in ('1','2'); /*AND h.gubun = '1';*/
+      
+      if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Update Error(payranm) !"); 
+}
+
+update_dept()    /* 부서등급, 부서명, 요약명등을 수정 */
+{
+     EXEC SQL 
+     UPDATE pihorga h
+        SET deptlevel = (SELECT deptlevel FROM pycdept c  /* 부서등급 */
+                          WHERE c.orgnum   = h.orgnum 
+                            AND c.deptcode = h.deptcode)
+      WHERE h.orgym = :inorgym  AND gubun in ('1','2');   /*AND h.gubun = '1';*/
+        
+      if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Update Error(deptlevel) !");
+
+      hinsa_trim(deptname);
+      EXEC SQL 
+      UPDATE pihorga h 
+         SET deptname = (SELECT deptname FROM pycdept c  /* 부서명 */
+                          WHERE c.orgnum   = h.orgnum 
+                            AND c.deptcode = h.deptcode) 
+       WHERE h.orgym = :inorgym AND h.gubun in ('1','2');  /*AND h.gubun = '1';*/
+       
+      if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Update Error(deptname) !");
+
+      EXEC SQL 
+      UPDATE pihorga h 
+         SET deptabbr = (SELECT deptna3 FROM pycdept c /* 부서요약명 *//* deptabbr -> deptna3 shm 2002.01.31*/
+                          WHERE c.orgnum   = h.orgnum 
+                            AND c.deptcode = h.deptcode)
+       WHERE h.orgym = :inorgym AND h.gubun in ('1','2');  /*AND h.gubun = '1';*/
+       
+      if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Update Error(deptabbr) !");
+
+      EXEC SQL 
+      UPDATE pihorga h 
+         SET extcode = (SELECT extcode FROM pycdept c /* 상위부서코드 */
+                         WHERE c.orgnum   = h.orgnum 
+                           AND c.deptcode = h.deptcode)
+       WHERE h.orgym = :inorgym AND h.gubun in ('1','2');  /*AND h.gubun = '1';*/
+
+      if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Update Error(extcode) !");
+
+      EXEC SQL 
+      UPDATE pihorga h 
+         SET boncode = (SELECT boncode FROM pycdept c /* 본부코드 */
+                         WHERE c.orgnum   = h.orgnum 
+                           AND c.deptcode = h.deptcode)
+       WHERE h.orgym = :inorgym AND h.gubun in ('1','2');  /*AND h.gubun = '1';*/
+      
+      if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Pihorga Update Error(boncode) !");
+}
+
+update_payrayn()  /* 조직의 보임자를 수정 */
+{
+     EXEC SQL DECLARE c2 cursor for
+               SELECT orgnum, deptcode
+                 FROM pihorga
+                WHERE orgym = :inorgym 
+                  AND gubun = '0';
+
+     EXEC SQL open c2;
+
+     if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Cursor Open c2"); 
+
+     for( ; ; )
+     {
+          EXEC SQL FETCH c2 INTO
+                   :orgnum, :deptcode;
+
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c2;
+               return; 
+          }
+          else if  (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+          {
+               EXEC SQL close c2;
+               hinsa_exit(0,"Data Fetch c2");
+          }
+          hinsa_trim(deptcode);
+          hinsa_trim(korname);
+          hinsa_trim(payclnm);
+          hinsa_trim(payra);
+          hinsa_trim(payranm);
+
+          EXEC SQL 
+          SELECT  empno, 
+                  korname, 
+                  paycl, 
+                  payclnm, 
+                  payra, 
+                  payranm, 
+                  pstate
+            INTO  :empno, 
+                  :korname, 
+                  :paycl, 
+                  :payclnm, 
+                  :payra, 
+                  :payranm, 
+                  :pstate
+            FROM  pihorga
+           WHERE  orgym    = :inorgym 
+             AND  gubun in ('1','2')  /*AND gubun = '1'*/
+             AND  pstate   < '60' 
+             AND  orgnum   = :orgnum 
+             AND  deptcode = :deptcode
+             AND  payrayn in ('Y', 'y');
+/*
+             AND  (paycl = '00' OR payrayn in ('Y', 'y'));
+*/
+
+          if  (sqlca.sqlcode == 1403)     hinsa_trim(deptcode);     /* 자료가 없을때 *//* 심심하니까 그냥 */
+          else if (sqlca.sqlcode == 0)  /* 자료가 1건 */
+          {
+               hinsa_trim(korname);
+               hinsa_trim(payclnm);
+               hinsa_trim(payra);
+               hinsa_trim(payranm);
+               EXEC SQL 
+               UPDATE  pihorga
+                  SET  empno    = :empno, 
+                       korname  = :korname,
+                       paycl    = :paycl, 
+                       payclnm  = :payclnm,
+                       payra    = :payra, 
+                       payranm  = :payranm,
+                       pstate   = :pstate, 
+                       payrayn  = 'Y'
+                WHERE  orgym    = :inorgym 
+                  AND  gubun    = '0' 
+                  AND  orgnum   = :orgnum 
+                  AND  deptcode = :deptcode;
+                  
+               if  (sqlca.sqlcode != 0)
+               {
+                    EXEC SQL close c2;
+                    hinsa_exit(0,"Update Pihorga Error(payrayn) !");
+               }
+          }
+          else    /* 그외의 모든경우는 에러 */
+          {
+               EXEC SQL close c2;
+               sprintf(tmp_msg, "보임자오류 ==> [%s][%s]",orgnum, deptcode);
+               Write_batlog(seqno++, tmp_msg);
+               hinsa_exit(0,tmp_msg);
+          }
+     }
+}
+
+process_adpayrayn()  /* 겸직자를 처리 */
+{
+/*   char tmp_date[9];
+     sprintf(anfrdate, "%08.0f", atof(tmp_date) - 10000);*/
+
+     EXEC SQL DECLARE  c3 cursor for    /* 겸직발령자료를 찾는다 */
+               SELECT  empno, 
+                       orgnum, 
+                       addeptcode, 
+                       anfrdate /*anfrdate 추가 2001.11.15 shm*/
+                 FROM  pihanno
+                WHERE  ancode in ('233','243')     /* AND anfrdate >= :anfrdate */
+                  AND  orgnum = :inorgnum 
+                  AND  anupdyn in ('Y', 'y')
+                  AND  nvl(substr(addeptcode, 1, 2), '  ')     != '  '
+                  AND  nvl(substr(antodate, 1, 8), '99991231') >= :cur_date
+                  and  addeptcode not in (select deptcode from pycdept 
+                                           where orgnum = :inorgnum 
+                                             and nvl(substr(closedate, 1, 8), '99991231') < :cur_date)
+                ORDER  BY  empno, anfrdate;
+
+     EXEC SQL  open c3;
+
+     if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Cursor Open c3"); 
+
+     for( ; ; )
+     {
+          EXEC SQL FETCH c3 INTO
+               :empno, 
+               :orgnum, 
+               :deptcode, 
+               :anfrdate; /*anfrdate 추가 2001.11.15 shm */
+
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c3;
+               return; 
+          }
+          else if  (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+          {
+               EXEC SQL close c3;
+               hinsa_exit(0,"Data Fetch c3");
+          }
+          hinsa_trim(deptcode);
+          check_count = 0;
+          
+          EXEC SQL 
+          SELECT  sum(empno)  /* 겸직해제 관련자료를 찾자 */
+            INTO  :check_count
+            FROM (SELECT count(empno) empno
+                    FROM pihanno
+                   WHERE empno      = :empno  
+                     AND ancode in ('238', '248') 
+                     AND orgnum     = :inorgnum     /* 현조직차수 겸직발령만 */
+                     AND anfrdate   >= :anfrdate /* 같은부서 여러번 겸직,겸직해제시 발령일로 비교 2001.11.15 shm */
+                     AND anupdyn in ('Y', 'y')
+                     AND addeptcode = :deptcode
+                  UNION
+                  SELECT count(empno) empno 
+                    FROM pimpmas 
+                   WHERE pstate     >= '60'
+                     AND empno      = :empno
+                 );
+        
+          if  (sqlca.sqlcode != 0)
+          {
+               EXEC SQL close c3;
+               hinsa_exit(0,"Pihanno Select Error !");
+          }
+          if  (check_count == 0)  /* 겸직해제 발령이 없으면 */
+               update_adpayrayn();      
+     }
+}
+
+update_adpayrayn()  /* 겸직자를 수정 */
+{
+     hinsa_trim(korname);
+     hinsa_trim(payclnm);
+     hinsa_trim(payra);
+     hinsa_trim(payranm);
+     
+     EXEC SQL /* 겸직자 사항을 읽어온다 */
+     SELECT  empno, 
+             korname,   
+             paycl, 
+             payclnm, 
+             payra, 
+             payranm, 
+             pstate
+        INTO :empno, 
+             :korname, 
+             :paycl, 
+             :payclnm, 
+             :payra, 
+             :payranm, 
+             :pstate
+        FROM pihorga
+       WHERE orgym  = :inorgym 
+         AND gubun in ('1','2')   /*AND gubun = '1';*/
+         AND pstate < '60' 
+         AND empno  = :empno;
+      
+     if  (sqlca.sqlcode != 0)
+     {
+          EXEC SQL close c3;
+          printf("\n 겸직자인사사항오류");
+          sprintf(tmp_msg, "겸직자인사사항오류 ==> [%4s]", empno);
+          hinsa_exit(0,tmp_msg);
+     }
+
+     hinsa_trim(korname);
+     hinsa_trim(payclnm);
+     hinsa_trim(payra);
+     hinsa_trim(payranm);
+     exec sql commit;
+     
+     EXEC SQL 
+     UPDATE pihorga  /* 겸직자 사항을 수정 */
+        SET empno     = :empno, 
+            korname   = :korname,
+            paycl     = :paycl, 
+            payclnm   = :payclnm,
+            payra     = :payra, 
+            payranm   = :payranm,
+            pstate    = :pstate, 
+            payrayn   = 'Y', 
+            adpayrayn = 'Y'
+      WHERE orgym     = :inorgym 
+        AND gubun     = '0' 
+        AND orgnum    = :orgnum 
+        AND deptcode  = :deptcode;
+     /* AND  payrayn in ('N', 'n') ;*/
+        
+        
+     if  (sqlca.sqlcode != 0)
+     {
+          EXEC SQL close c3;
+          sprintf(tmp_msg, "겸직자인사사항수정 ==> [%s][%s][%s][%s]",empno, inorgym, orgnum, deptcode);
+          hinsa_exit(0,tmp_msg);
+     }
+
+     EXEC SQL 
+     UPDATE pihorga
+        SET adpayrayn = 'Y'
+      WHERE orgym     = :inorgym 
+        AND gubun in ('1','2')   /*AND gubun = '1';*/
+        AND pstate    < '60' 
+        AND empno     = :empno;
+     
+     if  (sqlca.sqlcode != 0)
+     {
+          EXEC SQL close c3;
+          sprintf(tmp_msg, "겸직여부수정오류 ==> [%s]", empno);
+          hinsa_exit(0,tmp_msg);
+     }
+}
+
+process_deptdiffer() /* 2018.12.27. Add 소속부서와 근무부서의 성격이 다르면 Y로 업데이트 : MyHR 요청 dsa2000*/
+{
+     EXEC SQL 
+     Update Pihorga
+        Set Deptdiffer = 'Y'
+      Where Orgym = :inorgym 
+        And Gubun = '1'   //조직 & 겸직 제외
+        And Empno In (Select Empno From Pimpmas M,
+                            (Select Deptcode, Substr(Tribegb,1,1) Tribegb From Pycdept Where Orgnum = Func_Orgnum) X,
+                            (Select Deptcode, Substr(Tribegb,1,1) Tribegb From Pycdept Where Orgnum = Func_Orgnum) Y
+                       Where M.Pstate <'80'
+                         And X.Deptcode = M.Deptcode
+                         And Y.Deptcode = M.Jobdept
+                         And X.Tribegb <> Y.Tribegb); 
+
+     if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Update Deptdiffer Error"); 
+}
+
+
+update_pimvari()
+{
+     EXEC SQL 
+     UPDATE pimvari
+        set value1 = :inorgym
+      WHERE gubun  = 'B2' 
+        AND sgubun = '0000';
+
+     if  (sqlca.sqlcode != 0)     hinsa_exit(0,"Update Pimvari Error"); 
+}
+
+/*=== ckj 2005.10. Rexec대체 서비스를 위한 ====================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, 
+             :log_progid, 
+             :seqno, 
+             :log_writeman, 
+             :message);
+
+     if  (sqlca.sqlcode != 0)  /*if  ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) */
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);    
+          return(FAIL);
+     }                        
+                        
+     EXEC SQL AT log_db COMMIT WORK ;
+}
+/**********<< PROGRAM END >>********************************/
+

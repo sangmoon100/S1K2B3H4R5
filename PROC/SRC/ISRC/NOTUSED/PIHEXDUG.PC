@@ -1,0 +1,179 @@
+/*******************************************************************************
+     PROGRAM-NAME    : 근속기간 계산
+     SYSTEM-NAME     : 종합인사정보
+     SUBSYSTEM-NAME  : 인사발령
+     Programmer      : 이민용
+     Version         : 1.00
+     Date            : 2004.11.03
+     
+     Update Contents
+      Version date(yy.mm.dd) programmer  relevant doc.no    description
+******************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+/*#include <sqlcpr.h>*/
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define   YYMMDD       8
+#define   YYMMDDHH    16
+
+#define   SUCCESS      0
+#define   FAIL        -1
+
+/*----------------------------------------------*
+ * Current data save & Condition save Variable  *
+ *----------------------------------------------*/
+EXEC SQL BEGIN DECLARE SECTION;
+     char    empno[5];       
+     char    korname[13];         
+     char    annono[9];   
+     char    v_annono[9];     
+     char    anseqno[5];     
+     char    anfrdate[9];    
+     char    antodate[9];    
+     char    ancode[4];      
+     char    andetcode[3];   
+     char    orgnum[4];      
+     char    deptcode[7];    
+     char    jobgun[3];      
+     char    paycl[4];              
+     char    payra[4];       
+     char    jobline[3];     
+     char    mark1[41];         
+     char    addeptcode[7];  
+     char    adpayra[4];           
+     char    borgnum[4];     
+     char    bdeptcode[7];   
+     char    bpaycl[4];        
+     char    bpayra[4];      
+     char    anupdyn[2];       
+     char    writetime[16];   
+     char    writeemp[5];  
+     char    anlastno[5]; 
+     
+     int     bcomduyy, bcomdumm, bcomdudd  ;
+     int     acomduyy, acomdumm, acomdudd  ; 
+     int     tcomduyy, tcomdumm, tcomdudd  ;
+     int     rcomduyy, rcomdumm; 
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+char jobempno[5]; /* 작업자사번 */
+int  insert_count, insert_count1;
+char FL_Line[255];
+
+
+/******************************************
+ *  MAIN PROCESSING START !!!!!!      *
+ ******************************************/
+main(argc,argv)
+int argc; 
+char *argv[];
+{ 
+
+     char *FL_date;
+     char FL_dir[255];
+     char FL_file[255];
+     char tmp_buf[101];
+     char yy[5], mm[3], dd[3];
+     
+     bcomduyy = bcomdumm = bcomdudd = 0;
+     acomduyy = acomdumm = acomdudd = 0;
+     tcomduyy = tcomdumm = tcomdudd = 0;
+     rcomduyy = rcomdumm = 0;
+              
+     STRINIT(FL_file);
+     strcpy(FL_file,"pihexdug");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     hinsa_log_print(0,"승격 재급일...");
+     
+     hinsa_db_connect();
+
+     strcpy(jobempno, argv[1]);
+
+     STRINIT(FL_Line);
+     sprintf(FL_Line, "pihexdug_%.4s", jobempno);
+     hinsa_log_print(0, FL_Line);
+     
+     if  (DPcalc_term("20020401", "20030303", yy, mm, dd) < 0)
+     {           
+          sprintf(tmp_buf, "<*> 근속기간 계산오류");
+          hinsa_log_print(0,tmp_buf);
+          return;
+     }
+     bcomduyy = atoi(yy);
+     bcomdumm = atoi(mm);
+     bcomdudd = atoi(dd);
+     
+     printf("%d, %d, %d", bcomduyy,bcomdumm,bcomdudd-1);
+     printf("\n"); 
+     
+     if  (DPcalc_term("20040227", "20050401", yy, mm, dd) < 0)
+     {           
+          sprintf(tmp_buf, "<*> 근속기간 계산오류");
+          hinsa_log_print(0,tmp_buf);
+          return;
+     }
+     acomduyy = atoi(yy);
+     acomdumm = atoi(mm);
+     acomdudd = atoi(dd);
+     
+     printf("%d, %d, %d", acomduyy,acomdumm,acomdudd-1);
+     printf("\n"); 
+     
+      /* 일 */
+     tcomdudd = bcomdudd + acomdudd -2;
+       
+     if  (tcomdudd > 30)
+     {
+          rcomdumm = rcomdumm + 1;
+          tcomdudd = bcomdudd + acomdudd - 32;
+     }             
+     else          
+     {             
+          tcomdudd = bcomdudd + acomdudd - 2;
+     } 
+       
+      /* 월 */ 
+     tcomdumm = bcomdumm + acomdumm; 
+     if  (tcomdumm > 12)
+     {
+          rcomduyy = rcomduyy + 1;
+          tcomdumm = rcomdumm + bcomdumm + acomdumm - 12;
+     }             
+     else          
+     {             
+          tcomdumm = bcomdumm + acomdumm;
+     }
+        
+      /* 년 */ 
+     tcomduyy = rcomduyy + bcomduyy + acomduyy;
+         
+          
+     printf("%d, %d, %d",tcomduyy, tcomdumm, tcomdudd);
+     printf("\n"); 
+     
+      
+     hinsa_exit(0,"작업이 완료되었습니다.");
+}
+
+
+/**********<< PROGRAM END >>********************************/
+ 

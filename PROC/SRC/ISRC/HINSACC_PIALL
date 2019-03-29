@@ -1,0 +1,37 @@
+/* 인사 2015.10. 기준 */
+
+hinsacc insa_appmail
+hinsacc insa_empinfo
+hinsacc insae1emp
+hinsacc insaeemp
+hinsacc pib2010g
+hinsacc pie1010g
+hinsacc pie1011g
+hinsacc pie1012g
+hinsacc pie2010g
+hinsacc pie2011g
+#hinsacc pihexdug
+hinsacc piz2010g
+hinsacc piz2011g
+#hinsacc poout_eai
+hinsacc poukey_eai
+#hinsacc pvi1001g
+hinsacc pzo2011g
+
+mv insa_appmail /hper/insa/HINSA/proc/bin/Ibin
+mv insa_empinfo /hper/insa/HINSA/proc/bin/Ibin
+mv insae1emp    /hper/insa/HINSA/proc/bin/Ibin
+mv insaeemp     /hper/insa/HINSA/proc/bin/Ibin
+mv pib2010g     /hper/insa/HINSA/proc/bin/Ibin
+mv pie1010g     /hper/insa/HINSA/proc/bin/Ibin
+mv pie1011g     /hper/insa/HINSA/proc/bin/Ibin
+mv pie1012g     /hper/insa/HINSA/proc/bin/Ibin
+mv pie2010g     /hper/insa/HINSA/proc/bin/Ibin
+mv pie2011g     /hper/insa/HINSA/proc/bin/Ibin
+#mv pihexdug     /hper/insa/HINSA/proc/bin/Ibin
+mv piz2010g     /hper/insa/HINSA/proc/bin/Ibin
+mv piz2011g     /hper/insa/HINSA/proc/bin/Ibin
+#mv poout_eai    /hper/insa/HINSA/proc/bin/Ibin
+mv poukey_eai   /hper/insa/HINSA/proc/bin/Ibin
+#mv pvi1001g     /hper/insa/HINSA/proc/bin/Ibin
+mv pzo2011g     /hper/insa/HINSA/proc/bin/Ibin

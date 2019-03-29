@@ -1,0 +1,906 @@
+/**************************************************************************************
+     * 인사마스터(pimpmas) 인사사항 자동경신(piz2010g)                                                    *
+     * Date   : 96/05/31                                                              *
+     * Author : Kim.D.C                                                               *
+     * Log Table : PYHJLOG                                                            *
+     * version                                                                        *
+     *    31.04    인사상태 변경 시 업적평가 마스터도 같이 변경.   1999.08.04 김혜진  *
+     *    31.05    인사상태 변경 시 하나로 통신 재직 기간을 산출.  2000.08.07 강기우  *
+     *    31.06    재외외국인 남자 '7',여자 '8'                    2001.11.02 서혜미  * 
+     *    31.07    근무직위 자동경신 추가                          2001.11.07 서혜미  * 
+     *    31.08    Oracle DB 8버전으로 Upgrade 관련                2004.01.27 이민용  * 
+     *    31.09    노조코드 변경으로 인한 노조원구분 함수 막음     2004.01.30 이민용  *  
+     *) HR 인프라 고도화 Project(직위-> 직책, 직급 -> BAND(비공개))                   *                                        
+***************************************************************************************/
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+/*#include <sqlcpr.h>*/
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define   YYMMDD       8
+#define   YYMMDDHH    16
+
+#define   SUCCESS      0
+#define   FAIL        -1
+
+/*----------------------------------------------*
+ * Current data save & Condition save Variable  *
+ *----------------------------------------------*/
+EXEC SQL BEGIN DECLARE SECTION;
+     char   empno[5];                  /* 사원번호 */
+     char   korname[13];               /* 성    명 */
+     char   paycl[4];                  /* BAND */
+     char   payra[4];                  /* 직    책 */
+     char   jobpayra[4];               /* 근무직책 */  /*2001.11.07 shm */
+     char   payrayn[2];                /* 보임여부 */
+     char   jobpayrayn[2];             /* 근무부서보임여부 */  /*2001.11.07 shm */
+     char   orgnum[4];                 /* 조직차수 */
+     char   deptcode[7];               /* 부서코드 */
+     char   juminid[15];               /* 주민번호 */
+     char   empdate[9];                /* 입 사 일 */
+     char   orgempdate[9];             /* 하나로입사일 31.05 */
+     char   retdate[9];                /* 퇴 사 일 */
+     char   paycldate[9];              /* BAND조정일 */
+     char   cardate[9];                /* 경 력 일 */
+     char   realtrdate[9];             /* 실제전보일 */
+     char   lsetodate[9];              /* 파견기간TO */
+     char   edutodate[9];              /* 교육기간TO */
+     char   pstate[3];                 /* 인사상태 */
+     char   pstateyn[2];               /* 현원포함여부 */
+     char   nogubun[3];                /* 노조원구분 */
+     char   no_payra[4];               /* 비노조원직위 */
+     char   no_payrayn[4];             /* 보임자비노조원직위 */
+     char   lhutodate[9];              /* 휴가발령일TO */
+     char   ljetodate[9];              /* 정직발령일TO */
+     char   jobdept[7];                /* 근무부서 */
+     char   writetime[15];             /* ch.k.j. 작업일시*/
+     char   jobplace[3];               /* 근무지 */
+                                       
+     char   today[9];                  /* 시스템일자 */
+     char   base_date[9];              
+     char   tmp_paycldate[9];          
+                                       
+     char   v_curorgnum[4];            
+     char   v_workym[7];               
+     char   v_rundate[15];             
+                                       
+     double korage;                    /* 연령(한) */
+     double usaage;                    /* 연령(미) */
+     double comduyy;                   /* 근속기간(년) */
+     double comdumm;                   /* 근속기간(월) */
+     double comdudd;                   /* 근속기간(일) */
+     double totcomdudd;                /* 총재직기간일  */
+     double payclyy;                   /* 재급기간(년) */
+     double payclmm;                   /* 재급기간(월) */
+     double paycldd;                   /* 재급기간(일) */
+     double hanaduyy;                  /* 하나로 근속기간(년) */
+     double hanadumm;                  /* 하나로 근속기간(월) */
+     double hanadudd;                  /* 하나로 근속기간(일) */
+     double totpaycldd;                /* 총재급기간일  */
+     double no_count;
+     
+     /* 31.04  업적평가 마스터의 자료를 저장할 변수 */
+     char   rempno[5];
+     char   rdeptcode[7]; 
+     char   rpstate[3];
+     char   rpayra[4];
+     char   rtrdate[9];
+     char   rreconyn[2];
+     char   re1existyn[2];
+     char   re2existyn[2];
+     char   trabasdate[9];
+     char   tanupdyn[2];
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+int    error_sw, jobdept_sw;
+char   gubun[14];                     /* 작업구분 */
+int    num;                           /* 일련번호 */
+char   jobempno[5];                   /* 작업자사번 */
+char   start_date[16], end_date[16];
+char   tmp_buf[101];
+double pa_count, ed_count, hu_count, je_count;
+int read_count, update_count, error_count;
+
+
+/******************************************
+ *   MAIN PROCESSING START !!!!!!      *
+ ******************************************/
+main(argc,argv)
+int argc; 
+char *argv[];
+{ 
+     char cp_count[8], ce_count[8], ch_count[8], cj_count[8];
+     char r_count[8], u_count[8], e_count[8];
+
+     char *FL_date;
+     char FL_dir[255];
+     char FL_Line[255];
+     char FL_file[255];
+     
+     STRINIT(FL_file);
+     strcpy(FL_file,"piz2010g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     hinsa_log_print(0,"인사사항 자동경신 프로그램 시작...");
+     
+     hinsa_db_connect();
+     init_variable();
+
+
+     strcpy(jobempno, argv[1]);
+     
+     FL_date = hinsa_sys_date(1);
+     STRINIT(today);
+     strcpy(today, FL_date);
+     
+     FL_date = hinsa_sys_date(0);
+     STRINIT(start_date);
+     strcpy(start_date, FL_date);
+  
+     STRINIT(FL_Line);
+     sprintf(FL_Line, "PIZ2010G_%.4s", jobempno);
+     hinsa_log_print(0, FL_Line);
+
+     data_process();
+
+     FL_date = hinsa_sys_date(0);
+     STRINIT(end_date);
+     strcpy(end_date, FL_date);
+
+     sprintf(tmp_buf, "<*> 파견 -> 재직 건수 : %6.0f 건", pa_count);
+     hinsa_log_print(0, tmp_buf);
+     sprintf(tmp_buf, "<*> 교육 -> 재직 건수 : %6.0f 건", ed_count);
+     hinsa_log_print(0, tmp_buf);
+     sprintf(tmp_buf, "<*> 휴가 -> 재직 건수 : %6.0f 건", hu_count);
+     hinsa_log_print(0, tmp_buf);
+     sprintf(tmp_buf, "<*> 정직 -> 재직 건수 : %6.0f 건", je_count);
+     hinsa_log_print(0, tmp_buf);
+     sprintf(tmp_buf, "<*> 읽은건수 : %7d 건", read_count);
+     hinsa_log_print(0, tmp_buf);
+     sprintf(tmp_buf, "<*> 수정건수 : %7d 건", update_count);
+     hinsa_log_print(0, tmp_buf);
+     sprintf(tmp_buf, "<*> 오류건수 : %7d 건", error_count);
+     hinsa_log_print(0, tmp_buf);
+     sprintf(tmp_buf, "<*> 작업시간 : %.4s/%.2s/%.2s %.2s.%.2s.%.2s - %.4s/%.2s/%.2s %.2s.%.2s.%.2s",
+                                     start_date  , start_date+4 , start_date+6 , 
+                                     start_date+8, start_date+10, start_date+12,
+                                     end_date    , end_date+4   , end_date+6   , 
+                                     end_date+8  , end_date+10  , end_date+12  );
+     hinsa_log_print(0, tmp_buf);
+  
+     update_pimvari();   /* 최종자동경신일을 경신 */
+     
+     update_pihorga();   /* 조직도생성 프로그램을 돌린다 */ 
+     
+     hinsa_exit(0,"OK 작업이 완료되었습니다.");
+}
+
+/*----------------------------------------------*
+ * Current data & Condition Variable Initialize *
+ *----------------------------------------------*/
+init_variable()
+{ 
+     memset(empno,        0x00,  sizeof(empno));
+     memset(korname,      0x00,  sizeof(korname));
+     memset(paycl,        0x00,  sizeof(paycl));
+     memset(payra,        0x00,  sizeof(payra));
+     memset(jobpayra,     0x00,  sizeof(jobpayra));  /*2001.11.07 shm */
+     memset(payrayn,      0x00,  sizeof(payrayn));
+     memset(jobpayrayn,   0x00,  sizeof(jobpayrayn));/*2001.11.07 shm */
+     memset(orgnum,       0x00,  sizeof(orgnum));
+     memset(deptcode,     0x00,  sizeof(deptcode));
+     memset(juminid,      0x00,  sizeof(juminid));
+     memset(empdate,      0x00,  sizeof(empdate));
+     memset(orgempdate,   0x00,  sizeof(orgempdate));
+     memset(retdate,      0x00,  sizeof(retdate));
+     memset(paycldate,    0x00,  sizeof(paycldate));
+     memset(cardate,      0x00,  sizeof(cardate));
+     memset(lsetodate,    0x00,  sizeof(lsetodate));
+     memset(edutodate,    0x00,  sizeof(edutodate));
+     memset(pstate,       0x00,  sizeof(pstate));
+     memset(pstateyn,     0x00,  sizeof(pstateyn));
+     memset(nogubun,      0x00,  sizeof(nogubun));
+     memset(no_payra,     0x00,  sizeof(no_payra));
+     memset(no_payrayn,   0x00,  sizeof(no_payrayn));
+     memset(lhutodate,    0x00,  sizeof(lhutodate));
+     memset(ljetodate,    0x00,  sizeof(ljetodate));
+     memset(start_date,   0x00,  sizeof(start_date));
+     memset(end_date,     0x00,  sizeof(end_date));
+     memset(jobdept,      0x00,  sizeof(jobdept)); 
+     memset(writetime,    0x00,  sizeof(writetime));
+     memset(jobplace,     0x00,  sizeof(jobplace));
+     memset(gubun,        0x00,  sizeof(gubun)); 
+     num = 0;             
+     memset(jobempno,     0x00,  sizeof(jobempno));
+     pa_count   = ed_count     = hu_count    = je_count = 0;
+     read_count = update_count = error_count = 0;
+     no_count   = 0;
+     memset(today,        0x00,  sizeof(today));
+     memset(tmp_paycldate,0x00,  sizeof(tmp_paycldate));
+     memset(base_date,    0x00,  sizeof(base_date));
+     memset(trabasdate,   0x00,  sizeof(trabasdate));
+     memset(tanupdyn,     0x00,  sizeof(tanupdyn));
+     
+     init_subvariable();
+     
+     read_pimvari();
+}
+
+/*----------------------------------------------*
+ * Current data & Condition Variable Initialize *
+ *----------------------------------------------*/
+init_subvariable()
+{
+     error_sw = jobdept_sw = 0;
+     korage   = usaage     = 0;
+     comduyy  = comdumm    = comdudd  = totcomdudd = 0;
+     payclyy  = payclmm    = paycldd  = totpaycldd = 0;
+     hanaduyy = hanadumm   = hanadudd = 0;
+     memset(rempno,       0x00,   sizeof(rempno));
+     memset(rpayra,       0x00,   sizeof(rpayra));
+     memset(rtrdate,      0x00,   sizeof(rtrdate));
+     memset(rdeptcode,    0x00,   sizeof(rdeptcode));
+     memset(rpstate,      0x00,   sizeof(rpstate));
+     memset(re1existyn,   0x00,   sizeof(re1existyn));
+     memset(re2existyn,   0x00,   sizeof(re2existyn));
+     memset(rreconyn,     0x00,   sizeof(rreconyn));
+}
+
+read_pimvari()
+{
+     EXEC SQL 
+     SELECT  substr(value1, 1, 3), substr(value2, 1, 3)
+       INTO  :no_payra, :no_payrayn
+       FROM  pimvari
+      WHERE  (gubun = '60')
+        AND  (sgubun = '0001');
+
+     if  (sqlca.sqlcode != 0)
+     {   
+          strcpy(no_payra, "000");  strcpy(no_payrayn, "000");
+          hinsa_log_print(0,"(인사변수 비노조원직위 미존재 !");
+     }
+     
+     
+     EXEC SQL 
+     SELECT  value1
+       INTO  :tanupdyn
+       FROM  pehrebas
+      WHERE  (rabasdate = '00000000' and gubun = '00'
+        and  sgubun = '0002');
+     if  (sqlca.sqlcode != 0)
+     {   
+          strcpy(tanupdyn,"N");
+          hinsa_log_print(0,"업적평가 기준화일에 인사발령경신여부 미존재 !");
+     }
+     EXEC SQL 
+     SELECT  value1
+       INTO  :trabasdate
+       FROM  pehrebas
+      WHERE  (rabasdate = '00000000' and gubun = '00'
+        and  sgubun = '0001');
+
+     if  (sqlca.sqlcode != 0)
+     {
+          if  (strcmp(tanupdyn,"Y") == 0)
+          {
+               sprintf(tmp_buf, "업적평가기준일 미존재");
+               hinsa_exit(0,tmp_buf);
+          }
+          else
+               hinsa_log_print(0,"(업적평가기준일 미존재!");
+     }
+
+}
+
+/****************************************
+ *    Data process  routine     *
+ ****************************************/
+data_process()
+{
+     EXEC SQL LOCK TABLE  pimpmas
+                IN EXCLUSIVE  MODE  NOWAIT;
+
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"다른 작업자가 DB수정 작업중입니다.");
+
+     EXEC SQL DECLARE c1 cursor for                      /* PIMPMAS 테이블모든 인원 검색 */
+     SELECT empno,                     korname,                    paycl,      payra,    jobpayra,
+            upper(nvl(payrayn,' ')),   upper(nvl(jobpayrayn, ' ')),orgnum,     deptcode,
+            nvl(juminid,' '),          empdate,                    orgempdate,
+            nvl(retdate,' '),          nvl(paycldate,'99999999'),
+            nvl(lsetodate,'99999999'), nvl(edutodate, '99999999'), pstate,     upper(nvl(pstateyn, ' ')),
+            upper(nvl(nogubun, '  ')), jobdept,                    jobplace,   nvl(cardate, '99999999'), realtrdate, writetime
+       FROM pimpmas
+      Where Nvl(Trim(Writetime),'99999999') >= To_Char(Sysdate-400,'YYYYMMDD') --400일내 수정된 데이터만 작업(대상자 축소) 2018.11
+      ORDER BY empno;
+
+     EXEC SQL open c1;
+
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"Cursor Open c1");
+
+     for ( ; ; )
+     {
+          EXEC SQL FETCH c1 INTO
+                   :empno    , :korname   , :paycl     , :payra    , :jobpayra ,
+                   :payrayn  , :jobpayrayn, :orgnum    , :deptcode ,
+                   :juminid  , :empdate   , :orgempdate, :retdate  , :paycldate ,
+                   :lsetodate, :edutodate , :pstate    , :pstateyn ,
+                   :nogubun  , :jobdept   , :jobplace  , :cardate  , :realtrdate, :writetime;
+
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c1;
+               return;
+          }
+          else if  (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+          {
+               EXEC SQL close c1;
+               hinsa_exit(0,"Data Fetch c1");
+          }
+          
+          init_subvariable();
+          
+          read_count++;
+          hinsa_trim(korname);   
+          hinsa_trim(juminid);
+          hinsa_trim(retdate);   
+          hinsa_trim(paycldate);
+          hinsa_trim(lsetodate); 
+          hinsa_trim(edutodate);
+          hinsa_trim(deptcode);  
+          hinsa_trim(jobdept);
+          hinsa_trim(writetime);
+          hinsa_trim(payra);     
+          hinsa_trim(jobpayra);
+    
+          /* 31.04 인사상태,부서변경사항을 update */
+          if  (strcmp(tanupdyn,"Y") == 0)
+               read_pehremas();  /* 31.04 업적평가의 자료를 추출 */
+          
+          calc_age();        /* 연령계산 */
+          
+          calc_comdu();      /* 근속기간을 계산 */
+          
+          if (strcmp(paycldate,"99999999") == 0) /*20190208 추가 paycldate Null은 계산 패스토록*/
+          {     
+             payclyy = 0;
+             payclmm = 0;
+             paycldd = 0;
+          }
+          else calc_paycl();      /* 재급기간을 계산 */
+            
+          calc_hana();       /* 하나로 근속기간 계산   31.05*/
+          proc_pstate();     /* 인사상태, 현원포함여부 */
+        /*proc_nogubun();*//* 2003.01.30 이민용 막음,노조원구분 (97/07/15 LYJ) */
+          
+          if  (jobdept_sw != 0)  /* 근무부서 변경시 */
+               proc_jobplace();  /* 근무지 */
+          
+          if  (error_sw == 0)    /* 오류가 없을때만 */
+          {
+               update_pimpmas();
+                         
+               if  (strcmp(tanupdyn,"Y") == 0) /* 31.04 인사상태,부서변경사항을 update */
+                    update_pehremas();
+          }
+     }
+}
+
+read_pehremas()
+{
+     hinsa_log_print(0,"tanupdyn가 Y이면 read_pehremas");
+        
+     EXEC SQL 
+     SELECT  empno   , deptcode  , pstate     , payra      ,
+             trdate  , reconyn   , e1existyn  , e2existyn
+       INTO  :rempno , :rdeptcode, :rpstate   , :rpayra    ,
+             :rtrdate, :rreconyn , :re1existyn, :re2existyn
+       FROM  pehremas
+      WHERE  rabasdate = :trabasdate 
+        and  empno     = :empno;
+     if  ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          hinsa_log_print(0,"업적평가 자료 추출 오류!");
+          return;
+     }
+     hinsa_trim(rdeptcode);
+}
+
+calc_age()
+{
+     char today_yy[5];
+     char birthdate_yy[5];
+     char birthdate[9], yy[5], mm[3], dd[3];
+     char *FL_date;  
+     char *FL_yy;
+     char *FL_today_yy;
+     char *FL_birthdate_yy;
+     char date[9];
+
+     memset(birthdate, NULL, strlen(birthdate));
+     if      ((juminid[7] == '1') || (juminid[7] == '2') || (juminid[7] == '5') || (juminid[7] == '6')) sprintf(birthdate, "19%.6s", juminid);
+     else if ((juminid[7] == '3') || (juminid[7] == '4') || (juminid[7] == '7') || (juminid[7] == '8')) sprintf(birthdate, "20%.6s", juminid);
+     
+     if  ((strncmp(juminid, "  ", 2) == 0) || (juminid[0] == '\0') ||
+          (strlen(birthdate) != 8) || (hinsa_isnumber(birthdate) < 0))
+     {
+          sprintf(tmp_buf, "<*> 주민번호 오류      ! 사번: %.4s, 인사상태: %.2s",empno, pstate);
+          hinsa_log_print(0,tmp_buf);
+          return;  
+     }  
+  
+     /*strlcpy(today_yy, today, 4);*/
+     FL_today_yy     = hinsa_copy(today,1,4); 
+     STRINIT(today_yy);
+     strcpy(today_yy, FL_today_yy);  
+     
+     /*strlcpy(yy, birthdate, 4);*/
+     FL_birthdate_yy = hinsa_copy(birthdate,1,4);
+     STRINIT(birthdate_yy);
+     strcpy(birthdate_yy, FL_birthdate_yy); 
+     
+     korage = (atoi(today_yy) - atoi(birthdate_yy)+ 1);   /* 연령(한) */
+
+     strcpy(base_date, today);
+  
+     hinsa_day_minus(base_date, 0x00, 1);
+   
+     if  (DPcalc_term(birthdate, base_date, yy, mm, dd) < 0)
+     {
+          sprintf(tmp_buf, "<*> 생년월일 오류                     ! 사번: %.4s, 인사상태: %.2s",empno, pstate);
+          hinsa_log_print(0,tmp_buf);
+            return;
+     }
+     usaage = atoi(yy);    /* 연령(미) */
+}
+
+calc_comdu()
+{
+     char yy[5], mm[3], dd[3];
+     int  n = 0;
+     char *FL_date;  
+     char *FL_yy;
+     char *FL_mm;
+     char *FL_dd;
+     char date[9];
+
+     if  (strcmp(pstate, "80") >= 0)              /* 퇴사자면 퇴사일 기준 */
+          strcpy(base_date, retdate);
+     else strcpy(base_date, today);
+    
+     if  (DPcalc_term(empdate, base_date, yy, mm, dd) < 0)
+     {           
+          sprintf(tmp_buf, "<*> 근속기간 계산오류        ! 사번: %.4s, 인사상태: %.2s",empno, pstate);
+          hinsa_log_print(0,tmp_buf);
+          return;
+     }
+     comduyy = atoi(yy);
+     comdumm = atoi(mm);
+     comdudd = atoi(dd);
+
+     EXEC SQL 
+     select to_date( :base_date ,'YYYYMMDD') - to_date(:empdate,'YYYYMMDD')  INTO :totcomdudd  from dual;
+
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(tmp_buf, "<*> 총재직기간일  계산오류   ! 사번: %.4s, 인사상태: %.2s",empno, pstate);
+          hinsa_log_print(0,tmp_buf);
+          return;
+     }
+}
+
+calc_paycl()
+{
+     char tpaycldate[9];
+     char yy[5], mm[3], dd[3],tmp_n[5];
+     int  n = 0;
+     char *FL_date;  
+     char *FL_yy;
+     char *FL_mm;
+     char *FL_dd;
+     char date[9];
+  
+     strcpy(tpaycldate, paycldate);
+     if  ((strncmp(cardate, "9999", 4) != 0) &&
+          (strcmp(empdate, paycldate) == 0))      /* (경력이 있는경우) AND (입사일 == 직급일) */
+          strcpy(tpaycldate, cardate);            
+     
+     if  (strcmp(pstate, "80") >= 0)              /* 재직자는 todate, 퇴사자는 퇴사일         */
+          strcpy(base_date, retdate);
+     else strcpy(base_date, today);
+    
+     if  (DPcalc_term(tpaycldate, base_date, yy, mm, dd) < 0)   
+     {   
+          sprintf(tmp_buf, "<*> 재급기간 계산오류        ! 사번: %.4s, 인사상태: %.2s, paycldate:%s",empno, pstate, paycldate);
+          hinsa_log_print(0,tmp_buf);
+          return;
+     }
+     payclyy = atoi(yy);
+     payclmm = atoi(mm);
+     paycldd = atoi(dd); 
+    
+     strcpy(tmp_paycldate,tpaycldate);
+
+     EXEC SQL 
+     select  to_date(:base_date,'YYYYMMDD') - to_date(:tmp_paycldate,'YYYYMMDD') INTO :totpaycldd  from dual;
+     if  (sqlca.sqlcode != 0)
+     {
+          hinsa_log_print(0,"총 재급기간일  계산오류 !");
+          return;
+     }
+}
+
+calc_hana()                                       /* 31.05   SK브로드밴드 근속기간 계산  */
+{
+     char torgempdate[9];
+     char yy[5], mm[3], dd[3];
+     int  n = 0;
+     char *FL_date;  
+     char *FL_yy;
+     char *FL_mm;
+     char *FL_dd;
+     char date[9];
+     
+     strcpy(torgempdate, orgempdate);
+     if  (strcmp(pstate, "80") >= 0)              /* 재직자는 todate, 퇴사자는 퇴사일         */
+          strcpy(base_date, retdate);
+     else strcpy(base_date, today);
+     
+     if  (DPcalc_term(torgempdate, base_date, yy, mm, dd) < 0)     
+     {        
+         sprintf(tmp_buf, "<*> SK브로드밴드 근속기간 계산오류 ! 사번: %.4s, 인사상태: %.2s",empno, pstate);
+         hinsa_log_print(0,tmp_buf);
+         return;
+     }
+     hanaduyy = atoi(yy);
+     hanadumm = atoi(mm);
+     hanadudd = atoi(dd); 
+}
+
+proc_pstate()
+{
+     char s_date[15];
+     
+     memset(s_date,     0x00,   sizeof(s_date));
+     memset(v_rundate,   NULL, sizeof(v_rundate)  );         
+     
+     if  (strcmp(pstateyn, "N") != 0)
+          strcpy(pstateyn, "Y");
+
+     //2018.11. 선발령후 인사상태 지운 구성원 자동 재직처리... dsa2000 add
+     EXEC SQL 
+     SELECT TO_CHAR(SYSDATE, 'YYYYMMDD') INTO :v_rundate FROM Dual;
+     if ( (strncmp(pstate,"0",1) < 0) && (strcmp(orgempdate, v_rundate) <= 0) )
+     {
+     	   strcpy(pstate, "10");
+     	   strcpy(pstateyn, "Y");
+     	   printf("선발령후 인사상태 지운 구성원 재직처리 empno,orgempdate,pstate  => [%s] [%s] [%s] \n", empno,orgempdate,pstate);
+     }
+     
+     if  (strncmp(pstate, "2", 1) == 0)  /* 파  견 */
+     {
+          if  (strcmp(today, lsetodate) > 0) /*파견기간To(lsetodate)보다 크면*/
+          {
+               pa_count++;
+               strcpy(pstate, "10");
+               strcpy(pstateyn, "Y");
+               strcpy(jobdept, deptcode);
+               
+               strcat(s_date, today );
+               strcat(s_date,"z2010g"); //2018.07. dsa2000 변경주체 파악위해 z2010g으로 변경 <= strcat(s_date,"000000");
+               strcpy(writetime, s_date ) ;
+               
+               jobdept_sw++;
+               hinsa_log_print(0,"파견 ==> 재직");
+               
+               /* 31.04 업적평가화일에서  파견별도부서옇?원 부서로 */
+               strcpy(rdeptcode,deptcode);
+               strcpy(rpayra,payra);
+               strcpy(jobpayra,payra);     /*2001.11.07 shm */
+               strcpy(jobpayrayn,payrayn); /*2001.11.07 shm */
+               strcpy(rtrdate,realtrdate);
+               strcpy(re1existyn,"N");
+               strcpy(re2existyn,"N");
+               strcpy(rpstate,"10");
+          }
+     }
+     else if  (strncmp(pstate, "3", 1) == 0)           /* 교  육 */
+     {
+          if  (strcmp(today, edutodate) > 0)
+          {
+               ed_count++;
+               strcpy(pstate, "10");
+               strcpy(pstateyn, "Y");
+               hinsa_log_print(0,"교육 ==> 재직");
+               /* 31.04 평가자를 목표변경프로그램에서 지정할 수 있게 함. */
+               strcpy(re1existyn,"N");  
+               strcpy(re2existyn,"N");  
+               strcpy(rpstate,"10");  
+               strcpy(rdeptcode,deptcode);  
+          }
+     }
+     else if  (strcmp(pstate, "41") == 0)              /* 장기휴가 */
+     {
+          read_lhutodate();                            /* 휴가발령일TO를 읽자 */
+          if  (strcmp(today, lhutodate) > 0)
+          {
+               hu_count++;
+               strcpy(pstate, "10");
+               strcpy(pstateyn, "Y");
+               hinsa_log_print(0,"장기휴가 ==> 재직");
+          }
+     }
+     else if  (strncmp(pstate, "6", 1) == 0)           /* 정  직 */
+     {
+          read_ljetodate();                            /* 정직발령일TO를 읽자 */
+          if  (strcmp(today, ljetodate) > 0)
+          {
+               je_count++;
+               strcpy(pstate, "10");
+               strcpy(pstateyn, "Y");
+               hinsa_log_print(0,"정직 ==> 재직");
+          }
+     }
+     else if  (strcmp(pstate, "80") >= 0)              /* 퇴  직 */
+     {
+          strcpy(pstateyn, "N");
+          strcpy(rreconyn, "N");
+          strcpy(rpstate, pstate);
+     }
+}
+
+read_lhutodate()
+{
+     memset(lhutodate, 0x00, sizeof(lhutodate));
+     EXEC SQL 
+     SELECT  max(nvl(antodate, '00000000'))
+       INTO  :lhutodate
+       FROM  pihanno
+      WHERE  (empno = :empno)
+        AND  (ancode = '471')
+        AND  anupdyn in ('Y', 'y');
+
+     if  (sqlca.sqlcode != 0)
+     {
+          strcpy(lhutodate, "29991231");
+          hinsa_log_print(0,"휴가발령 미존재 !");
+     }
+}
+
+read_ljetodate()
+{
+     memset(ljetodate, 0x00, sizeof(ljetodate));
+     EXEC SQL 
+     SELECT  max(nvl(antodate, '00000000'))
+       INTO  :ljetodate
+       FROM  pihanno
+      WHERE  empno = :empno
+        AND  ((ancode = '641') OR (ancode = '600' AND andetcode = '64'))
+        AND  anupdyn in ('Y', 'y');
+
+     if  (sqlca.sqlcode != 0)
+     {
+          strcpy(ljetodate, "29991231");
+          hinsa_log_print(0,"정직발령 미존재 !");
+     }
+}
+
+proc_nogubun()
+{
+     char orgnogubun[3];
+     strcpy(orgnogubun, nogubun);                 /* 원래값을 보관하자 */
+     if  (strcmp(pstate, "80") >= 0)              /* 퇴직자는 제외하자 */
+          return;                                 
+     if  (strcmp(nogubun, "10") == 0)             /* 비노조원이면 제외하자 */
+          return;
+     
+     if  ((strcmp(payra, no_payra) <= 0) ||       /* 기준직위보다 이하 OR */
+          (strcmp(payra, "99") > 0))              /* 임시직이면 비노조원 */
+     {                                           
+          strcpy(nogubun, "10");                  /* 비노조원 */
+          return;
+     }
+     if  ((strcmp(payra, no_payrayn) <= 0) &&     /* 3급이상 이면서 */
+          (strcmp(payrayn, "Y") == 0))            /* 보직자면 비노조원 */
+     {
+          strcpy(nogubun, "10");                  /* 비노조원 */
+          return;
+     }
+     strcpy(nogubun, "20");                       /* 일단은 모두노조원으로 */
+     no_count = 0;
+     EXEC SQL 
+     SELECT  count(sgubun)
+       INTO  :no_count
+       FROM  pimvari
+      WHERE  gubun = '61'
+        AND  value1 <= :deptcode 
+        AND  value2 >= :deptcode
+        AND  value3 <= :payra 
+        AND  value4 >= :payra;
+     if  (no_count > 0)                           /* 자료가 있으면 */
+          strcpy(nogubun, "10");                  /* 비노조원 */
+     if ((strcmp(orgnogubun, "20") >= 0) &&
+         (strcmp(nogubun, "20") == 0))
+         strcpy(nogubun, orgnogubun);             /* 원래값을 저장 */
+}
+
+proc_jobplace()                                   /* 근무지 */
+{
+     if  (strcmp(pstate, "80") >= 0)              /* 퇴직자는 제외하자 */
+          return;
+    
+     memset(jobplace, 0x00, sizeof(jobplace));
+     EXEC SQL 
+     SELECT  placecode
+       INTO  :jobplace
+       FROM  pycdept
+      WHERE  orgnum   =  :orgnum
+        AND  deptcode =  :jobdept
+        AND  existon  =  '1' 
+        AND  chanmode != '3';
+
+     if  (sqlca.sqlcode != 0)
+     {
+          memset(jobplace, 0x00, sizeof(jobplace));
+          hinsa_log_print(0,"부서코드 미존재 OR 오류 !");
+     }
+}
+
+update_pehremas()
+{
+     if  (rempno[0] == '\0')     return;
+     EXEC SQL 
+     UPDATE pehremas
+        SET deptcode  = :rdeptcode,
+            payra     = :rpayra,
+            pstate    = :rpstate,
+            e1existyn = :re1existyn,
+            e2existyn = :re2existyn,
+            reconyn   = :rreconyn,
+            trdate    = :rtrdate
+      WHERE rabasdate = :trabasdate 
+        and empno     = :empno;
+     if  (sqlca.sqlcode != 0)
+     {
+          EXEC SQL close c1;
+          sprintf(tmp_buf, "Update pehremas Error [%s] ", empno); 
+          hinsa_exit(0,tmp_buf); 
+     }
+}
+
+update_pimpmas()
+{
+     EXEC SQL 
+     UPDATE  pimpmas
+        SET  korage     = :korage    ,
+             usaage     = :usaage    ,
+             comduyy    = :comduyy   ,
+             comdumm    = :comdumm   ,
+             comdudd    = :comdudd   ,
+             totcomdudd = :totcomdudd,
+             payclyy    = :payclyy   ,
+             payclmm    = :payclmm   ,
+             paycldd    = :paycldd   ,
+             totpaycldd = :totpaycldd,
+             hanaduyy   = :hanaduyy  ,
+             hanadumm   = :hanadumm  ,
+             hanadudd   = :hanadudd  ,
+             pstate     = :pstate    ,
+             pstateyn   = :pstateyn  ,
+             nogubun    = :nogubun   ,
+             jobdept    = :jobdept   ,
+             jobpayra   = :jobpayra  ,     /*2001.11.07 shm */
+             jobpayrayn = :jobpayrayn,     /*2001.11.07 shm */
+             jobplace   = :jobplace  ,
+             writetime  = :writetime
+      WHERE  empno      = :empno
+        AND  orgempdate <= To_char(sysdate,'YYYYMMDD');  /* 2013.03.21. 선발령자 제외하기 위해 추가  dsa2000*/
+
+     if  ((sqlca.sqlcode != 0) && (sqlca.sqlcode != 1403))
+     {
+          EXEC SQL close c1;
+          sprintf(tmp_buf, "Update Pimpmas Error [%s] ", empno);
+          hinsa_exit(0,tmp_buf);
+     }
+     update_count++;
+}
+
+update_pimvari()
+{
+     EXEC SQL 
+     UPDATE  pimvari
+        SET  value1 = :today
+      WHERE  gubun = '10' AND sgubun = '0001';
+
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"Update Pimvari Error");
+}
+
+/*--------------------------------------*
+ *  Log message routine    *
+ *--------------------------------------*/
+/* 민용막음
+hinsa_log_print(0,msg)
+char *msg;
+{
+     error_sw++;
+     if  (strcmp(pstate, "80") < 0)
+     {
+          error_count++;
+          sprintf(tmp_buf,"사번[%s]성명[%s]직급[%s]인사상태[%s] ==> [%s]",
+          empno, korname, paycl, pstate, msg);
+          log_msg(1, gubun, num++, tmp_buf);
+     }
+     return;
+} */
+
+/*--------------------------------------*
+ *  Log message routine    *
+ *--------------------------------------*/
+/* 민용막음
+log_write(msg)
+char *msg;
+{
+     sprintf(tmp_buf,"사번[%s]성명[%s]직급[%s] ==> [%s]",
+     empno, korname, paycl, msg);
+     log_msg(1, gubun, num++, tmp_buf);
+     return;
+} */
+
+/*--------------------------------------*
+ *   조직도생성 프로그램을 돌린다       *
+ *--------------------------------------*/
+update_pihorga()
+{
+     char command[100];
+     
+     memset(command,     NULL, sizeof(command)    );
+     memset(v_curorgnum, NULL, sizeof(v_curorgnum));
+     memset(v_workym,    NULL, sizeof(v_workym)   );
+     memset(v_rundate,   NULL, sizeof(v_rundate)  );    
+
+     EXEC SQL 
+     SELECT  VALUE1      , TO_CHAR(SYSDATE, 'YYYYMM'), TO_CHAR(SYSDATE, 'YYYYMMDDHH24MISS')
+       INTO  :v_curorgnum, :v_workym                 , :v_rundate
+       FROM  PIMVARI
+      WHERE  GUBUN  = '00'
+        AND  SGUBUN = '0001';
+
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(tmp_buf, "현재조직차수 가져오기 에러");
+          hinsa_exit(0,tmp_buf);
+     }
+     printf("===============================\n"   );
+     printf("jobempno     => [%s]\n", jobempno    );
+     printf("inorgym      => [%s]\n", v_workym    );
+     printf("inorgnum     => [%s]\n", v_curorgnum );
+     printf("log_rundate  => [%s]\n", v_rundate   );
+     printf("===============================\n"   );
+
+     sprintf(command, "~/HINSA/proc/bin/Ibin/pib2010g %s %s %s %s", jobempno, v_workym, v_curorgnum, v_rundate );
+
+     system(command);
+     
+     return;
+}
+
+/**********<< PROGRAM END >>********************************/

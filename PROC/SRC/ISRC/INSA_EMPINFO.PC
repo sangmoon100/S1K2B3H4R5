@@ -1,0 +1,201 @@
+/*======================== Program Header ==========================================================
+     PROGRAM-NAME      : insa_empinfo.pc
+     PROGRM-Decription : 사원 전화번호 정보 인사마스터Update 작업 
+     USAGE             :
+     SYSTEM-NAME       :
+     SUBSYSTEM-NAME    :
+     Programmer        : 지순미
+     Version           : 1.00
+     Date              : 2010.06.09
+  
+    Update Contents
+     Version      date(yy.mm.dd)     programmer      description            relevant doc.n
+       1.00       2010.06.09         지순미          최초작성   
+       1.01       2010.08.31         지순미          E_Mail  정보 제외
+       1.02       2011.04.06         이희용          OFFITEL 추가
+==================================================================================================*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define   EMPNO        4
+#define   KORNAME     12
+#define   PHONE       40
+#define   EMAIL       60
+#define   MJOB        256
+
+EXEC SQL BEGIN DECLARE SECTION;
+     char    v_empno      [05] = {0};    /* 사번 */
+     int     cnt;
+     char    v_mjob[MJOB+1];
+     char    sql_stmt[5000+1];     
+EXEC SQL END DECLARE SECTION;
+
+int PL_pompinfo2pimpmas(void);
+
+void main(void)
+{
+     char FL_Line[255];
+     char FL_file[255];
+   
+     STRINIT(FL_file);
+     STRINIT(FL_Line);
+     strcpy(FL_file,"insa_empinfo");
+   
+     hinsa_get_filename(1, FL_file);
+     if (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+     }
+   
+     hinsa_log_print(0,"사원 핸드폰, 사내전화 정보 인사마스터Update(insa_empinfo) 프로그램 시작...");
+   
+     hinsa_db_connect();
+       
+     if (PL_pompinfo2pimpmas() == FAILURE)
+     {
+          EXEC SQL ROLLBACK WORK RELEASE;
+          hinsa_exit(0,"PL_pompinfo2pimpmas 에러로 종료...");
+          return;
+     }
+   
+     hinsa_exit(0,"사원 핸드폰, 사내전화 정보 인사마스터Update(insa_empinfo) 정상 처리...");
+     return;
+}
+
+/*==================================================================================================
+   인사마스터에서 핸드폰, 사내전화 자료를 Update한다...
+==================================================================================================*/
+int PL_pompinfo2pimpmas(void)
+{
+     char FL_Line[255];
+   
+     STRINIT(FL_Line);
+   
+     hinsa_log_print(0, "인사마스터 핸드폰 정보 Update 작업 시작...");
+     EXEC SQL 
+     Update Pimpmas A
+        Set Retcont                     --//, E_Mail
+          = (Select Trim(Phone)         --//, Trim(Email)
+               From Pompinfo
+              Where Empno = A.Empno)
+      Where Empno In (Select Empno From Pompinfo Where Trim(Phone) Is Not Null And Empno not like 'U%')
+        And Pstate < '80' 
+        And Empno not in ('M146');
+   
+     if  ((SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA))
+     {
+          sprintf(FL_Line, "핸드폰 정보 Update Oracle 에러 : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          return (FAILURE);
+     }     
+     
+     sprintf(FL_Line, "인사마스터 핸드폰 정보 Update 건수 : %d", SQL_PROCESS_COUNT);
+     hinsa_log_print(0, FL_Line);
+      
+     
+       
+     hinsa_log_print(0, "인사마스터 사내전화 정보 Update 작업 시작...");   
+     EXEC SQL 
+     Update Pimpmas A
+        Set Offitel                     --//, E_Mail
+          = (Select Trim(Offitel)       --//, Trim(Email)
+               From Pompinfo
+              Where Empno = A.Empno)
+      Where Empno In (Select Empno From Pompinfo Where Trim(Offitel) Is Not Null And Empno not like 'U%')
+        And Pstate < '80' 
+        And Empno not in ('M146');
+
+     if  ((SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA))
+     {
+          sprintf(FL_Line, "사내전화 정보 Update Oracle 에러 : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          return (FAILURE);
+     }
+   
+     sprintf(FL_Line, "인사마스터 사내전화 정보 Update 건수 : %d", SQL_PROCESS_COUNT);
+     hinsa_log_print(0, FL_Line);
+     /*====================================================================*/
+     //2017.10.19.hjku.. 구성원 정보중 책임업무 추가.. 
+     hinsa_log_print(0, "책임업무 Update 작업 시작...");   
+     
+     sprintf(sql_stmt,"MERGE INTO PIMPMJOB P                                                                     "
+                      "USING (SELECT EMPNO, MJOB, TO_CHAR(SYSDATE,'YYYYMMDDHH24MISS') WRITETIME                  "
+                      "         FROM POMPINFO A                                                                  "
+                      "        WHERE EXISTS(SELECT 1 FROM pimpmas b WHERE A.empno = b.empno AND pstate < '80')   "
+                      "        ) V1                                                                              "
+                      "    ON (P.EMPNO = V1.EMPNO)                                                               "
+                      "WHEN MATCHED THEN UPDATE SET                                                              "
+                      "                        P.MJOB         = V1.MJOB,                                         "
+                      "                        P.WRITEEMP     = '0000',                                          "
+                      "                        P.WRITETIME    = V1.WRITETIME                                     "
+                      "WHEN NOT MATCHED THEN INSERT(P.EMPNO,  P.MJOB, P.WRITEEMP, P.WRITETIME)                   "
+                      "                      VALUES(V1.EMPNO,V1.MJOB,     '0000',V1.WRITETIME)                   ");
+
+     EXEC SQL EXECUTE IMMEDIATE :sql_stmt;                           
+     
+     if  ((SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA))
+     {
+          sprintf(FL_Line, "책임업무 Update Oracle 에러 : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          return (FAILURE);
+     }
+   
+     sprintf(FL_Line, "책임업무 Update 건수 : %d", SQL_PROCESS_COUNT);
+     hinsa_log_print(0, FL_Line);     
+     
+     /*====== 도급인력 연락처 업데이트 추가 ===============================*/   
+     hinsa_log_print(0, "도급인력 마스터 핸드폰 정보 Update 작업 시작...");
+     EXEC SQL 
+     Update Pzsubmas A
+        Set HANDP           
+          = (Select Trim(Phone)
+               From Pompinfo
+              Where Empno = A.Empno)
+      Where Empno In (Select Empno From Pompinfo Where Trim(Phone) Is Not Null And Empno like 'U%')
+        And Retdate is null;
+   
+     if  ((SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA))
+     {
+          sprintf(FL_Line, "도급인력 핸드폰 정보 Update Oracle 에러 : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          return (FAILURE);
+     }     
+     
+     sprintf(FL_Line, "도급인력 마스터 핸드폰 정보 Update 건수 : %d", SQL_PROCESS_COUNT);
+     hinsa_log_print(0, FL_Line);
+      
+     
+     /*=========*/
+     hinsa_log_print(0, "도급인력 마스터 사내전화 정보 Update 작업 시작...");   
+     EXEC SQL 
+     Update Pzsubmas A
+        Set OTEL            
+          = (Select Trim(Offitel)
+               From Pompinfo
+              Where Empno = A.Empno)
+      Where Empno In (Select Empno From Pompinfo Where Trim(Offitel) Is Not Null And Empno like 'U%')
+        And Retdate is null;
+
+     if  ((SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA))
+     {
+          sprintf(FL_Line, "도급인력 사내전화 정보 Update Oracle 에러 : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          return (FAILURE);
+     }
+   
+     sprintf(FL_Line, "도급인력 마스터 사내전화 정보 Update 건수 : %d", SQL_PROCESS_COUNT);
+     hinsa_log_print(0, FL_Line);
+     
+     
+     return (SUCCESS);
+}

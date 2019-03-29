@@ -1,0 +1,432 @@
+/*======================== Program Header ==========================================================
+     PROGRAM-NAME      : 학자금 신청대상자 메일발송(유치원, 초/중/고 scho_appmail.pc
+     PROGRM-Decription : 학자금 신청대상자 매월 26일 메일발송
+                         아침 09시 00분
+     Programmer        : 이희용
+     Version           : 1.00
+     Date              : 2017.04.24
+       
+    Update Contents
+     Version  date(yy.mm.dd)  programmer  description  Comments
+       1.00   2017.04.24      이희용      최초작성
+==================================================================================================*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <math.h>
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+#include "hinsa_common.h"
+
+#define  FAIL        -2
+
+EXEC SQL INCLUDE sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+     char  vCurrDate[8+1];
+     char  CurrYYYY1[4+1];
+     char  CurrMM[2+1];
+     char  CurrDD[2+1];
+     
+     float vYearly_cnt;
+
+     char  vEmpno[4+1];
+     char  vKorname[12+1];
+     char  vFaname[12+1];
+     char  vFabirthdate[8+1];
+     char  vSckind[2+1];
+     char  vSmstel[11+1];
+     char  vNowage[2+1];     
+     char  vStage[2+1];
+     char  vBeage[2+1];
+
+     char  vHandTel[24+1];
+     char  vSendTel[24+1];
+     char  vSmsSubject[200+1];
+     char  vSmsBody[1024+1];
+     
+     char  sql_stmt[5000+1];
+     char  sqlstr[1024];
+EXEC SQL END  DECLARE SECTION;
+
+FILE *fp = stdout;
+
+char  log_progid[16]  = "scho_appmail";
+char  log_writeman[5] = "CRON";
+char  log_rundate[16] = ""; 
+char  log_buff[100]   = "";
+int   seqno   = 0;
+int   rcount  = 0;
+
+
+void main(argc,argv)
+int argc;
+char *argv[];
+{       
+     char FL_dir[255];
+     char FL_Line[255];     
+     char FL_file[255];   
+     int  daycode;
+     int  vexists;     
+     
+     STRINIT(FL_file);
+     STRINIT(FL_Line);
+     strcpy(FL_file,log_progid);
+
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }     
+     
+     hinsa_log_print(0,"학자금 신청 안내 메일 발송(scho_appmail) 프로그램 시작...");
+     hinsa_db_connect();  
+
+     EXEC SQL DECLARE log_db DATABASE;    
+     hinsa_log_db_connect();
+    
+     /* 0. 현재시간 체크 */
+     EXEC SQL     
+             SELECT TO_CHAR(SYSDATE,'YYYYMMDDHH24mmss'),TO_CHAR(SYSDATE,'YYYYMMDD')  
+             INTO :log_rundate, :vCurrDate
+             FROM DUAL;     
+
+     hinsa_trim(log_rundate);          
+     hinsa_trim(vCurrDate);                            
+     
+    /* 1.  금일 평일여부 체크 휴일 : 0, 평일 : 1, 매월 26일이후 평일 실행 */
+     EXEC SQL   
+            SELECT CASE WHEN (A.DAYCODE IN ('1','7') OR B.HOLIDATE IS NOT NULL) THEN 0 
+                   ELSE 
+                     CASE WHEN TO_CHAR(SYSDATE,'DD') < '26'  THEN 0
+                     ELSE                                        1
+                     END
+                   END DAYCODE
+            INTO :daycode
+            FROM PKHCALDAYS A, PKCHOLI B
+              WHERE A.YYYYMMDD = B.HOLIDATE(+)
+                AND A.YYYYMMDD = TO_CHAR(SYSDATE,'YYYYMMDD');
+              
+     /*매월 25일이전 및 휴일은 문자전송하지 않음*/
+     if(daycode == 0 ) 
+     {
+        sprintf(log_buff, "[매월26일이후(휴일제외) 작업으로 실행취소] ORA-%05d - \n",sqlca.sqlcode);
+        Write_batlog(seqno++, log_buff);             
+        hinsa_log_print(0, log_buff);
+        error_quit("[매월26일이후(휴일제외) 작업으로 실행취소] \n");
+        hinsa_exit(0,"[매월26일이후(휴일제외) 작업으로 실행취소] \n");
+     };  
+     
+     /* 2.  당월 전송자료 존재여부 */
+     /* 전송자료 중 수동(프로그램 : PKI2110A)은 제외 */
+     EXEC SQL     
+             SELECT DECODE(COUNT(*), 0, 0, 1)
+             INTO :vexists            
+             FROM PNMMAIL
+             WHERE WORKDATE LIKE TO_CHAR(SYSDATE,'YYYYMM')||'%'
+               AND SND_YN = 'Y'
+               AND WRITEMAN = 'CRON';
+               
+     /*당월 전송자료 존재 시 문자전송하지 않음*/
+     if(vexists == 1 ) 
+     {
+        sprintf(log_buff, "[당월 전송자료 존재로 실행취소] ORA-%05d - \n",sqlca.sqlcode);
+        Write_batlog(seqno++, log_buff);             
+        hinsa_log_print(0, log_buff);
+        error_quit("[당월 전송자료 존재로 실행취소] \n");
+        hinsa_exit(0,"[당월 전송자료 존재로 실행취소] \n");
+     };               
+     
+	   if (process_message() == SUCCESS) 
+	   {   
+	   	   if ((Send_MAIL() == SUCCESS) && (Send_SMS() == SUCCESS))      
+	   	   {
+		         EXEC SQL /* 전송자료 */
+		         UPDATE PNMMAIL
+		         SET SND_YN = 'Y'
+		         WHERE (GUBUN, EMPNO, SCKIND, FAMINAME||FAMIJUID) IN 
+		               (SELECT GUBUN, EMPNO, SCKIND, MAX(FAMINAME||FAMIJUID)        
+		                FROM PNMMAIL
+		                WHERE WORKDATE = TO_CHAR(SYSDATE,'YYYYMMDD')
+		                  AND SND_YN  <> 'Y'
+             GROUP BY GUBUN, EMPNO, SCKIND);
+                 
+				     if  ((SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA))
+				     {
+				          sprintf(log_buff, "학자금 신청 전송자료 입력 오류 : %s", SQLERRM);
+				          Write_batlog(seqno++, log_buff);   
+              	  hinsa_exit(0,"Error ====== [학자금 신청 전송자료 입력 오류] =====\n");
+				     }
+				     else
+				     {                  
+		              sprintf(log_buff, "OK ====== [학자금 신청 알림 MAIL/SMS 전송 성공] =====\n");
+			            Write_batlog(seqno++, log_buff); 
+		 	            hinsa_exit(0,"OK ====== [학자금 신청 알림  MAIL/SMS 전송 성공] =====\n");
+		 	       }     
+	   	   }
+         else
+         {
+             sprintf(log_buff, "ERROR ====== [학자금 신청 알림 MAIL/SMS 전송 실패] =====\n");
+	           Write_batlog(seqno++, log_buff); 
+         	   hinsa_exit(0,"Error ====== [학자금 신청 알림  MAIL/SMS 전송 실패] =====\n");
+         }
+     }
+     else
+     {   sprintf(log_buff, "ERROR ====== [작업 실패] =====\n");
+		     Write_batlog(seqno++, log_buff);   
+		     error_quit("ERROR ====== [작업 실패] =====\n");
+		     hinsa_exit(0,"Error ====== [학자금 신청 알림  MAIL/SMS 전송 실패] =====\n");
+     }
+}
+          
+int process_message()
+{
+     /* 메시지 전송 대상자 조회 */
+     /* 중학교 제외 : 노사합의로 초등학교 등록자는 중학교까지 계속해서 지급(중도입사자 제외)*/ 
+     /* 발송자 제외*/       
+     sprintf(sql_stmt," SELECT EMPNO, KORNAME, FANAME, FABIRTHDATE, SCKIND, SMSTEL, NOWAGE, STAGE, BEAGE FROM HPER.V_SCHO_SMS A"
+                      " WHERE A.SCKIND <> '13' "
+                      "   AND NOT EXISTS(SELECT * FROM PNMMAIL  WHERE EMPNO = A.EMPNO AND FAMINAME = A.FANAME AND FAMIJUID = A.FABIRTHDATE AND SCKIND = A.SCKIND) "); 
+
+     EXEC SQL PREPARE S FROM :sql_stmt;
+     EXEC SQL DECLARE cursor1 CURSOR FOR S;
+     EXEC SQL OPEN cursor1;
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != 1405))
+     {
+          sprintf(log_buff, "Cursor cursor1 Open Error .....");
+          Write_batlog(seqno++, log_buff);
+          hinsa_log_print(0, log_buff);
+          EXEC SQL CLOSE cursor1;
+          error_quit("작업실패...");
+          return (FAIL);
+     }
+  
+     rcount = 0;
+     
+     while(1)
+     {
+          memset(vEmpno,      '\0',sizeof(vEmpno));
+          memset(vKorname,    '\0',sizeof(vKorname));
+          memset(vFaname,     '\0',sizeof(vFaname));
+          memset(vFabirthdate,'\0',sizeof(vFabirthdate));
+          memset(vSckind,     '\0',sizeof(vSckind));
+          memset(vSmstel,     '\0',sizeof(vSmstel));
+          memset(vNowage,     '\0',sizeof(vNowage));
+          memset(vStage,      '\0',sizeof(vStage));
+          memset(vBeage,      '\0',sizeof(vBeage));
+        
+          EXEC SQL FETCH  cursor1 INTO  :vEmpno, :vKorname, :vFaname, :vFabirthdate, :vSckind, :vSmstel, :vNowage, :vStage, :vBeage;
+          
+          hinsa_trim(vEmpno);
+          hinsa_trim(vKorname);      
+          hinsa_trim(vFaname);
+          hinsa_trim(vFabirthdate);      
+          hinsa_trim(vSckind);
+          hinsa_trim(vSmstel);
+          hinsa_trim(vNowage);      
+          hinsa_trim(vStage);      
+          hinsa_trim(vBeage);      
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE cursor1; 
+               sprintf(log_buff, "처리된 작업대상자 : [%d] 명 \n",rcount);
+               Write_batlog(seqno++, log_buff);               
+               return 0;
+          }
+          
+          if  (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor cursor1 Data Fetch Error 1...");
+               EXEC SQL CLOSE cursor1;
+               error_quit("작업실패...");
+               return 0;
+          }   
+ 
+		      sprintf(sqlstr,"Call HPER.PROC_SCHO_SMS('%s', '%s', '%s', '%s', '%s', trim('%s'), trim('%s'), trim('%s'), trim('%s'))", vEmpno, vKorname, vFaname, vFabirthdate, vSckind, vSmstel, vNowage, vStage, vBeage);
+		      EXEC SQL EXECUTE IMMEDIATE :sqlstr;
+
+		     if  (sqlca.sqlcode != 0)
+		     {
+              hinsa_log_print(0,"ERROR ====== [SMS SEND 실패] =====\n");
+		          sprintf(log_buff, "ERROR ====== [SMS SEND 실패] ORA-%05d - \n",sqlca.sqlcode);
+	            Write_batlog(seqno++, log_buff);             
+    	        hinsa_log_print(0, log_buff);
+		          error_quit("ERROR ====== [SMS SEND 실패] =====\n");
+		     }		      
+		      rcount++;
+     }
+     return(SUCCESS);
+}
+
+Send_MAIL()
+{
+    char  vsend_per[100+1];
+    char  vsubject[1024+1];
+    char  vbody1[1024+1];   
+    char  vbody2[1024+1];
+    char  vbody3[1024+1];
+    char  vbody4[1024+1];
+
+    memset(vsend_per ,'\0',sizeof(vsend_per));/* 발송인   */                   
+    memset(vsubject  ,'\0',sizeof(vsubject)); /* 제목     */         
+    memset(vbody1    ,'\0',sizeof(vbody1));   /* 유치원   */
+    memset(vbody2    ,'\0',sizeof(vbody2));   /* 초등학교 */
+    memset(vbody3    ,'\0',sizeof(vbody3));   /* 중학교   */
+    memset(vbody4    ,'\0',sizeof(vbody4));   /* 고등학교 */
+        	
+    /* 메일 전송 내용 가져오기 */
+    EXEC SQL     
+             SELECT VALUE1, VALUE2, VALUE3, VALUE4, VALUE5, VALUE6
+             INTO :vsend_per, :vsubject, :vbody1, :vbody2, :vbody3, :vbody4
+             FROM PEAVARI
+             WHERE S_NO = '002';
+   
+     hinsa_trim(vsend_per);               
+     hinsa_trim(vsubject);               
+     hinsa_trim(vbody1);               
+     hinsa_trim(vbody2);               
+     hinsa_trim(vbody3);               
+     hinsa_trim(vbody4);               
+   
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(log_buff, "Send_MAIL(메일 전송내용) 오류...SQLCODE[%s]\n", sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);           
+ 	        hinsa_log_print(0, log_buff);
+          return(FAIL);
+     }
+     
+     EXEC SQL /* 학자금 안내문(Mail) */
+     INSERT INTO PZHMAIL
+             (SENDTIME, SENDPROG, SEND_PER, RCVR_PER, REFR_PER, SUBJECT, HEADER1, BODY1, TAIL1, RECEIVEYN, EAI_FLAG, EAI_DATE)   
+     SELECT  TO_CHAR(SYSDATE,'YYYYMMDDHHMISS') SENDTIME, 
+             'scho_appmail' SENDPROG, 
+             :vsend_per     SEND_PER, 
+             A.EMPNO        RCVR_PER, 
+             ''             REFR_PER, 
+             :vsubject      SUBJECT, 
+             ''             HEADER1, 
+             DECODE(A.SCKIND, '11', :vbody1, '12', :vbody2, '13', :vbody3, '14', :vbody4, '1') BODY1, 
+             ''             TAIL1, 
+             'N'            RECEIVEYN, 
+             'N'            EAI_FLAG, 
+             ''             EAI_DATE
+     FROM(SELECT EMPNO, SCKIND 
+          FROM PNMMAIL
+          WHERE WORKDATE = TO_CHAR(SYSDATE,'YYYYMMDD')
+            AND SND_YN <> 'Y'
+            AND GUBUN = '1'
+          GROUP BY EMPNO, SCKIND) A;    
+              
+              
+     if  (sqlca.sqlcode != 0)
+     {
+          sprintf(log_buff, "ERROR ====== [MAIL SEND 실패] ORA-%05d - \n",sqlca.sqlcode);
+          Write_batlog(seqno++, log_buff);             
+ 	        hinsa_log_print(0, log_buff);
+          error_quit("ERROR ====== [MAIL SEND 실패] =====\n");
+          return (FAIL);
+     }
+     else
+     {    
+          return(SUCCESS);
+     }     
+}
+
+int Send_SMS()
+{
+     sprintf(sql_stmt," SELECT A.RCV_ID, A.SND_ID, B.VALUE2, DECODE(A.SCKIND, '11', B.VALUE3, '12', B.VALUE4, '13', B.VALUE5, '14', B.VALUE6, '1') SND_MSG "
+                      " FROM(SELECT EMPNO, SCKIND, MAX(RCV_ID) RCV_ID, MAX(SND_ID) SND_ID " 
+                      "      FROM PNMMAIL "
+                      "      WHERE WORKDATE = TO_CHAR(SYSDATE,'YYYYMMDD') "
+                      "        AND SND_YN <> 'Y' "
+                      "        AND GUBUN  = '2'  "
+                      "      GROUP BY EMPNO, SCKIND) A, PEAVARI B "
+                      " WHERE  B.S_NO = '003' "); 
+          
+          
+     EXEC SQL PREPARE S FROM :sql_stmt;
+     EXEC SQL DECLARE cursor2 CURSOR FOR S;
+     EXEC SQL OPEN cursor2;
+     
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0) && (sqlca.sqlcode != 1405))
+     {
+          sprintf(log_buff, "Cursor cursor2 Open Error .....");
+          Write_batlog(seqno++, log_buff);
+          hinsa_log_print(0, log_buff);
+          EXEC SQL CLOSE cursor2;
+          error_quit("작업실패...");
+          return (FAIL);
+     }
+  
+     rcount = 0;
+     
+     while(1)
+     {    
+          memset(vHandTel,    '\0',sizeof(vHandTel));
+          memset(vSendTel,    '\0',sizeof(vSendTel));
+          memset(vSmsSubject, '\0',sizeof(vSmsSubject));
+          memset(vSmsBody,    '\0',sizeof(vSmsBody));
+        
+          EXEC SQL FETCH  cursor2 INTO  :vHandTel, :vSendTel, :vSmsSubject, :vSmsBody;
+          
+          hinsa_trim(vHandTel);
+          hinsa_trim(vSendTel);      
+          hinsa_trim(vSmsSubject);
+          hinsa_trim(vSmsBody);      
+          
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL CLOSE cursor2; 
+               sprintf(log_buff, "처리된 작업대상자 : [%d] 명 \n",rcount);
+               Write_batlog(seqno++, log_buff);               
+               return 0;
+          }
+          
+          if  (sqlca.sqlcode != 0)
+          {
+               print_errmsg(sqlca.sqlcode,"Cursor cursor2 Data Fetch Error 1...");
+               EXEC SQL CLOSE cursor2;
+               error_quit("작업실패...");
+               return 0;
+          }   
+
+			    sprintf(sqlstr,"Call HPER.SENDSMS(trim('%s'), trim('%s'), '%s', '%s')", vHandTel,vSendTel,vSmsBody,vSmsSubject);
+			    EXEC SQL EXECUTE IMMEDIATE :sqlstr;
+
+		     if  (sqlca.sqlcode != 0)
+		     {
+              hinsa_log_print(0,"ERROR ====== [SMS SEND 실패] =====\n");
+		          sprintf(log_buff, "ERROR ====== [SMS SEND 실패] ORA-%05d - \n",sqlca.sqlcode);
+	            Write_batlog(seqno++, log_buff);             
+    	        hinsa_log_print(0, log_buff);
+		          error_quit("ERROR ====== [SMS SEND 실패] =====\n");
+		     }		      
+		      rcount++;
+     }
+     	
+     return(SUCCESS);
+}
+
+/*=== dsa2000 2004.11. Rexec대체 서비스를 위한 =====================================*/
+int Write_batlog(int seqno, char *message)
+{  
+     EXEC SQL AT log_db 
+     INSERT INTO PYBATLOG
+     VALUES (:log_rundate, :log_progid, :seqno, :log_writeman, :message); 
+
+     if ((sqlca.sqlcode != 1403) && (sqlca.sqlcode != 0)) 
+     {  
+          printf("ERROR_CODE : %d, pybatlog Insert Error. \n", sqlca.sqlcode);   
+          return(FAILURE);
+     }                        
+     EXEC SQL AT log_db COMMIT WORK ;  
+}

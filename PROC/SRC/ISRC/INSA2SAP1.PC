@@ -1,0 +1,450 @@
+/*======================== Program Header ==========================================================
+     PROGRAM-NAME      : insa2sap1.pc
+     PROGRM-Decription : 인사테이블을 읽어서 ERP쪽 Temp테이블에 추가 매일, Interface 테이블에 추가 매월 1회 실행
+     Version           : 1.00
+     Date              : 2005.08.10
+  
+    Update Contents
+     Version      date(yy.mm.dd)     programmer      description            relevant doc.n
+       1.00       2005.08.10         이현동          최초작성
+       1.01       2005.10.19         CH.K.J          수정
+    Comments
+    => 1) 현 조직차수를 자동으로 가지고 오도록 수정
+       2) eai_deptno 테이블에 zmons 필드 타입 변경으로 프로그램 수정
+       *) HR 인프라 고도화 Project(직위-> 직책, 직급 -> BAND(비공개),일반직->파견직)    2009.02.26   
+       4) 임단협 : 무기계약직(J사번) -> 정규직 사번 전환  2016.12.28
+==================================================================================================*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+/*#include <sqlcpr.h>*/
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+
+#define   SQL_DUP        -1
+
+#define   ZMONS           2
+#define   IFDAT          14
+#define   CCTR            6
+#define   COVENANT        1
+#define   COVENANT_NM    15
+#define   HRLEVEL        10
+#define   HRLEVEL_NM     20
+#define   TRUE_RET    25600
+
+EXEC SQL BEGIN DECLARE SECTION;
+/* EAI_DEPTNO 테이블 변수들 */
+
+     typedef struct stdeptno ST_DEPTNO;
+     struct stdeptno
+     {
+          int      v_gjahr                       ;
+          varchar  v_zmons      [ZMONS       + 1];
+          varchar  v_ifdat      [IFDAT       + 1];
+          varchar  v_cctr       [CCTR        + 1];
+          varchar  v_covenant   [COVENANT    + 1];
+          varchar  v_covenantnm [COVENANT_NM + 1];
+          varchar  v_hrlevel    [HRLEVEL     + 1];
+          varchar  v_hrlevelnm  [HRLEVEL_NM  + 1];
+          float    v_manno                       ;
+     };
+     ST_DEPTNO    FL_deptno;
+
+EXEC SQL END DECLARE SECTION;
+
+int PL_fetch_depttmp(void);
+int PL_insert_deptno(int FL_seqno);
+int PL_insert_depttmp(void);
+int PL_select_deptno(void);
+int PL_select_depttmp(void);
+int PL_select_premon_deptno(void);
+
+static int  pre_mon_manno = 0;
+static int  FL_seqno      = 0;
+static int  pre_seqno     = 0;
+static int  FG_loopcnt    = 0;
+static int  FG_seqno      = 0;
+
+     char s_day[3];
+     char s_mon[3];
+
+int main()
+{
+     char *FL_date;
+     char FL_Line[255];
+     char FL_file[255];
+     
+     int  ret;
+   
+     STRINIT(FL_file);
+     STRINIT(FL_Line);
+     STRINIT(s_day);
+     STRINIT(s_mon);
+     strcpy(FL_file,"insa2sap1");
+   
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+     }
+   
+     hinsa_db_connect();
+    
+     
+     EXEC SQL 
+     select to_char(sysdate,'DD')  into :s_day  from dual;
+     	
+     EXEC SQL 
+     select to_char(ADD_MONTHS(sysdate, -1),'MM')  into :s_mon  from dual;     	
+
+     if  (strcmp(s_day,"01") == 0) 
+     {
+          printf("=========> month");
+          if (PL_fetch_depttmp() == FAILURE)
+          {
+               EXEC SQL ROLLBACK WORK RELEASE;
+               hinsa_exit(0,"PL_fetch_depttmp Function 에러로 종료...");
+               return 1;
+          }
+          if (PL_insert_depttmp() == FAILURE)
+          {
+               EXEC SQL ROLLBACK WORK RELEASE;
+               hinsa_exit(0,"PL_insert_depttmp Function 에러로 종료...");
+               return 1;
+          }    
+     }
+     else 
+     { 
+          printf("=========> day");     
+          if (PL_insert_depttmp() == FAILURE)
+          {
+               EXEC SQL ROLLBACK WORK RELEASE;
+               hinsa_exit(0,"PL_insert_depttmp Function 에러로 종료...");
+               return 1;
+          }
+     }
+     
+     hinsa_exit(0,"인사인터페이스(insa2sap1) 프로그램 정상 처리...");   
+}
+/*****************************************/
+
+/*==================================================================================================
+EAI_DEPTNO_TEMP테이블에 일자별 부서통계를 넣는다.
+==================================================================================================*/
+int PL_insert_depttmp(void)
+{
+     char FL_Line[255];
+   
+     STRINIT(FL_Line);
+   
+     EXEC SQL 
+     INSERT INTO eai_deptno_temp
+     Select To_Char(Sysdate, 'yyyymmdd'),
+            Fincode,
+            Covenant,
+            Paycl,
+            Count(*),
+            Sysdate
+       From (Select Case When (X.Tribegb='2' And Y.Tribegb='2') Or (Tjobduty='09') Then Y.Fincode Else X.Fincode End Fincode, --//2019.01.09  트라이브조직 구성원 또는 비서는 근무부서를 기준으로 함--//2018.11.30. 소속+근무 모두 트라이브면 근무부서. --Fincode,
+                    Decode(Substr(Empno,1,1),'J',3,'P',3,'Q',3,'Y',2,Decode(Paycl,'H10',3,1)) Covenant,    --/*decode(substr(empno,1,1),'J',3,'P',3,'Q',3,'Y',2,1) covenant, 2016.12.28.hjku... J사번 정규직 사번 전환으로 인한 수정(임단협).. 전지영M*/
+                    Paycl
+               From Pimpmas A,
+                   (Select Deptcode, Fincode, Substr(Tribegb,1,1) Tribegb From Pycdept Where Orgnum=Hper.Func_Orgnum ) X, --//2018.11.30.소속부서
+                   (Select Deptcode, Fincode, Substr(Tribegb,1,1) Tribegb From Pycdept Where Orgnum=Hper.Func_Orgnum ) Y  --//2018.11.30.근무부서
+              Where Pstate     < '60'
+                And Pstateyn   = 'Y'
+                And A.Orgnum   = Hper.Func_Orgnum
+                And A.Deptcode = X.Deptcode
+                And A.Jobdept  = Y.Deptcode
+                )
+     Group By Fincode,Covenant,Paycl;
+     
+     if  ((SQLCODE != SQL_OK) && (SQLCODE != SQL_NO_DATA) && (SQLCODE != SQL_NULL_COL))
+     {    
+          sprintf(FL_Line, "Oracle PL_insert_depttmp 에러  : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          return (FAILURE);
+     }
+     
+     STRINIT(FL_Line);
+     sprintf(FL_Line, "인사 일별생성 자료 추가 성공");
+     hinsa_log_print(0, FL_Line);
+     return (SUCCESS);
+}
+
+/*==================================================================================================
+EAI_DEPTNO_TEMP을 fetch하여 EAI_DEPTNO테이블에 넣는다.
+==================================================================================================*/
+int PL_fetch_depttmp(void)
+{
+     char FL_Line[255];
+     int  tmp;
+     int  pre_seq=0;
+     int  return_value = 0;
+   
+     VARCHAR  sql_cmd[4096];
+   
+     STRINIT(FL_Line);
+     hinsa_log_print(0, "EAI_DEPTNO_TEMP FETCH START...");
+   
+     EXEC SQL DECLARE cur_01 CURSOR FOR
+     select TO_NUMBER(TO_CHAR(ADD_MONTHS(sysdate, -1), 'YYYY'))            ,
+            TO_CHAR(ADD_MONTHS(sysdate, -1), 'MM'  )                       ,
+            TO_CHAR(sysdate, 'yyyymmddhh24miss')                           , 
+            fincode                                                        ,
+            covenant                                                       ,
+            decode(covenant,'1','정규직','2','파견직','3','계약직','')     ,
+            paycl                                                          ,
+            decode(paycl, '01','임원','10','사원','')                      ,
+            sum(cnt)                                                       
+       from                                                                
+           (SELECT A.fincode,
+                   A.covenant,
+                   decode(substr(A.paycl,1,1), 'A','01','0','01','10') paycl,
+                   sum(A.cnt) cnt
+              FROM EAI_DEPTNO_TEMP A
+             WHERE C_DATE =  to_char(LAST_DAY(ADD_MONTHS(sysdate, -1)), 'yyyymmdd')
+             GROUP by A.fincode, A.covenant, a.paycl)
+      GROUP by fincode, covenant, paycl;
+   
+     EXEC SQL OPEN cur_01;
+   
+     if  (SQLCODE != SQL_OK)
+     {
+          sprintf(FL_Line, "Oracle OPEN 에러 : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          return (FAILURE);
+     }
+   
+     while(TRUE)
+     {
+          memset((char *)&FL_deptno, NULL, sizeof(FL_deptno));
+          
+          EXEC SQL FETCH cur_01 INTO
+                        :FL_deptno.v_gjahr,
+                        :FL_deptno.v_zmons,
+                        :FL_deptno.v_ifdat,
+                        :FL_deptno.v_cctr,
+                        :FL_deptno.v_covenant,
+                        :FL_deptno.v_covenantnm,
+                        :FL_deptno.v_hrlevel,
+                        :FL_deptno.v_hrlevelnm,
+                        :FL_deptno.v_manno;
+          
+          if  (SQLCODE == SQL_NO_DATA)     break;
+         
+          if  ((SQLCODE != SQL_NULL_COL) && (SQLCODE != SQL_OK))
+          {
+               sprintf(FL_Line, "Oracle FETCH  에러 : %s", SQLERRM);
+               hinsa_log_print(0, FL_Line);
+               EXEC SQL CLOSE cur_01;
+               return (FAILURE);
+          }
+
+          if  (strcmp(s_mon,"01") != 0)  {
+			         return_value = PL_select_premon_deptno();
+			         
+			         if  (return_value == SQL_NO_DATA)
+			         {
+			              if  (PL_select_depttmp()  == FAILURE)     return (FAILURE);
+			              
+			              sprintf(FL_Line, "Oracle PL_select_depttmp  pre_mon_manno : [%d]", pre_mon_manno);
+			              hinsa_log_print(0, FL_Line);
+			              
+			              FL_deptno.v_manno = (pre_mon_manno + FL_deptno.v_manno) / 2;
+			         }
+			         else if  (return_value == SQL_OK)
+			              FL_deptno.v_manno = (pre_mon_manno + FL_deptno.v_manno) / 2;
+			         else
+			              return (FAILURE);
+          }
+          
+          FG_loopcnt++;
+          
+          FL_seqno = 0;
+          return_value = PL_insert_deptno(FL_seqno);
+          
+          if  (return_value == SQL_DUP)
+          {
+               if  (PL_select_deptno() == FAILURE)
+               {
+                    sprintf(FL_Line, "PL_select_deptno() 실패");
+                    hinsa_log_print(0, FL_Line);
+                    return (FAILURE);
+               }
+              
+               FL_seqno = pre_seqno + 1;
+               if  (PL_insert_deptno(FL_seqno) == FAILURE)
+               {
+                    sprintf(FL_Line, "인사 월별생성 자료 추가 실패");
+                    hinsa_log_print(0, FL_Line);
+                    return (FAILURE);
+               }
+          }
+          else if  (return_value == FAILURE)
+               return (FAILURE);
+     }
+   
+     EXEC SQL CLOSE cur_01;
+   
+     return (SUCCESS);
+}
+/*==================================================================================================
+EAI_DEPTNO테이블에서 전월 부서인원을 가져 온다.
+==================================================================================================*/
+int PL_select_premon_deptno(void)
+{
+     char FL_Line[255];
+
+     EXEC SQL 
+     SELECT sum(cnt) INTO :pre_mon_manno
+       FROM EAI_DEPTNO_TEMP
+      WHERE c_date   =  TO_CHAR(LAST_DAY(ADD_MONTHS(SYSDATE, -2)),'yyyymmdd') 
+        AND fincode  = :FL_deptno.v_cctr
+        AND covenant = :FL_deptno.v_covenant
+        AND decode(substr(paycl,1,1),'A','01','0','01','10') = :FL_deptno.v_hrlevel;     
+     
+     if (SQLCODE == SQL_NO_DATA)
+     {
+          sprintf(FL_Line, "Oracle PL_select_premon_deptno SQL_NO_DATA : [%s][%s][%s]",
+                           FL_deptno.v_cctr.arr, FL_deptno.v_covenant.arr, FL_deptno.v_hrlevel.arr);
+          hinsa_log_print(0, FL_Line);
+          return (SQL_NO_DATA);
+     }
+     else if(SQLCODE == SQL_OK)
+     {
+          return (SQL_OK);
+     }
+     else
+     {
+          sprintf(FL_Line, "Oracle PL_select_premon_deptno 에러 : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          EXEC SQL CLOSE cur_01;
+          return (FAILURE);
+     }
+}
+
+/*==================================================================================================
+eai_deptno테이블에 값을 넣는다.
+==================================================================================================*/
+int PL_insert_deptno(int FL_seqno)
+{
+     char FL_Line[255];
+   
+     EXEC SQL 
+     INSERT INTO eai_deptno
+            (gjahr                 ,
+             zmons                 ,
+             mdgbn                 ,
+             dctyp                 ,
+             seqno                 ,
+             seqln                 ,
+             ifsys                 ,
+             ifdat                 ,
+             cctr                  ,
+             covenant              ,
+             covenant_nm           ,
+             hrlevel               ,
+             hrlevel_nm            ,
+             manno                 ,
+             mode_flag             ,
+             eai_flag               )
+     values(:FL_deptno.v_gjahr     ,
+            :FL_deptno.v_zmons     ,
+            'PA'                   ,
+            'H81'                  ,
+            :FL_seqno              ,
+            :FG_loopcnt            ,
+            'HR'                   ,
+            to_char(sysdate, 'yyyymmdd')||'000000',
+            :FL_deptno.v_cctr      ,
+            :FL_deptno.v_covenant  ,
+            :FL_deptno.v_covenantnm,
+            :FL_deptno.v_hrlevel   ,
+            :FL_deptno.v_hrlevelnm ,
+            :FL_deptno.v_manno     ,
+            'I'                    ,
+            'N'                    );
+            
+     if  (SQLCODE == SQL_DUP)
+     {
+          return (SQL_DUP);
+     }
+     else if  (SQLCODE != SQL_OK )
+     {
+          STRINIT(FL_Line);
+          sprintf(FL_Line, "Oracle PL_insert_deptno 에러 : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          return (FAILURE);
+     }
+   
+     return (SUCCESS);
+}
+
+/*==================================================================================================
+eai_deptno에서 seqno의 MAX값을가져 온다
+==================================================================================================*/
+int PL_select_deptno(void)
+{
+     char FL_Line[255];
+   
+     EXEC SQL 
+     SELECT max(seqno)  INTO  :pre_seqno
+       FROM EAI_DEPTNO
+      WHERE gjahr         = :FL_deptno.v_gjahr
+        and zmons         = :FL_deptno.v_zmons
+        and mdgbn         = 'PA'
+        and dctyp         = 'H81'
+        and cctr          = :FL_deptno.v_cctr
+        and covenant      = :FL_deptno.v_covenant;
+        //and hrlevel      = :FL_deptno.v_hrlevel;
+   
+     if  (SQLCODE != SQL_OK)
+     {
+          sprintf(FL_Line, "Oracle PL_select_deptno 에러 : %s", SQLERRM);
+          hinsa_log_print(0, FL_Line);
+          EXEC SQL CLOSE cur_01;
+          return (FAILURE);
+     }
+     return (SUCCESS);
+
+}
+
+/*==================================================================================================
+처음 생긴 부서인경우 해당월의 시작일자의 인원수를 가져온다.
+==================================================================================================*/
+int PL_select_depttmp(void)
+{
+     char FL_Line[255];
+   
+     EXEC SQL 
+     SELECT sum(cnt)  INTO :pre_mon_manno
+       FROM eai_deptno_temp
+      WHERE c_date   = (select min(C_DATE)
+                          from eai_deptno_temp
+                         where c_date   like to_char(ADD_MONTHS(sysdate, -1), 'yyyymm')||'%'
+                           and fincode  = TRIM(:FL_deptno.v_cctr)
+                           and covenant = :FL_deptno.v_covenant
+                           and decode(substr(paycl,1,1),'A','01','0','01','10')    = :FL_deptno.v_hrlevel)
+        and fincode  = TRIM(:FL_deptno.v_cctr)
+        and covenant = :FL_deptno.v_covenant
+        and decode(substr(paycl,1,1),'A','01','0','01','10')    = :FL_deptno.v_hrlevel;
+   
+     if (SQLCODE != SQL_OK)
+     {
+          sprintf(FL_Line, "Oracle PL_select_depttmp 에러 : %s/%s/%s/%s/%d", SQLERRM, FL_deptno.v_cctr.arr,FL_deptno.v_covenant.arr,FL_deptno.v_hrlevel.arr, pre_mon_manno);
+          hinsa_log_print(0, FL_Line);
+          return (FAILURE);
+     }
+   
+     return (SUCCESS);
+
+}

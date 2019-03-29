@@ -1,0 +1,343 @@
+/*******************************************************************************
+     PROGRAM-NAME    : pvi1001g(방문예약 자동경신)
+     SYSTEM-NAME     : 종합인사정보
+     SUBSYSTEM-NAME  : 방문예약
+     Programmer      : 이민용
+     Version         : 1.00
+     Date            : 2004.07.07
+     
+     Update Contents
+      Version date(yy.mm.dd) programmer  relevant doc.no    description
+       1.00   2004.07.07     이민용      자체개선           pimpmas를 pvpimpmas(방문예약)
+                                                            테이블에 update,insert 한다.
+       1.01   2004.12.13     이민용      자체개선           pvpycdept테이블의 부서코드를 삭제하고
+                                                            pycdept테이블의 부서코드를 insert하여 새로운 부서코드가 반영되게 수정.                                                    
+     *) HR 인프라 고도화 Project(직위-> 직책, 직급 -> BAND(비공개))
+*******************************************************************************/
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define  YYMMDD       8
+#define  YYMMDDHH    16
+                    
+#define  SUCCESS      0
+#define  FAIL        -1
+
+/*----------------------------------------------*
+ * Current data save & Condition save Variable  *
+ *----------------------------------------------*/
+EXEC SQL BEGIN DECLARE SECTION;
+     char   empno[5];               /* 사원번호 */
+     char   orgnum[4];              /* 조직차수 */
+     char   korname[13];            /* 성    명 */
+     char   deptcode[7];            /* 부서코드 */
+     char   juminid[15];            /* 주민번호 */
+     char   paycl[4];               /* BAND */
+     char   payra[4];               /* 직    책 */
+     char   jobplace[3];            /* 근무지 */
+     char   pstate[3];              /* 인사상태 */
+     char   empdate[9];             /* 입 사 일 */
+     char   orgempdate[9];          /* SKBroadBand입사일 31.05 */
+     char   jobdept[7];             /* 근무부서 */
+                                    
+     char   today[9];               /* 시스템일자 */
+     char   base_date[9];
+     char   tmp_paycldate[9];
+            
+     char   v_curorgnum[4];
+     char   v_workym[7];
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+char jobempno[5];                   /* 작업자사번 */
+int  insert_count, update_count;
+char FL_Line[255];
+
+
+/******************************************
+ *   MAIN PROCESSING START !!!!!!      *
+ ******************************************/
+main(argc,argv)
+int argc; 
+char *argv[];
+{ 
+
+     char *FL_date;
+     char FL_dir[255];
+     char FL_file[255];
+     
+     STRINIT(FL_file);
+     strcpy(FL_file,"pvi1001g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     hinsa_log_print(0,"방문예약 자동경신 프로그램 시작...");
+     
+     hinsa_db_connect();
+     init_variable();
+
+
+     strcpy(jobempno, argv[1]);
+  
+     STRINIT(FL_Line);
+     sprintf(FL_Line, "PVI1001G_%.4s", jobempno);
+     hinsa_log_print(0, FL_Line);
+
+     data_process();                                /*pimpmas를 pvpimpmas에 update한다*/
+                                                    
+     pvpimpmas_process();                           /*pimpmas에 신규로 만들어진 사원을 pvpimpmas에 insert 한다. */
+                                                    
+     pvpycdept_process();                           /*pycdept의 부서코드를 pvpycdept에 insert 한다. */
+    
+     sprintf(FL_Line, "<*> 수정건수 : %7d 건", update_count);
+     hinsa_log_print(0, FL_Line);
+     
+     sprintf(FL_Line, "<*> 생성건수 : %7d 건", insert_count);
+     hinsa_log_print(0, FL_Line);
+
+     hinsa_exit(0,"작업이 완료되었습니다.");
+}
+
+/*----------------------------------------------*
+ * Current data & Condition Variable Initialize *
+ *----------------------------------------------*/
+init_variable()
+{ 
+     memset(empno,       0x00,  sizeof(empno)     );
+     memset(orgnum,      0x00,  sizeof(orgnum)    );
+     memset(korname,     0x00,  sizeof(korname)   );
+     memset(deptcode,    0x00,  sizeof(deptcode)  );
+     memset(juminid,     0x00,  sizeof(juminid)   );
+     memset(paycl,       0x00,  sizeof(paycl)     );
+     memset(payra,       0x00,  sizeof(payra)     );
+     memset(jobplace,    0x00,  sizeof(jobplace)  );
+     memset(pstate,      0x00,  sizeof(pstate)    );
+     memset(empdate,     0x00,  sizeof(empdate)   );
+     memset(orgempdate,  0x00,  sizeof(orgempdate));
+     memset(jobdept,     0x00,  sizeof(jobdept)   );
+     
+     memset(jobempno,    0x00,  sizeof(jobempno)  );
+}
+
+/****************************************
+ *    Data process  routine     *
+ ****************************************/
+data_process()
+{
+     hinsa_log_print(0,"pimpmas테이블에서 변경된 것을 한건씩 Fecth한다...");
+  
+     EXEC SQL LOCK TABLE  pimpmas, pvpimpmas
+                IN EXCLUSIVE  MODE  NOWAIT;
+
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"다른 작업자가 DB수정 작업중입니다.");
+
+     EXEC SQL DECLARE c1 cursor for                      /* PIMPMAS 테이블모든 인원 검색 */
+               SELECT  a.empno, a.orgnum, a.korname, a.deptcode, 
+                       nvl(a.juminid, '              '), a.paycl, a.payra,
+                       a.jobplace, a.pstate, a.empdate, a.orgempdate, a.jobdept
+                 from  pimpmas a 
+                where  a.pstate <'80'     
+                ORDER  BY empno;
+
+     EXEC SQL open c1;
+
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"Cursor Open c1");
+
+     for ( ; ; )
+     {
+          EXEC SQL FETCH c1 INTO
+                   :empno   , :orgnum, :korname, :deptcode  ,
+                   :juminid , :paycl , :payra , 
+                   :jobplace, :pstate, :empdate, :orgempdate, :jobdept; 
+
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c1;
+               return;
+          }
+          else if  (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+          {
+               EXEC SQL close c1;
+               hinsa_exit(0,"Data Fetch c1");
+          }
+  
+          update_count++;
+          hinsa_trim(korname);   
+          hinsa_trim(juminid);
+          hinsa_trim(deptcode);  
+          hinsa_trim(jobdept);
+          hinsa_trim(payra);    
+              
+          update_pvpimpmas();  
+     }
+}
+
+update_pvpimpmas()
+{
+   
+     EXEC SQL 
+     UPDATE  pvpimpmas
+        SET  korname    = :korname,
+        	    juminid    = :juminid,
+             orgnum     = :orgnum,
+             deptcode   = :deptcode,
+             paycl      = ' ',
+             payra      = :payra,
+             jobplace   = :jobplace,
+             pstate     = :pstate,
+             empdate    = :empdate,
+             orgempdate = :orgempdate,
+             jobdept    = :jobdept 
+      WHERE  empno      = :empno;
+
+     if  (sqlca.sqlcode != 1403 && sqlca.sqlcode != 0)
+     {
+          EXEC SQL close c1;
+          sprintf(FL_Line, "Update pvpimpmas Error [%s] ", empno);
+          hinsa_exit(0,FL_Line);
+     }
+}
+
+pvpimpmas_process()
+{
+     hinsa_log_print(0,"pimpmas테이블에 신규 데이터를 한건씩 Fecth한다...");
+  
+     EXEC SQL LOCK TABLE  pimpmas, pvpimpmas
+                IN EXCLUSIVE  MODE  NOWAIT;
+
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"다른 작업자가 DB수정 작업중입니다.");
+
+     EXEC SQL DECLARE  c2 cursor for                      /* PIMPMAS 테이블모든 인원 검색 */
+               SELECT  b.empno, b.orgnum, b.korname, b.deptcode, 
+                       nvl(b.juminid, '              '), b.paycl, b.payra, 
+                       b.jobplace, b.pstate, b.empdate, b.orgempdate, b.jobdept
+                 from  pimpmas b 
+                where  b.empno not in (select c.empno from pvpimpmas c)
+                  and  b.pstate <'80'  
+                order  by empno;
+
+     EXEC SQL open c2;
+
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"Cursor Open c2");
+
+     for ( ; ; )
+     {
+          EXEC SQL FETCH c2 INTO
+                   :empno   , :orgnum, :korname, :deptcode,
+                   :juminid , :paycl , :payra  , 
+                   :jobplace, :pstate, :empdate, :orgempdate, :jobdept; 
+
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c2;
+               return;
+          }
+          else if  (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+          {
+               EXEC SQL close c2;
+               hinsa_exit(0,"Data Fetch c2");
+          }
+  
+          insert_count++;
+          hinsa_trim(korname);   hinsa_trim(juminid);
+          hinsa_trim(deptcode);  hinsa_trim(jobdept);
+          hinsa_trim(payra);    
+              
+          insert_pvpimpmas();  
+     }
+}
+
+insert_pvpimpmas()
+{  
+     EXEC SQL 
+     INSERT INTO  pvpimpmas
+                 (empno      , 
+                  orgnum     , 
+                  korname    , 
+                  deptcode   ,
+                  juminid    , 
+                  paycl      , 
+                  payra      ,
+                  jobplace   , 
+                  pstate     , 
+                  empdate    , 
+                  orgempdate , 
+                  jobdept    ) 
+          Values             
+                 (:empno     , 
+                  :orgnum    , 
+                  :korname   , 
+                  :deptcode  ,
+                  :juminid   , 
+                  ' '        ,     //:paycl  
+                  :payra     , 
+                  :jobplace  , 
+                  :pstate    , 
+                  :empdate   , 
+                  :orgempdate, 
+                  :jobdept   ); 
+                                                            
+     if  (sqlca.sqlcode != 0)
+     {
+          EXEC SQL close c1;
+          sprintf(FL_Line, "insert Pvpimpmas Error [%s] ", empno);
+          hinsa_exit(0,FL_Line);
+     }
+}
+
+pvpycdept_process()
+{
+     /*기존의 pvpycdept의 orgnum='ZZZ'가 아닌 부서코드를 삭제한다. */
+     EXEC SQL 
+     delete from pvpycdept
+      where orgnum=(select value1 from pimvari where gubun='00' and sgubun='0001');
+              
+              
+     EXEC SQL 
+     insert into  pvpycdept
+                (
+                  ORGNUM, 
+                  DEPTCODE, 
+                  DEPTNAME, 
+                  DEPTNA3, 
+                  BONCODE, 
+                  FINCODE, 
+                  FIELDCODE, 
+                  EXTCODE
+                )
+          select  ORGNUM, 
+                  DEPTCODE, 
+                  DEPTNAME, 
+                  DEPTNA3, 
+                  BONCODE, 
+                  FINCODE, 
+                  FIELDCODE, 
+                  EXTCODE
+            from  pycdept
+           where  orgnum=(select value1 from pimvari where gubun='00' and sgubun='0001'); 
+                
+     hinsa_log_print(0, "pvpycdept테이블 update");                
+                 
+}
+
+/**********<< PROGRAM END >>********************************/
+ 

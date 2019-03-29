@@ -1,0 +1,124 @@
+/*======================== Program Header ==========================================================
+     PROGRAM-NAME      : 종합인사정보 장기근속대상자 안내메일 발송 pic3030g.pc
+     PROGRM-Decription : 발송일자(예약일)에 메일을 발송하고자 하는 각 프로그램별 메일을 해당 일자에 
+			             임시테이블(PZHRMAIL)에서 메일발송 테이블(PZHMAIL)로 입력해주는 프로그램
+     Programmer        : 이성규
+     Version           : 1.00
+     Date              : 2018.07.16
+       
+     Update Contents
+     Version  date(yy.mm.dd)  programmer  description  Comments
+       1.00   2018.07.16      이성규      최초작성	PIC3030A:장기근속대상자 안내메일 반영
+==================================================================================================*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define   DEBUG       1
+
+EXEC SQL INCLUDE sqlca.h;
+
+void main(void)
+{
+    char strMsg[255];
+    char FL_file[255];
+    int  iRet = 0;
+    
+    STRINIT(&FL_file);
+    strcpy(FL_file,"pic3030g");
+    
+    hinsa_get_filename(1, FL_file);
+    if  (hinsa_log_open(FL_file) == FAILURE)
+    {
+      hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+      return;
+    }
+    
+    hinsa_log_print(0,"예약 메일 발송(pic3030g.pc) 프로그램 시작...");
+
+    hinsa_db_connect();  
+    
+    /*======================================================================================
+    PZHMAIL INSERT : 메일 발송 예약일자에 해당하는 내용을 메일전송 테이블에 입력.
+    ======================================================================================*/   
+    hinsa_log_print(0, "장기근속대상자 안내 메일. 전송 Table에 입력 시작.");
+
+    EXEC SQL	
+        INSERT INTO PZHMAIL
+            (SENDTIME,   /* 메일발송 작업시간					  */
+             SENDPROG,   /* 발송프로그램 ID					      */
+             SEND_PER,   /* 발신자 사번						      */
+             RCVR_PER,   /* 수신자 사번(장기근속대상자)			  */
+             REFR_PER,   /* 불필요(종합인사)					  */
+             SUBJECT,    /* 메일제목						      */
+             HEADER1,    /* 불필요(종합인사)					  */
+             BODY1,      /* 메일내용						      */
+             TAIL1,      /* 불필요(종합인사)					  */
+             RECEIVEYN,  /* 'Y' 일경우 메일 읽었을경우 송신자에게 수신확인 메일 보내주기 */ 
+             EAI_FLAG,   
+             EAI_DATE)   
+        SELECT 
+             SENDTIME, 
+             SENDPROG,
+             SEND_PER,
+             RCVR_PER, 
+             REFR_PER,
+             SUBJECT,
+             ''         HEADER1,
+             CONTENTS   BODY1,
+             ''         TAIL1,
+             'N'        RECEIVEYN,
+             'N'        EAI_FLAG, 
+             ''         EAI_DATE
+          FROM PZHRMAIL
+         WHERE SENDTIME LIKE TO_CHAR(SYSDATE, 'YYYYMMDD')||'%' 
+           AND SENDPROG = 'PIC3030A'
+           AND PROCYN   = 'N';
+
+/* TEST	   	  WHERE SENDTIME LIKE TO_CHAR(to_date('20180801', 'yyyymmdd'), 'YYYYMMDD')||'%' */
+    if (SQLCODE != SQL_OK)
+    {
+        STRINIT(&strMsg);
+        sprintf(strMsg, "Fail Insert into PZHMAIL!! : %s", SQLERRM);
+        hinsa_log_print(0, strMsg);
+    }                
+
+    STRINIT(&strMsg);
+    sprintf(strMsg, "입력 건수 : %d", SQL_PROCESS_COUNT);
+    hinsa_log_print(0, strMsg);
+
+    /*======================================================================================
+     PZHRMAIL UPDATE : 전송테이블에 입력 완료된 메일의 처리여부 'Y'로 UPDATE.
+    ======================================================================================*/
+    if (SQL_PROCESS_COUNT > 0)
+    {
+        EXEC SQL	
+            UPDATE PZHRMAIL
+               SET PROCYN = 'Y'
+             WHERE SENDTIME LIKE TO_CHAR(SYSDATE, 'YYYYMMDD')||'%' 
+               AND SENDPROG = 'PIC3030A'
+               AND PROCYN  = 'N'; /* 장기근속대상자 안내메일 발송 프로그램 : pic30303g.pc */
+    
+    /* TEST      WHERE SENDTIME LIKE TO_CHAR(to_date('20180801', 'yyyymmdd'), 'YYYYMMDD')||'%' */
+        if (SQLCODE != SQL_OK)
+        {
+            EXEC SQL ROLLBACK WORK;
+            STRINIT(&strMsg);
+            sprintf(strMsg, "Fail Update PZHRMAIL!! : %s", SQLERRM);
+            hinsa_log_print(0, strMsg);
+        }
+        else
+            EXEC SQL COMMIT WORK;
+    }
+    
+    hinsa_exit(0,"예약 메일 발송(pic30303g) 프로그램 종료...");
+}  

@@ -1,0 +1,862 @@
+/****************************************************************************
+ *     PROGRAM-NAME   : (pie1011g) 계획인원현원생성 - 전월발령 통계반영
+ *     SYSTEM-NAME    : 종합인사정보
+ *     SUBSYSTEM-NAME : 인사
+ *     Programmer     : 윤형식
+ *     Version        : 1.03
+ *     Date           : 2001.03.20
+ *     Update Contents
+  Version date(yy.mm.dd) programmer  relevant doc.no    description
+  1.03    2001.03.20     윤형식      전2001-02-13       전월발령 통계반영
+  1.04    2004.01.30     이민용      자체 개선          오라클 8버전 upgrade관련
+  1.05    2004.06.17     이민용      자체 개선          직급체계변경에 따른 프로그램 수정 
+ *     Remarks
+ *          Compile시 Warning Message는 무시해도 좋을 걸 !!!
+ *) HR 인프라 고도화 Project(직위-> 직책, 직급 -> BAND(비공개))
+ ****************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <time.h>
+#include <sqlca.h>
+#include <sqlda.h>
+/*#include <sqlcpr.h>*/
+#include "hinsa_common.h"
+#include "hinsa_macro.h"
+#include "hinsa_string.h"
+#include "hinsa_date.h"
+#include "hinsa_log.h"
+#include "hinsa_oracle.h"
+
+#define   YYMMDD      8
+#define   YYMMDDHH   16
+
+/*----------------------------------------------*
+ * Current data save & Condition save Variable  *
+ *----------------------------------------------*/
+EXEC SQL BEGIN DECLARE SECTION;
+     char  topoym[7];       /* 작업년월 */
+     char  beftopoym[7];    /* 바로전 작업년월 */
+     char  orgnum[4];       /* 조직차수 */
+     char  manunit[3];      /* 관리단위 (EO)???*/
+                            
+     char  deptcode[7];     /* 부서코드 */
+     char  tpgubun[3];      /* 구분코드 */
+     char  sectcode[4];     /* 부문코드 */
+     char  fieldcode[4];    /* 실단코드 */
+     char  boncode[7];      /* 본부코드 */
+     char  tcretime[16];    /* 계획인원생성일시 */
+     char  deptlevel[5];    /* 부서등급(pycdept의 자리수) 1.02 */
+           
+     char  empno[5];        /* 사원번호 */
+     char  korname[13];     /* 성  명 */
+     char  paycl[4];        /* BAND */
+     char  payra[4];        /* 직  책 */
+     char  nojeonyn[2];     /* 노조전임여부 */
+     char  pstate[3];       /* 인사상태 */
+   
+     float pdir11,   pdir12,   pdir21,   pdir31,   pdir41;
+     float pdir51,   pdir61,   pdir6a,   pdir71;
+     float pdir72,   pdir7a,   pdiretc,  pdirsum;
+     float ppos1,    ppos2,    ppos3,    ppos4;
+     float ppos5,    ppos6,    ppos7,    ppos8,    ppos9;
+     float ppossum,  pspe1,    pspe21,   pspe22;
+     float pspe23,   pspe24,   pspe25,   pspe26;
+     float pspe27,   pspe2,    pspe3,    pspe4;
+     float pspe5,    pspesum,  pemptot,  pextr1;
+     float pextr2,   pextr3,   pextr4,   pextr5;
+     float pextrsum, ptempsum, pimsitot, ptotal;
+     float P10,      P20,      P22,      P32,      P40,     P42,     P44;
+  /* =================================================
+     계약직원관련 수정
+     ================================================= */
+     float pcontsum, psconsum;
+     char  pcretime[16], tpbigo[51];
+           
+     char  today[9];        /* 시스템일자 */
+     char  tocredate[9];    /* 계획인원생성일자 */
+     char  pocredate[9];    /* 현원생성일자 */
+   
+     float del_count;       /* 기존자료삭제건수 */
+     float exist_count;     /* 자료존재확인 */
+   
+     char  jobempno[5];     /* 작업자사번 */
+     char  pselect[901];
+EXEC SQL END DECLARE SECTION;
+EXEC SQL INCLUDE SQLCA;
+
+char  cregubun[3];          /* 생성구분 */
+char  cregubunnm[21];       /* 생성구분명 */
+char  ipoyn[2];             /* 임원현원포함여부 */
+char  epoyn[2];             /* 교육파견현원포함여부 */
+char  jpoyn[2];             /* 정직현원포함여부 */
+char  hpoyn[2];             /* 휴직현원포함여부 */
+                            
+char  gubun[14];            /* 작업구분 */
+int   num;                  /* 일련번호 */
+char  tmp_buf[101];
+      
+char  start_date[16], end_date[16];
+int   tread_count,    tcre_count,   pread_count,  pupd_count;
+int   imwon_count,    nojo_count,   paed_count,   jeong_count,  hujik_count;
+float skip_sw,        error_count;
+
+/******************************************
+ *  MAIN PROCESSING START !!!!!!      *
+ ******************************************/
+main(argc,argv)
+int   argc;
+char  *argv[];
+{
+     char  edf_count[8];
+           
+     char  *FL_date;
+     char  FL_dir[255];
+     char  FL_Line[255];
+     char  FL_file[255];
+     
+     STRINIT(FL_file);
+     strcpy(FL_file,"pie1011g");
+     
+     hinsa_get_filename(1, FL_file);
+     if  (hinsa_log_open(FL_file) == FAILURE)
+     {
+          hinsa_exit(0,"로그파일 생성에러로 인한 프로그램 종료...");
+          return;
+     }
+     
+     hinsa_log_print(0,"인사발령사항경신 프로그램 시작...");
+     
+     hinsa_db_connect();
+     init_variable();
+ 
+     /*
+     ** Param:pie1011g 9999 11 200401 H07 E0 Y Y N N 20040130 20040112
+     */
+     strcpy(jobempno, argv[ 1]); /* 작업자사번     9999      m_Pempno      */
+     strcpy(cregubun, argv[ 2]); /* 생성구분       11        '11' 현원     */
+     strcpy(topoym,   argv[ 3]); /* 작업년월       200103    m_workym      */
+     strcpy(orgnum,   argv[ 4]); /* 조직차수       H05       m_Orgnum      */
+     strcpy(manunit,  argv[ 5]); /* 관리단위       E0        m_Manunit     */
+     strcpy(ipoyn,    argv[ 6]); /* 임원현원       Y         m_Ipoyn       */
+     strcpy(epoyn,    argv[ 7]); /* 교육파견현원   Y         m_Epoyn       */
+     strcpy(jpoyn,    argv[ 8]); /* 정직현원       N         m_Jpoyn       */
+     strcpy(hpoyn,    argv[ 9]); /* 휴직현원       N         m_Hpoyn       */
+     strcpy(tocredate,argv[10]); /* 계획인원생성일 20001101  m_Tolastdate  */
+     strcpy(pocredate,argv[11]); /* 현원생성일     20010316  m_Polastdate  */
+ 
+     FL_date = hinsa_sys_date(1);
+     STRINIT(today);
+     strcpy(today, FL_date);
+     
+     FL_date = hinsa_sys_date(0);
+     STRINIT(start_date);
+     strcpy(start_date, FL_date);
+     
+     sprintf(gubun, "pie1011g_%.4s", jobempno);  
+     hinsa_log_print(0, gubun);
+ 
+     exist_count = 0;  
+     /* 기존자료가 있냐 ? */
+     EXEC SQL
+     /*   SELECT 1    shm */
+          select count(workyymm)  INTO   :exist_count
+            FROM   pihpmas
+           WHERE  workyymm = :topoym;
+            
+     printf("topoym :%s,:%s\n", topoym,exist_count);
+     if  (exist_count < 1)
+     {
+          sprintf(tmp_buf, "%4.4s년 %s월 인사이력 자료가 존재하지 않습니다. Error!", topoym, topoym+4);
+          hinsa_log_print(0, tmp_buf);
+          return;
+     }
+ 
+     data_process();
+ 
+     sprintf(tmp_buf, "<*> 작 업   구 분 : %.4s년 %.2s월  [%s]", topoym, topoym+4, cregubunnm);
+     hinsa_log_print(0, tmp_buf);
+     if  (strcmp(manunit, "C0") == 0)     /* 본부단위 */
+          sprintf(tmp_buf, "<*> 생 성   구 분 : 본부(%s)", manunit);
+     else        /* E0 */
+          sprintf(tmp_buf, "<*> 생 성   구 분 : 과(%s)", manunit);
+     hinsa_log_print(0, tmp_buf);
+ 
+     sprintf(tmp_buf, "<*> 계획 읽은건수 : %7d 건", tread_count);
+     hinsa_log_print(0, tmp_buf);
+ 
+     sprintf(tmp_buf, "<*> 계획 생성건수 : %7d 건", tcre_count);
+     hinsa_log_print(0, tmp_buf);
+ 
+     sprintf(tmp_buf, "<*> 계획 삭제건수 : %7d 건", del_count);
+     hinsa_log_print(0, tmp_buf);
+ 
+     sprintf(tmp_buf, "<*> 현원 읽은건수 : %7d 건", pread_count);
+     hinsa_log_print(0, tmp_buf);
+ 
+     sprintf(tmp_buf, "<*> 현원 수정건수 : %7d 건", pupd_count);
+     hinsa_log_print(0, tmp_buf);
+ 
+     sprintf(tmp_buf, "<*> 정  직  자 : %7d 건", jeong_count);
+     hinsa_log_print(0, tmp_buf);
+ 
+     sprintf(tmp_buf, "<*> 휴  직  자 : %7d 건", hujik_count);
+     hinsa_log_print(0, tmp_buf);
+ 
+     strcpy(tmp_buf,  "< 참 고 사 항 >");
+     hinsa_log_print(0, tmp_buf);
+ 
+     sprintf(tmp_buf, "  1. 오류  건수 : %7d 건", error_count);
+     hinsa_log_print(0, tmp_buf);
+ 
+     sprintf(tmp_buf, "  2. 임      원 : %7d 건", imwon_count);
+     hinsa_log_print(0, tmp_buf);
+ 
+     sprintf(tmp_buf, "  3. 노조전임자 : %7d 건", nojo_count);
+     hinsa_log_print(0, tmp_buf);
+ 
+     sprintf(tmp_buf, "  4. 파견교육자 : %7d 건", paed_count);
+     hinsa_log_print(0, tmp_buf);
+ 
+     FL_date = hinsa_sys_date(0);
+     STRINIT(end_date);
+     strcpy(end_date, FL_date);
+ 
+     sprintf(tmp_buf, "<*> 작업시간 : %.4s%.2s/%.2s %.2s.%.2s.%.2s - %.4s/%.2s/%.2s %.2s.%.2s.%.2s",
+                      start_date,   start_date+4,  start_date+6,
+                      start_date+8, start_date+10, start_date+12,
+                      end_date,     end_date+4,    end_date+6,
+                      end_date+8,   end_date+10,   end_date+12);
+     hinsa_log_print(0, tmp_buf);
+ 
+     /* update_pimvari();   계획인원/현원생성일을 경신 */
+ 
+     hinsa_exit(0,"OK 작업이 완료되었습니다.");
+}
+
+/*----------------------------------------------*
+ * Current data & Condition Variable Initialize *
+ *----------------------------------------------*/
+init_variable()
+{
+     memset(topoym,      0x00,   sizeof(topoym));
+     memset(beftopoym,   0x00,   sizeof(beftopoym));
+     memset(orgnum,      0x00,   sizeof(orgnum));
+     memset(manunit,     0x00,   sizeof(manunit));
+ 
+     memset(deptcode,    0x00,   sizeof(deptcode));
+     memset(tpgubun,     0x00,   sizeof(tpgubun));
+     memset(sectcode,    0x00,   sizeof(sectcode));
+     memset(fieldcode,   0x00,   sizeof(fieldcode));
+     memset(boncode,     0x00,   sizeof(boncode));
+     memset(tcretime,    0x00,   sizeof(tcretime));
+     memset(deptlevel,   0x00,   sizeof(deptlevel)); /* 1.02*/
+ 
+     memset(empno,       0x00,   sizeof(empno));
+     memset(korname,     0x00,   sizeof(korname));
+     memset(paycl,       0x00,   sizeof(paycl));
+     memset(payra,       0x00,   sizeof(payra));
+     memset(nojeonyn,    0x00,   sizeof(nojeonyn));
+     memset(pstate,      0x00,   sizeof(pstate));
+ 
+     memset(today,       0x00,   sizeof(today));
+     memset(tocredate,   0x00,   sizeof(tocredate));
+     memset(pocredate,   0x00,   sizeof(pocredate));
+ 
+     memset(cregubun,    0x00,   sizeof(cregubun));
+     memset(cregubunnm,  0x00,   sizeof(cregubunnm));
+     memset(ipoyn,       0x00,   sizeof(ipoyn));
+     memset(epoyn,       0x00,   sizeof(epoyn));
+     memset(jpoyn,       0x00,   sizeof(jpoyn));
+     memset(hpoyn,       0x00,   sizeof(hpoyn));
+ 
+     memset(gubun,       0x00,   sizeof(gubun));
+ 
+     num = 0;
+     memset(tmp_buf,     0x00,   sizeof(tmp_buf));
+     memset(jobempno,    0x00,   sizeof(jobempno));
+ 
+     memset(start_date,  0x00,   sizeof(start_date));
+     memset(end_date,    0x00,   sizeof(end_date));
+ 
+     tread_count = tcre_count = pread_count = 0;
+     pupd_count  = del_count  = exist_count = 0;
+     imwon_count = nojo_count = paed_count  = jeong_count = hujik_count = 0;
+     error_count = 0;
+ 
+     memset(pselect,     0x00,   sizeof(pselect));
+ 
+     init_subvariable();
+}
+
+/*----------------------------------------------*
+ * Current data & Condition Variable Initialize *
+ *----------------------------------------------*/
+init_subvariable()
+{
+     pdir11   = pdir12   = pdir21   = pdir31  = pdir41  = 0;
+     pdir51   = pdir61   = pdir6a   = pdir71  = 0;
+     pdir72   = pdir7a   = pdiretc  = pdirsum = 0;
+     ppos1    = ppos2    = ppos3    = ppos4   = 0;
+     ppos5    = ppos6    = ppos7    = ppos8   = ppos9   = 0;
+     ppossum  = pspe1    = pspe21   = pspe22  = 0;
+     pspe23   = pspe24   = pspe25   = pspe26  = 0;
+     pspe27   = pspe2    = pspe3    = pspe4   = 0;
+     pspe5    = pspesum  = pemptot  = pextr1  = 0;
+     pextr2   = pextr3   = pextr4   = pextr5  = 0;
+     pextrsum = ptempsum = pimsitot = ptotal  = 0;
+     P10      = P20      = P22      = P32     = P40     = P42     = P44     = 0;
+     /* =================================================
+            계약직원관련 수정
+        ================================================= */
+     pcontsum = 0;
+     psconsum = 0;
+ 
+     memset(pcretime,    0x00,  sizeof(pcretime));
+     memset(tpbigo,      0x00,  sizeof(tpbigo));
+     skip_sw  = 0;
+}
+
+/****************************************
+ *      Data process  routine       *
+ ****************************************/
+data_process()
+{
+     EXEC SQL LOCK TABLE  pihtopo   /* ,pihpmas 제거 */ 
+              IN   EXCLUSIVE  MODE  NOWAIT;
+ 
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"다른 작업자가 DB수정 작업중입니다.");
+ 
+     if  (strcmp(cregubun, "11") == 0)
+     {
+          strcpy(cregubunnm, "현원생성");
+          poinwon_create();
+     }
+     else
+          hinsa_exit(0,"생성구분 오류 !");
+}
+
+poinwon_create()            /* 현인원 생성. */
+{
+     strcpy(pocredate, today);
+     hinsa_trim(sectcode);   hinsa_trim(fieldcode);
+ 
+     EXEC SQL
+     SELECT count(topoym)   /* 기존자료가 있냐 ? */
+       INTO :exist_count
+       FROM pihtopo
+      WHERE topoym = :topoym;
+ 
+     if  (exist_count != 0)              /*  기존자료 존재시 초기화  */
+     {
+          EXEC SQL 
+          UPDATE pihtopo
+             set pdir11   = 0, pdir12   = 0,  pdir21   = 0, pdir31   = 0,
+                 pdir41   = 0,                         
+                 pdir51   = 0, pdir61   = 0,  pdir6a   = 0, pdir71   = 0,
+                 pdir72   = 0, pdir7a   = 0,  pdiretc  = 0, pdirsum  = 0,
+                 ppos1    = 0, ppos2    = 0,  ppos3    = 0, ppos4    = 0,
+                 ppos5    = 0, ppos6    = 0,  ppos7    = 0, ppos8    = 0,
+                 ppos9    = 0,                         
+                 ppossum  = 0, pspe1    = 0,  pspe21   = 0, pspe22   = 0,
+                 pspe23   = 0, pspe24   = 0,  pspe25   = 0, pspe26   = 0,
+                 pspe27   = 0, pspe2    = 0,  pspe3    = 0, pspe4    = 0,
+                 pspe5    = 0, pspesum  = 0,  pemptot  = 0, pextr1   = 0,
+                 pextr2   = 0, pextr3   = 0,  pextr4   = 0, pextr5   = 0,
+                 pextrsum = 0, ptempsum = 0,  pimsitot = 0, pcontsum = 0, psconsum  = 0,
+                 ptotal   = 0, pcretime = '', tpbigo   = '',
+                 P10      = 0, P20      = 0,  P22      = 0, P32      = 0, 
+                 P40      = 0, P42      = 0,  P44      = 0
+           WHERE topoym   = :topoym;
+ 
+          if  (sqlca.sqlcode != 0)  hinsa_exit(0,"PIHTOPO Update Error(1) !");
+     }
+     else
+          hinsa_exit(0,"기존자료가 존재하지 않습니다. Error(1)!");
+ 
+     cldept_delete();    /* 폐쇄조직삭제 */
+     poinwon_process();      /* 조직개편 현원 생성 */
+}
+
+cldept_delete()     /* 폐쇄조직삭제 */
+{
+     EXEC SQL 
+     UPDATE pihtopo h /* 일단본부코드를 수정 */
+        SET boncode       /* 해당자료가 없으면 Null로 수정된다 */
+          =(SELECT nvl(boncode, 'ZZZZZZ')
+              FROM pycdept c
+             WHERE c.orgnum  = h.orgnum AND c.deptcode = h.deptcode
+               AND c.existon = '1'
+               AND nvl(substr(c.deptlevel, 1, 1), ' ') <= substr(:manunit, 1, 1)
+               /* AND c.chanmode != '3' */
+               AND SUBSTR(NVL(c.reorgdate,'0'),1,6)    <= :topoym
+               AND SUBSTR(NVL(c.closedate,'9'),1,6)    >  :topoym )
+         WHERE   h.topoym = :topoym;
+ 
+     if  (sqlca.sqlcode != 0)     /* Error is Error */
+          hinsa_exit(0,"PIHTOPO Boncode Update Error !(1)");
+ 
+     exist_count = 0;
+     EXEC SQL 
+     SELECT count(topoym)   /* 폐쇄된 조직이 있냐 ? */
+       INTO :exist_count
+       FROM pihtopo
+      WHERE topoym = :topoym AND orgnum != :orgnum;
+
+     if  (exist_count > 0)
+     {
+          EXEC SQL 
+          UPDATE pihtopo         /* 일단본부코드를 수정 */
+             SET boncode = ''    /* 조직차수가 틀리면 무조건 */
+           WHERE topoym = :topoym AND orgnum != :orgnum;
+          if  (sqlca.sqlcode != 0)     /* Error is Error */
+               hinsa_exit(0,"PIHTOPO Boncode Update Error !(2)");
+     }
+ 
+     exist_count = 0;
+
+     EXEC SQL 
+     SELECT count(topoym)   /* 폐쇄된 조직이 있냐 ? */
+       INTO :exist_count
+       FROM pihtopo
+      WHERE topoym = :topoym
+        AND nvl(substr(boncode, 1, 1), ' ') = ' ';
+     if  (exist_count == 0)     return;
+ 
+     EXEC SQL 
+     DELETE FROM pihtopo
+      WHERE topoym = :topoym
+        AND nvl(substr(boncode, 1, 1), ' ') = ' ';
+     if  (sqlca.sqlcode != 0)     /* Error is Error */
+          hinsa_exit(0,"PIHTOPO Close Dept Delete Error !");
+}
+
+poinwon_process()
+{
+     sprintf(pselect,
+             "select empno, korname, orgnum, deptcode,                                    \
+                     upper(paycl), upper(payra), upper(nojeonyn), pstate                  \
+                from pihpmas                                                              \
+                where workyymm = '%6.6s'                                                  \
+                  and substr(empdate, 1, 6) <=  '%6.6s'                                   \
+                  and (nvl(pstateyn, ' ') not in ('N', 'n'))                              \
+                  and (pstate < '80'                                                      \
+                       or                                                                 \
+                       (pstate > '80' and nvl(substr(retdate,1,6), '999999') > '%6.6s'))  \
+                order by empno",
+              topoym, topoym, topoym );
+ 
+     EXEC    SQL PREPARE s1 FROM :pselect;
+     EXEC    SQL DECLARE c2 cursor for s1;
+ 
+     EXEC SQL  open c2;
+ 
+     if  (sqlca.sqlcode != 0)
+          hinsa_exit(0,"Cursor Open c2");
+ 
+     for  ( ; ; )
+     {
+          EXEC SQL FETCH c2 INTO
+                  :empno,   :korname,  :orgnum,   :deptcode,
+                  :paycl,   :payra,    :nojeonyn, :pstate;
+      
+          if  (sqlca.sqlcode == 1403)
+          {
+               EXEC SQL close c2;
+               return;
+          }
+          else if  (sqlca.sqlcode != -1405 && sqlca.sqlcode != 0)
+          {
+               EXEC SQL close c2;
+               hinsa_exit(0,"Data Fetch c2");
+          }
+          pread_count++;
+          init_subvariable();
+          hinsa_trim(korname);   
+          hinsa_trim(deptcode);
+          poinwon_calc();
+          if  (skip_sw == 0)
+          {
+               poinwon_write();
+               if  ((strcmp(tpgubun, "20") == 0) || /* 파견/교육 */
+                    (strcmp(tpgubun, "30") == 0))   /* 노조전임 */
+               {   /* 파견/교육, 노조전임을 현원에 포함 */
+                    strcpy(tpgubun, "10");
+                    poinwon_write();
+               }
+               pupd_count++;
+          }
+     }
+}
+
+poinwon_calc()
+{
+     char  *FL_date;
+      
+     if  (strncmp(paycl, "A", 1) == 0)    /* 임원 */
+     {
+          imwon_count++;
+          if  (strcmp(ipoyn, "Y") != 0)
+          {
+               skip_sw++;   
+               return;
+          }
+     }
+     if  (strcmp(nojeonyn, "Y") == 0)     /* 노조전임여부 */
+     {
+          nojo_count++;   
+          strcpy(tpgubun, "30");
+     }
+     else
+          strcpy(tpgubun, "10");
+     
+     if  (((strncmp(pstate, "2", 1) == 0) &&
+           (strcmp(pstate, "22")    >= 0)) ||    /* 사내파견제외 */
+           (strncmp(pstate, "3", 1) == 0))       /* 교    육 */
+     {
+          patpgubun_process();    /* 파견교육 OR 현원 */
+          if  (strcmp(epoyn, "Y") != 0)
+          {
+               skip_sw++;   
+               return;
+          }
+     }
+     else if  (strncmp(pstate, "6", 1) == 0)  /* 정직자 */
+     {
+          jeong_count++;
+          if  (strcmp(jpoyn, "Y") != 0)
+          {
+               skip_sw++;   
+               return;
+          }
+     }
+     else if  (strncmp(pstate, "7", 1) == 0)  /* 휴직자 */
+     {
+          hujik_count++;
+          if  (strcmp(hpoyn, "Y") != 0)
+          {
+               skip_sw++;   
+               return;
+          }
+     }
+     
+     read_pycdept();
+     if  (strcmp(manunit, "C0") == 0)     /* 본부단위 */
+          strcpy(deptcode, boncode);
+             /* BAND/직책별로 현원을 계산하자..... */
+     if  ((strncmp(paycl, "A", 1) == 0) || (strncmp(paycl, "0", 1) == 0))    /* 임원 */
+     {
+          pdirsum++;
+          if  (strcmp(paycl, "01")        == 0)  /* 회장 */
+               pdir11++;
+          else if  (strcmp(paycl, "02")   == 0)  /* 부회장 */
+               pdir12++;                  
+          else if  (strcmp(paycl, "03")   == 0)  /* 사장 */
+               pdir21++;                  
+          else if  (strcmp(paycl, "04")   == 0)  /* 감사 */
+               pdir31++;                  
+          else if  (strcmp(paycl, "05")   == 0)  /* 부사장 */
+               pdir41++;                  
+          else if  (strcmp(paycl, "06")   == 0)  /* 전무 */
+               pdir51++;                  
+          else if  (strcmp(paycl, "07")   == 0)  /* 상무 */
+               pdir61++;                  
+          else if  (strcmp(paycl, "08")   == 0)  /* 이사 */
+               pdir71++;                  
+          else if  (strcmp(paycl, "09")   == 0)  /* 이사대우 */
+               pdir72++;
+        //else  if  (strcmp(paycl, "A11") == 0)  /* 회장 */
+        //     pdir11++;
+        //else if  (strcmp(paycl, "02")   == 0)  /* 부회장 */
+        //     pdir12++;                  
+          else if  (strcmp(paycl, "A21")  == 0)  /* E3 */
+               pdir21++;                  
+        //else if  (strcmp(paycl, "04")   == 0)  /* 감사 */
+        //     pdir31++;                  
+          else if  (strcmp(paycl, "A31")  == 0)  /* 부사장 */
+               pdir41++;                  
+          else if  (strcmp(paycl, "A41")  == 0)  /* E2 */
+               pdir51++;                  
+          else if  (strcmp(paycl, "A51")  == 0)  /* E1 */
+               pdir61++;                  
+          else if  (strcmp(paycl, "A61")  == 0)  /* E0 */
+               pdir71++;
+          else if  (strcmp(paycl, "A55")   == 0)  /* 전문임원 */
+             pdir72++;
+          else
+          {
+               pdiretc++;
+               hinsa_log_print(0,"직위코드 오류 !");
+          }
+     }
+     else if  (((strcmp(paycl, "10" ) >= 0) &&  (strcmp(paycl, "90" ) < 0)) ||
+               ((strcmp(paycl, "C11") >= 0) &&  (strcmp(paycl, "D40") < 0)))
+     {
+          ppossum++;
+          if  (strcmp(paycl, "11")       == 0)  /* SM2급 */
+               ppos1++;
+          else if  (strcmp(paycl, "13")  == 0)  /* SM1급 */
+               ppos2++;                  
+          else if  (strcmp(paycl, "21")  == 0)  /* M2급 */
+               ppos3++;                  
+          else if  (strcmp(paycl, "23")  == 0)  /* M1급 */
+               ppos4++;                  
+          else if  (strcmp(paycl, "31")  == 0)  /* S2급 */
+               ppos5++;                  
+          else if  (strcmp(paycl, "33")  == 0)  /* S1급 */
+               ppos6++;                  
+          else if  (strcmp(paycl, "41")  == 0)  /* J3급 */
+               ppos7++;                  
+          else if  (strcmp(paycl, "43")  == 0)  /* J2급 */
+               ppos8++;                  
+          else if  (strcmp(paycl, "45")  == 0)  /* J1급 */
+               ppos9++;                  
+          else if  (strcmp(paycl, "10")  == 0)  /* 부장 */
+               P10++;                           
+          else if  (strcmp(paycl, "20")  == 0)  /* 차장 */
+               P20++;                           
+          else if  (strcmp(paycl, "22")  == 0)  /* 과장 */
+               P22++;                           
+          else if  (strcmp(paycl, "32")  == 0)  /* 대리 */
+               P32++;                           
+          else if  (strcmp(paycl, "40")  == 0)  /* 사원(대졸) */
+               P40++;                           
+          else if  (strcmp(paycl, "42")  == 0)  /* 사원(전졸) */
+               P42++;                           
+          else if  (strcmp(paycl, "44")  == 0)  /* 사원(고졸) */
+               P44++;
+          else if  (strcmp(paycl, "C11") == 0)  /* L2 */               
+               P10++;                                                   
+          else if  (strcmp(paycl, "C21") == 0)  /* L1 */               
+               P20++;                                                   
+          else if  (strcmp(paycl, "D11") == 0)  /* G4 */               
+               P22++;                                                   
+          else if  (strcmp(paycl, "D21") == 0)  /* G3 */               
+               P32++;                                                   
+          else if  (strcmp(paycl, "D31") == 0)  /* G2(대졸) */         
+               P40++;                                                   
+          else if  (strcmp(paycl, "D33") == 0)  /* G2(전졸) */         
+               P42++;                                                   
+          else if  (strcmp(paycl, "D35") == 0)  /* G2(고졸) */         
+               P44++;                                                  	    
+          else
+          {
+               hinsa_log_print(0,"일반직 BAND코드 오류 !");
+          }
+     }
+     else if  (strcmp(paycl, "93") == 0)  /* 특정직(특정기술직) */
+          pspe1++;
+     else if  (strcmp(paycl, "E1") == 0)  /* 계약 */
+          pcontsum++;
+     else if  (strcmp(paycl, "H1") == 0)  /* 협력 */
+          ptempsum++;
+     else if  (strcmp(paycl, "C1") == 0)  /* 전계 */
+          psconsum++;   
+     else if  (strcmp(paycl, "D41") == 0)  /* P */
+          pspe1++;                                                
+     else if  (strcmp(paycl, "H11") == 0)  /* 계약 */              
+          pcontsum++;                                             
+     else if  (strcmp(paycl, "K11") == 0)  /* 협력 */              
+          ptempsum++;                                             
+     else if  (strcmp(paycl, "D91") == 0)  /* 전문계약 */              
+          psconsum++;                                                  
+     else
+     {
+          sprintf(tmp_buf, "<*> BAND코드 오류            ! 사번: %.4s, 인사상태: %.2s",empno, pstate);  
+          hinsa_log_print(0,tmp_buf);
+     }
+     /* 특정직소계 실제는 특정직(pspe1)만 존재*/
+     pspesum  = (pspe1    + pspe2 + pspe3 + pspe4 + pspe5);
+     pemptot  = (ppossum  + pspesum);                                  /* 정규직총계 */
+     pimsitot = (pextrsum + ptempsum);                                 /* 임용직총계 */
+     ptotal   = (pdirsum  + pemptot + pimsitot + pcontsum + psconsum); /* 현원총계 */
+     FL_date  = hinsa_sys_date(0);
+     STRINIT(pcretime);
+     strcpy(pcretime, FL_date);
+    
+}
+
+patpgubun_process() /* 파견교육 OR 현원 */
+{
+     exist_count = 0;
+     EXEC SQL 
+     SELECT count(value1)   /* 자료가 있냐 ? */
+       INTO :exist_count
+       FROM pimvari
+      WHERE gubun  = '50' AND sgubun > '1000'
+        AND value1 = :deptcode;
+     if  (exist_count > 0)    /* 파견/교육별도 부서이면 */
+     {
+          paed_count++;
+          strcpy(tpgubun, "20");
+     }    
+     else 
+          strcpy(tpgubun, "10");
+}
+
+poinwon_write()
+{
+     exist_count = 0;
+     hinsa_trim(sectcode);   
+     hinsa_trim(fieldcode);
+     hinsa_trim(deptlevel);
+ 
+     EXEC SQL 
+     SELECT count(topoym)   /* 기존자료가 있냐 ? */
+       INTO :exist_count
+       FROM pihtopo
+      WHERE topoym   = :topoym   AND orgnum  = :orgnum
+        AND deptcode = :deptcode AND tpgubun = :tpgubun;
+ 
+     if  (exist_count != 0)
+     {       /* 있으면 현원사항 더하자 */
+          EXEC SQL 
+          UPDATE pihtopo 
+             SET sectcode  = :sectcode,
+                 fieldcode = :fieldcode,
+                 boncode   = :boncode,
+                 deptlevel = :deptlevel,
+                 pdir11    = (pdir11   + :pdir11),
+                 pdir12    = (pdir12   + :pdir12),
+                 pdir21    = (pdir21   + :pdir21),
+                 pdir31    = (pdir31   + :pdir31),
+                 pdir41    = (pdir41   + :pdir41),
+                 pdir51    = (pdir51   + :pdir51),
+                 pdir61    = (pdir61   + :pdir61),
+                 pdir6a    = (pdir6a   + :pdir6a),
+                 pdir71    = (pdir71   + :pdir71),
+                 pdir72    = (pdir72   + :pdir72),
+                 pdir7a    = (pdir7a   + :pdir7a),
+                 pdiretc   = (pdiretc  + :pdiretc),
+                 pdirsum   = (pdirsum  + :pdirsum),
+                 ppos1     = (ppos1    + :ppos1), 
+                 ppos2     = (ppos2    + :ppos2),
+                 ppos3     = (ppos3    + :ppos3), 
+                 ppos4     = (ppos4    + :ppos4),
+                 ppos5     = (ppos5    + :ppos5), 
+                 ppos6     = (ppos6    + :ppos6),
+                 ppos7     = (ppos7    + :ppos7), 
+                 ppos8     = (ppos8    + :ppos8),
+                 ppos9     = (ppos9    + :ppos9),
+                 ppossum   = (ppossum  + :ppossum),
+                 pspe1     = (pspe1    + :pspe1), 
+                 pspe21    = (pspe21   + :pspe21),
+                 pspe22    = (pspe22   + :pspe22),
+                 pspe23    = (pspe23   + :pspe23),
+                 pspe24    = (pspe24   + :pspe24),
+                 pspe25    = (pspe25   + :pspe25),
+                 pspe26    = (pspe26   + :pspe26),
+                 pspe27    = (pspe27   + :pspe27),
+                 pspe2     = (pspe2    + :pspe2), 
+                 pspe3     = (pspe3    + :pspe3),
+                 pspe4     = (pspe4    + :pspe4), 
+                 pspe5     = (pspe5    + :pspe5),
+                 pspesum   = (pspesum  + :pspesum),
+                 pemptot   = (pemptot  + :pemptot),
+                 pextr1    = (pextr1   + :pextr1),
+                 pextr2    = (pextr2   + :pextr2),
+                 pextr3    = (pextr3   + :pextr3),
+                 pextr4    = (pextr4   + :pextr4),
+                 pextr5    = (pextr5   + :pextr5),
+                 pextrsum  = (pextrsum + :pextrsum),
+                 ptempsum  = (ptempsum + :ptempsum),
+                 pimsitot  = (pimsitot + :pimsitot),
+                 pcontsum  = pcontsum  + :pcontsum,
+                 psconsum  = psconsum  + :psconsum,
+                 ptotal    = (ptotal   + :ptotal),
+                 pcretime  = :pcretime, 
+                 writetime = :pcretime,
+                 writeemp  = :jobempno,
+                 P10       = (P10 + :P10),
+                 P20       = (P20 + :P20),
+                 P22       = (P22 + :P22),
+                 P32       = (P32 + :P32),
+                 P40       = (P40 + :P40),
+                 P42       = (P42 + :P42),
+                 P44       = (P44 + :P44)
+           WHERE topoym    = :topoym   AND orgnum  = :orgnum
+             AND deptcode  = :deptcode AND tpgubun = :tpgubun;
+             
+          if  (sqlca.sqlcode != 0)     /* Error is Error */
+               hinsa_exit(0,"PIHTOPO Update Error(2) !");
+     }
+     else
+     {
+          EXEC SQL 
+          INSERT INTO pihtopo
+                (topoym,    orgnum,   deptcode,  tpgubun,  sectcode,
+                 fieldcode, boncode,  deptlevel, 
+                 pdir11,    pdir12,   pdir21,    pdir31,   pdir41,   pdir51,
+                 pdir61,    pdir6a,   pdir71,    pdir72,   pdir7a,   pdiretc,
+                 pdirsum,   ppos1,    ppos2,     ppos3,    ppos4,    ppos5,    ppos6,
+                 ppos7,     ppos8,    ppos9,     ppossum,  pspe1,    pspe21,
+                 pspe22,    pspe23,   pspe24,    pspe25,   pspe26,   pspe27,
+                 pspe2,     pspe3,    pspe4,                         
+                 pspe5,     pspesum,  pemptot,   pextr1,   pextr2,   pextr3,
+                 pextr4,    pextr5,   pextrsum,  ptempsum, pimsitot, pcontsum, psconsum,
+                 ptotal,    pcretime, writetime, writeemp,
+                 P10,       P20,      P22,       P32,      P40,      P42,      P44)
+           VALUES
+                (:topoym,  :orgnum,   :deptcode, :tpgubun,
+                 :sectcode,:fieldcode,:boncode,  :deptlevel,
+                 :pdir11,  :pdir12,   :pdir21,   :pdir31,  :pdir41,  :pdir51,  
+                 :pdir61,  :pdir6a,   :pdir71,   :pdir72,  :pdir7a,  :pdiretc,  
+                 :pdirsum, :ppos1,    :ppos2,    :ppos3,   :ppos4,   :ppos5,   :ppos6,   
+                 :ppos7,   :ppos8,    :ppos9,    :ppossum, :pspe1,   :pspe21,  
+                 :pspe22,  :pspe23,   :pspe24,   :pspe25,  :pspe26,  :pspe27,
+                 :pspe2,   :pspe3,    :pspe4,    
+                 :pspe5,   :pspesum,  :pemptot,  :pextr1,  :pextr2,  :pextr3,
+                 :pextr4,  :pextr5,   :pextrsum, :ptempsum,:pimsitot,:pcontsum, :psconsum,
+                 :ptotal,  :pcretime, :pcretime, :jobempno,
+                 :P10,     :P20,      :P22,      :P32,     :P40,     :P42,     :P44);
+         if  (sqlca.sqlcode != 0)     /* Error is Error */
+              hinsa_exit(0,"PIHTOPO Insert Error(2) !");
+     }
+
+}
+
+read_pycdept()
+{
+     EXEC SQL 
+     SELECT nvl(fieldcode, 'ZZZ'), nvl(boncode, 'ZZZZZZ'),
+            nvl(sectcode,'ZZZ'),   nvl(deptlevel, 'ZZ')
+       INTO :fieldcode,            :boncode, 
+            :sectcode,             :deptlevel
+       FROM pycdept
+      WHERE orgnum   = :orgnum  AND deptcode  = :deptcode
+        AND nvl(substr(deptlevel, 1, 1), ' ') <= substr(:manunit, 1, 1)
+        AND existon  = '1'
+     /* AND chanmode != '3' */
+        AND SUBSTR(NVL(reorgdate,'0'),1,6)    <= :topoym
+        AND SUBSTR(NVL(closedate,'9'),1,6)    >  :topoym ;
+ 
+     if  (sqlca.sqlcode != 0)
+     {
+          hinsa_log_print(0,"부서코드 미존재 OR 오류 !");
+          strcpy(fieldcode, "ZZZ");
+          strcpy(sectcode, "ZZZ");
+          strcpy(deptlevel, "ZZ");
+          strcpy(boncode, deptcode);
+     }
+     hinsa_trim(fieldcode);   
+     hinsa_trim(boncode);
+     hinsa_trim(sectcode);
+}
+
+/*--------------------------------------*
+ *  Log message routine     *
+ *--------------------------------------*/
+/* 1.04    2004.01.30     이민용      자체 개선          오라클 8버전 upgrade관련
+hinsa_log_print(0,msg)
+char  *msg;
+{
+     error_count++;
+     sprintf(tmp_buf, "사번[%s]성명[%s]BAND[%s]인사상태[%s]차수[%s]부서[%s] ==> [%s]",
+                      empno, korname, paycl, pstate, orgnum, deptcode, msg);
+     hinsa_log_print(0, tmp_buf);
+     return;
+}
+*/
+/**********<< PROGRAM END >>********************************/
